@@ -1398,6 +1398,9 @@ msgstr "Variante"
 msgid "Attendee name"
 msgstr "Nom du participant"
 
+msgid "Attendee's legal (ID) name"
+msgstr "Nom légal (carte d'identité) du participant"
+
 #: pretix/base/exporters/orderlist.py:567 pretix/base/forms/questions.py:552
 #: pretix/base/models/customers.py:209 pretix/base/models/orders.py:1293
 #: pretix/base/pdf.py:201
@@ -1588,6 +1591,34 @@ msgstr "Panier de l'utilisateur actuel"
 #: pretix/presale/views/widget.py:362
 msgid "Waiting list"
 msgstr "Liste d'attente"
+
+#: pretix/presale/templates/pretixpresale/event/fragment_product_list.html:77
+msgid "Register here"
+msgstr "Inscrivez-vous ici"
+
+msgid "Ticket lottery will be held on"
+msgstr "La loterie des billets aura lieu le"
+
+msgid "The ticket lottery was held on"
+msgstr "La loterie des billets a eu lieu le"
+
+msgid "Please register for the waiting list."
+msgstr "Veuillez vous inscrire sur la liste d'attente."
+
+msgid
+msgstr
+
+msgid
+msgstr
+
+msgid
+msgstr
+
+msgid
+msgstr
+
+msgid
+msgstr
 
 #: pretix/base/exporters/orderlist.py:832
 #, fuzzy
@@ -26285,7 +26316,9 @@ msgid ""
 "If you created a customer account at %(org)s before, you can log in now and "
 "connect your order to your account. This will allow you to see all your "
 "orders in one place and access them at any time."
-msgstr ""
+msgstr "Si vous avez déjà créé un compte client chez %(org)s, vous pouvez vous connecter maintenant et "
+"connectez votre commande à votre compte. Cela vous permettra de voir tous vos "
+"commandes en un seul endroit et y accéder à tout moment."
 
 #: pretix/presale/templates/pretixpresale/event/checkout_customer.html:59
 #: pretix/presale/templates/pretixpresale/organizers/customer_login.html:31
@@ -29849,3 +29882,4 @@ msgstr ""
 #, fuzzy
 #~ msgid "Failed to send mails to the following users: {}"
 #~ msgstr "Echec de l'envoi de mail au utilisateurs suivants: {}"
+

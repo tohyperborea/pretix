@@ -1493,7 +1493,7 @@ msgstr ""
 #: pretix/control/templates/pretixcontrol/waitinglist/index.html:8
 #: pretix/presale/templates/pretixpresale/event/fragment_availability.html:14
 #: pretix/presale/templates/pretixpresale/event/fragment_availability.html:27
-#: pretix/presale/templates/pretixpresale/event/fragment_product_list.html:77
+
 #: pretix/presale/templates/pretixpresale/event/fragment_product_list.html:84
 #: pretix/presale/templates/pretixpresale/event/fragment_subevent_list.html:26
 #: pretix/presale/templates/pretixpresale/event/index.html:249
@@ -1504,8 +1504,13 @@ msgstr ""
 #: pretix/presale/templates/pretixpresale/fragment_week_calendar.html:62
 #: pretix/presale/templates/pretixpresale/organizers/index.html:112
 #: pretix/presale/views/widget.py:362
-msgid "Waiting list"
+msgid "Waiting List"
 msgstr ""
+
+#: pretix/presale/templates/pretixpresale/event/fragment_product_list.html:77
+msgid "Register here"
+msgstr ""
+
 
 #: pretix/base/exporters/orderlist.py:832
 msgid "Exited orders"
@@ -21953,7 +21958,7 @@ msgstr ""
 
 #: pretix/presale/templates/pretixpresale/event/fragment_availability.html:8
 #: pretix/presale/templates/pretixpresale/event/fragment_product_list.html:73
-msgid "SOLD OUT"
+msgid "COLD OUT"
 msgstr ""
 
 #: pretix/presale/templates/pretixpresale/event/fragment_availability.html:20

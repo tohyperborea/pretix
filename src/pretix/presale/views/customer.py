@@ -96,10 +96,15 @@ class LoginView(RedirectBackMixin, FormView):
 
     def get_success_url(self):
         url = self.get_redirect_url()
-        if getattr(self.request, 'event_domain', False):
-            default_url = '/'
-        else:
-            default_url = eventreverse(self.request.organizer, 'presale:organizer.customer.profile', kwargs={})
+        # FIXME:Hacky solution to get around the fact that there is no event variable in the customer request context. Will need update
+
+        default_url='/hyperborea/hyperborea2022'
+        # default_url =  eventreverse(self.request.organizer, 'presale:organizer.customer.profile', kwargs={})
+        # default_url = eventreverse(self.request.event, 'presale:event.index', kwargs=kwargs)
+        # if getattr(self.request, 'event_domain', False):
+        #     default_url = '/'
+        # else:
+        #     default_url = eventreverse(self.request.organizer, 'presale:organizer.customer.profile', kwargs={})
         return url or default_url
 
     def form_valid(self, form):
@@ -245,6 +250,7 @@ class ResetPasswordView(FormView):
         token = TokenGenerator().make_token(customer)
         ctx['url'] = build_absolute_uri(self.request.organizer,
                                         'presale:organizer.customer.recoverpw') + '?id=' + customer.identifier + '&token=' + token
+        print( ctx['url'])
         mail(
             customer.email,
             _('Set a new password for your account at {organizer}').format(organizer=self.request.organizer.name),
