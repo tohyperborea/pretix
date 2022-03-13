@@ -2052,7 +2052,7 @@ Your {organizer} team"""))
         ),
     },
     'theme_color_background': {
-        'default': '#f5f5f5',
+        'default': '#1c1c1c',
         'type': str,
         'form_class': forms.CharField,
         'serializer_class': serializers.CharField,
