@@ -6,19 +6,7 @@
         {% if price != None and not price %}
             <strong>{% trans "FULLY BOOKED" %}</strong>
         {% else %}
-            {% with lottery_date="2022-04-19" %}
-                {% now "Y-m-d" as todays_date %}
-
-                    {{1649606399|date:"Y-m-d" }}
-
-<!--                    {% if todays_date < lottery_date|date:"Y-m-d"  %}-->
-<!--                        <strong>{% trans "Ticket lottery will be held on" %} {{lottery_date}}.</strong>-->
-<!--                    {% else %}-->
-<!--                        <strong>{% trans "The ticket lottery was held on" %} {{lottery_date}}.</strong>-->
-<!--                        <strong>{% trans "Please register for the waiting list." %}</strong>-->
-<!--                    {% endif %}-->
-                <strong>{% trans "Hyperborea 2022's ticket lottery will be held on" %} {{lottery_date}}</strong>
-            {% endwith %}
+                <strong>{% trans "Hyperborea general sale tickets will be assigned by lottery" %}</strong>
         {% endif %}
         {% if allow_waitinglist and item.allow_waitinglist %}
             <br/>

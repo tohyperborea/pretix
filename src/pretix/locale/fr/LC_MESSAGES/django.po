@@ -1592,6 +1592,36 @@ msgstr "Panier de l'utilisateur actuel"
 msgid "Waiting list"
 msgstr "Liste d'attente"
 
+msgid "How do tickets work for Hyperborea?"
+msgstr "Comment fonctionnent les tickets pour Hyperborea?"
+
+msgid "Since demand for Hyperborea tickets outnumbers supply,"
+msgstr "Étant donné que la demande de billets Hyperborea dépasse l'offre,"
+
+msgid "the first stage of getting a ticket is registering for the ticket lottery"
+msgstr "la première étape pour obtenir un billet consiste à s'inscrire à la loterie de billets"
+
+msgid "Our ticket registration opens on"
+msgstr "Notre inscription aux billets ouvre le"
+
+msgid "If you’ve volunteered in the past, you get to bypass the general ticket sale lottery. Directed volunteer ticket sales open on"
+msgstr "Si vous avez fait du bénévolat dans le passé, vous pouvez contourner la loterie générale de vente de billets. La vente de billets dirigée par les bénévoles est ouverte le"
+
+msgid "Completing your volunteer hours is the best way to ensure a Hyperborea ticket next year!"
+msgstr "Compléter ses heures de bénévolat est le meilleur moyen de s'assurer un ticket Hyperborea l'année prochaine!"
+
+msgid "The registrations for the general sale are shuffled in a “lottery” ensuring that everyone registered has an equal chance of being offered a ticket."
+msgstr "Les inscriptions à la vente générale sont mélangées dans une loterie garantissant que chaque inscrit a une chance égale de se voir offrir un billet."
+
+msgid "General ticket sales for Hyperborea opens on"
+msgstr "Ouverture de la billetterie générale pour Hyperborea le"
+
+msgid "Available tickets are then offered in the order of the lottery, and registrants have two days to buy their available ticket before it’s added back to the pool and offered to the next in the list."
+msgstr "Les billets disponibles sont ensuite proposés dans l'ordre de la loterie, et les inscrits ont deux jours pour acheter leur billet disponible avant qu'il ne soit rajouté au pool et offert au suivant dans la liste."
+
+msgid "If you register for a ticket after sales are already in progress, you simply get added to the bottom of the list."
+msgstr "Si vous vous inscrivez pour un billet alors que les ventes sont déjà en cours, vous êtes simplement ajouté au bas de la liste."
+
 #: pretix/presale/templates/pretixpresale/event/fragment_product_list.html:77
 msgid "Register here"
 msgstr "Inscrivez-vous ici"
@@ -1883,6 +1913,21 @@ msgstr ""
 #: pretix/presale/templates/pretixpresale/event/index.html:313
 msgid "Voucher code"
 msgstr "code de réduction"
+
+msgid "Hyperborea is a vaccinated-only event."
+msgstr "Hyperborea est un événement uniquement vacciné."
+
+msgid "By selecting or ordering tickets on this page, you are confirming that you understand that you must show proof of vaccination before entry will be granted."
+msgstr "En sélectionnant ou en commandant des billets sur cette page, vous confirmez que vous comprenez que vous devez présenter une preuve de vaccination avant que l'entrée ne vous soit accordée."
+
+msgid "A person is considered Fully Vaccinated if they meet the definition of Fully Vaccinated approved by the Ontario Ministry of Health, plus 14 days from receiving their last dose."
+msgstr "Une personne est considérée comme entièrement vaccinée si elle répond à la définition d'entièrement vaccinée approuvée par le ministère de la Santé de l'Ontario, plus 14 jours après avoir reçu sa dernière dose."
+
+msgid "This also applies to minors of age 5 and over."
+msgstr "Ceci s'applique également aux mineurs de 5 ans et plus."
+
+msgid "Failure to show proof of vaccination will result in you being turned back at the gate!"
+msgstr "Si vous ne présentez pas de preuve de vaccination, vous serez refoulé à la porte !"
 
 #: pretix/base/forms/auth.py:57 pretix/base/forms/auth.py:166
 msgid "Keep me logged in"
@@ -26650,6 +26695,9 @@ msgstr "Il n' y a pas d'add-ons disponibles pour ce produit."
 #: pretix/presale/templates/pretixpresale/event/fragment_product_list.html:71
 msgid "FULLY BOOKED"
 msgstr ""
+
+msgid "Hyperborea general sale tickets will be assigned by lottery"
+msgstr "Les billets de la vente générale Hyperborea seront attribués par lotterie"
 
 #: pretix/presale/templates/pretixpresale/event/fragment_availability.html:8
 #: pretix/presale/templates/pretixpresale/event/fragment_product_list.html:73
