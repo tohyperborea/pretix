@@ -129,6 +129,7 @@ class WaitingListEntry(LoggedModel):
         self.name_cached = self.name
         if self.name_parts is None:
             self.name_parts = {}
+        self.send_confirm()
         super().save(*args, **kwargs)
 
     @property
@@ -233,7 +234,6 @@ class WaitingListEntry(LoggedModel):
                 self.event,
                 locale=self.locale
             )
-
 
     @staticmethod
     def clean_itemvar(event, item, variation):
