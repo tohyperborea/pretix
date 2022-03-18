@@ -1798,9 +1798,11 @@ Your {event} ticketing team"""))
 
 This is to confirm that you have been added to the lottery for {event}.
 
-Once the ticket lottery has taken place, Those selected will receive and email with a voucher to purchase a ticket. 
+Once the ticket lottery has taken place, those selected will receive an email with a voucher to purchase a ticket.
+ 
 If you are not selected in the initial lottery, you will be added to a waiting list 
 and will receive an email when a ticket is available for you.
+
 Best regards,
 Your {event} ticketing team"""))
     },
