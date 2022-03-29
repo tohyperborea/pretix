@@ -228,11 +228,8 @@
             {% eventsignal event "pretix.presale.signals.front_page_top" request=request subevent=subevent %}
         {% endif %}
 <div class="alert alert-warning">
-    <h1><strong>{% trans "Hyperborea is a vaccinated-only event." %}</strong></h1>
-    <h3>{% trans "By selecting or ordering tickets on this page, you are confirming that you understand that you must show proof of vaccination before entry will be granted." %} </h3>
-    <h4>{% trans "A person is considered Fully Vaccinated if they meet the definition of Fully Vaccinated approved by the Ontario Ministry of Health, plus 14 days from receiving their last dose." %}</h4>
-    <h4>{% trans "This also applies to minors of age 5 and over." %}</h4>
-    <h3><strong>{% trans "Failure to show proof of vaccination will result in you being turned back at the gate!" %}</strong></h3>
+<!--    <h1><strong>{% trans "Hyperborea is a vaccinated-only event." %}</strong></h1>-->
+    <h3>{% trans "By selecting or ordering tickets on this page, you are confirming that you fully vaccinated and may be asked to show proof of vaccination at the gate." %} </h3>
 </div >
         {% if ev.presale_is_running or event.settings.show_items_outside_presale_period %}
             <form method="post" data-asynctask

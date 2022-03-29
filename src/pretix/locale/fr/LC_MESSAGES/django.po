@@ -1917,8 +1917,8 @@ msgstr "code de réduction"
 msgid "Hyperborea is a vaccinated-only event."
 msgstr "Hyperborea est un événement vacciné uniquement ."
 
-msgid "By selecting or ordering tickets on this page, you are confirming that you understand that you must show proof of vaccination before entry will be granted."
-msgstr "En sélectionnant ou en commandant des billets sur cette page, vous confirmez que vous comprenez que vous devez présenter une preuve de vaccination avant que l'entrée ne soit accordée."
+msgid "By selecting or ordering tickets on this page, you are confirming that you fully vaccinated and may be asked to show proof of vaccination at the gate."
+msgstr "En sélectionnant ou en commandant des billets sur cette page, vous confirmez que vous êtes entièrement vacciné et peux être invité à présenter une preuve de vaccination à la porte.."
 
 msgid "A person is considered Fully Vaccinated if they meet the definition of Fully Vaccinated approved by the Ontario Ministry of Health, plus 14 days from receiving their last dose."
 msgstr "Une personne est considérée comme entièrement vaccinée si elle répond à la définition d'entièrement vaccinée approuvée par le ministère de la Santé de l'Ontario, plus 14 jours après avoir reçu sa dernière dose."
