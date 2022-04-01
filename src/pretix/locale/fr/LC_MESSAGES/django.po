@@ -1604,8 +1604,8 @@ msgstr "la première étape pour obtenir un billet consiste à s'inscrire à la 
 msgid "Our ticket registration opens on"
 msgstr "Notre inscription aux billets ouvre le"
 
-msgid "If you’ve volunteered in the past, you get to bypass the general ticket sale lottery. Directed volunteer ticket sales open on"
-msgstr "Si vous avez fait du bénévolat dans le passé, vous pouvez contourner la loterie générale de vente de billets. La vente de billets dirigée par les bénévoles ouvre le"
+msgid "If you’ve completed the required volunteer hours in 2019, don't worry! We have a guaranteed ticket for you! You will receive a separate email from us with your voucher."
+msgstr "Si vous avez effectué les heures de bénévolat requises en 2019, ne vous inquiétez pas ! Nous avons un billet garanti pour vous! Vous recevrez un e-mail séparé de notre part avec votre bon. "
 
 msgid "Completing your volunteer hours is the best way to ensure a Hyperborea ticket next year!"
 msgstr "Compléter ses heures de bénévolat est le meilleur moyen de s'assurer un ticket Hyperborea l'année prochaine!"
@@ -1917,7 +1917,7 @@ msgstr "code de réduction"
 msgid "Hyperborea is a vaccinated-only event."
 msgstr "Hyperborea est un événement vacciné uniquement ."
 
-msgid "By selecting or ordering tickets on this page, you are confirming that you fully vaccinated and may be asked to show proof of vaccination at the gate."
+msgid "By selecting or ordering tickets on this page, you are confirming that you are fully vaccinated and may be asked to show proof of vaccination at the gate."
 msgstr "En sélectionnant ou en commandant des billets sur cette page, vous confirmez que vous êtes entièrement vacciné et peux être invité à présenter une preuve de vaccination à la porte.."
 
 msgid "A person is considered Fully Vaccinated if they meet the definition of Fully Vaccinated approved by the Ontario Ministry of Health, plus 14 days from receiving their last dose."
