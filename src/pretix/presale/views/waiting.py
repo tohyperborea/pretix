@@ -125,8 +125,11 @@ class WaitingView(EventViewMixin, FormView):
             return redirect(self.get_index_url())
 
         form.save()
+        form.instance.send_confirm()
+
         messages.success(self.request, _("We've added you to the waiting list. You will receive "
-                                         "an email as soon as this product gets available again."))
+                                         "an email when a ticket is available."))
+
         return super().form_valid(form)
 
     def get_success_url(self):
