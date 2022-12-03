@@ -785,12 +785,14 @@ class StripeCC(StripeMethod):
                     payment_method=request.session['payment_stripe_payment_method_id'],
                     confirmation_method='manual',
                     confirm=True,
-                    description='{event}-{code}'.format(
+                    description='{user}-{event}-{code}'.format(
+                        user=payment.order.email,
                         event=self.event.slug.upper(),
                         code=payment.order.code
                     ),
                     statement_descriptor=self.statement_descriptor(payment),
                     metadata={
+                        'customer': payment.order.email,
                         'order': str(payment.order.id),
                         'event': self.event.id,
                         'code': payment.order.code
