@@ -43,6 +43,7 @@ from paypalcheckoutsdk.orders import (
     OrdersPatchRequest,
 )
 from paypalcheckoutsdk.payments import CapturesRefundRequest, RefundsGetRequest
+from paypalhttp import HttpError
 
 from pretix import settings
 from pretix.base.decimal import round_decimal
@@ -494,7 +495,7 @@ class PaypalMethod(BasePaymentProvider):
     def abort_pending_allowed(self):
         return False
 
-    def _create_paypal_order(self, request, payment=None, cart=None):
+    def _create_paypal_order(self, request, payment=None, cart_total=None):
         self.init_api()
         kwargs = {}
         if request.resolver_match and 'cart_namespace' in request.resolver_match.kwargs:
@@ -509,7 +510,7 @@ class PaypalMethod(BasePaymentProvider):
         else:
             payee = {}
 
-        if payment and not cart:
+        if payment and not cart_total:
             value = self.format_price(payment.amount)
             currency = payment.order.event.currency
             description = '{prefix}{orderstring}{postfix}'.format(
@@ -527,8 +528,8 @@ class PaypalMethod(BasePaymentProvider):
                 postfix=' {}'.format(self.settings.postfix) if self.settings.postfix else ''
             )
             request.session['payment_paypal_payment'] = payment.pk
-        elif cart and not payment:
-            value = self.format_price(cart['cart_total'] + cart['cart_fees'] + cart['payment_fee'])
+        elif cart_total and not payment:
+            value = self.format_price(cart_total)
             currency = request.event.currency
             description = __('Event tickets for {event}').format(event=request.event.name)
             custom_id = '{prefix}{slug}{postfix}'.format(
@@ -615,49 +616,78 @@ class PaypalMethod(BasePaymentProvider):
                                          'proceed.'))
 
             if pp_captured_order.status == 'APPROVED':
-                try:
-                    custom_id = '{prefix}{orderstring}{postfix}'.format(
-                        prefix='{} '.format(self.settings.prefix) if self.settings.prefix else '',
-                        orderstring=__('Order {slug}-{code}').format(
-                            slug=self.event.slug.upper(),
-                            code=payment.order.code
-                        ),
-                        postfix=' {}'.format(self.settings.postfix) if self.settings.postfix else ''
-                    )
-                    description = '{prefix}{orderstring}{postfix}'.format(
-                        prefix='{} '.format(self.settings.prefix) if self.settings.prefix else '',
-                        orderstring=__('Order {order} for {event}').format(
-                            event=request.event.name,
-                            order=payment.order.code
-                        ),
-                        postfix=' {}'.format(self.settings.postfix) if self.settings.postfix else ''
-                    )
-                    patchreq = OrdersPatchRequest(pp_captured_order.id)
-                    patchreq.request_body([
-                        {
-                            "op": "replace",
-                            "path": "/purchase_units/@reference_id=='default'/custom_id",
-                            "value": custom_id[:127],
-                        },
-                        {
-                            "op": "replace",
-                            "path": "/purchase_units/@reference_id=='default'/description",
-                            "value": description[:127],
-                        }
-                    ])
-                    self.client.execute(patchreq)
-                except IOError as e:
-                    messages.error(request, _('We had trouble communicating with PayPal'))
-                    logger.exception('PayPal OrdersPatchRequest: {}'.format(str(e)))
-                    return
+                # We are suspecting that some or even all APMs cannot be PATCHed after being approved by the buyer,
+                # without the PayPal Order losing its APPROVED-status again.
+                # Since APMs are already created with their proper custom_id and description (at the time the PayPal
+                # Order is created for the APM, we already have pretix order code), we skip the PATCH-request.
+                if payment.order.code not in pp_captured_order.purchase_units[0].custom_id:
+                    try:
+                        custom_id = '{prefix}{orderstring}{postfix}'.format(
+                            prefix='{} '.format(self.settings.prefix) if self.settings.prefix else '',
+                            orderstring=__('Order {slug}-{code}').format(
+                                slug=self.event.slug.upper(),
+                                code=payment.order.code
+                            ),
+                            postfix=' {}'.format(self.settings.postfix) if self.settings.postfix else ''
+                        )
+                        description = '{prefix}{orderstring}{postfix}'.format(
+                            prefix='{} '.format(self.settings.prefix) if self.settings.prefix else '',
+                            orderstring=__('Order {order} for {event}').format(
+                                event=request.event.name,
+                                order=payment.order.code
+                            ),
+                            postfix=' {}'.format(self.settings.postfix) if self.settings.postfix else ''
+                        )
+                        patchreq = OrdersPatchRequest(pp_captured_order.id)
+                        patchreq.request_body([
+                            {
+                                "op": "replace",
+                                "path": "/purchase_units/@reference_id=='default'/custom_id",
+                                "value": custom_id[:127],
+                            },
+                            {
+                                "op": "replace",
+                                "path": "/purchase_units/@reference_id=='default'/description",
+                                "value": description[:127],
+                            }
+                        ])
+                        self.client.execute(patchreq)
+                    except IOError as e:
+                        messages.error(request, _('We had trouble communicating with PayPal'))
+                        logger.exception('PayPal OrdersPatchRequest: {}'.format(str(e)))
+                        return
 
                 try:
                     capturereq = OrdersCaptureRequest(pp_captured_order.id)
                     response = self.client.execute(capturereq)
-                except IOError as e:
-                    messages.error(request, _('We had trouble communicating with PayPal'))
+                except HttpError as e:
+                    text = _('We were unable to process your payment. See below for details on how to proceed.')
+                    try:
+                        error = json.loads(e.message)
+                    except ValueError:
+                        error = {"message": str(e.message)}
+
+                    try:
+                        if error["details"][0]["issue"] == "ORDER_ALREADY_CAPTURED":
+                            # ignore, do nothing, write nothing, just redirect user to order page, this is likely
+                            # a race condition
+                            logger.info('PayPal ORDER_ALREADY_CAPTURED, ignoring')
+                            return
+                        elif error["details"][0]["issue"] == "INSTRUMENT_DECLINED":
+                            # Use PayPal's rejection message
+                            text = error["details"][0]["description"]
+                    except (KeyError, IndexError):
+                        pass
+
+                    payment.fail(info={**pp_captured_order.dict(), "error": error}, log_data=error)
                     logger.exception('PayPal OrdersCaptureRequest: {}'.format(str(e)))
-                    return
+                    raise PaymentException(text)
+                except IOError as e:
+                    payment.fail(info={**pp_captured_order.dict(), "error": {"message": str(e)}}, log_data={"error": str(e)})
+                    logger.exception('PayPal OrdersCaptureRequest: {}'.format(str(e)))
+                    raise PaymentException(
+                        _('We were unable to process your payment. See below for details on how to proceed.')
+                    )
                 else:
                     pp_captured_order = response.result
 
@@ -680,7 +710,7 @@ class PaypalMethod(BasePaymentProvider):
 
             if pp_captured_order.status != 'COMPLETED':
                 payment.fail(info=pp_captured_order.dict())
-                logger.error('Invalid state: %s' % str(pp_captured_order))
+                logger.error('Invalid state: %s' % repr(pp_captured_order.dict()))
                 raise PaymentException(
                     _('We were unable to process your payment. See below for details on how to proceed.')
                 )
@@ -699,7 +729,8 @@ class PaypalMethod(BasePaymentProvider):
             except SendMailException:
                 messages.warning(request, _('There was an error sending the confirmation mail.'))
         finally:
-            del request.session['payment_paypal_oid']
+            if 'payment_paypal_oid' in request.session:
+                del request.session['payment_paypal_oid']
 
     def payment_pending_render(self, request, payment) -> str:
         retry = True

@@ -31,7 +31,7 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the Apache License 2.0 is
 # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations under the License.
-
+import uuid
 from collections import Counter, defaultdict, namedtuple
 from datetime import datetime, time, timedelta
 from decimal import Decimal
@@ -195,7 +195,7 @@ class CartManager:
     AddOperation = namedtuple('AddOperation', ('count', 'item', 'variation', 'voucher', 'quotas',
                                                'addon_to', 'subevent', 'bundled', 'seat', 'listed_price',
                                                'price_after_voucher', 'custom_price_input',
-                                               'custom_price_input_is_net'))
+                                               'custom_price_input_is_net', 'voucher_ignored'))
     RemoveOperation = namedtuple('RemoveOperation', ('position',))
     VoucherOperation = namedtuple('VoucherOperation', ('position', 'voucher', 'price_after_voucher'))
     ExtendOperation = namedtuple('ExtendOperation', ('position', 'count', 'item', 'variation', 'voucher',
@@ -330,12 +330,16 @@ class CartManager:
                 (isinstance(op, self.ExtendOperation) and op.position.is_bundled)
             ):
                 if op.item.require_voucher and op.voucher is None:
+                    if getattr(op, 'voucher_ignored', False):
+                        raise CartError(error_messages['voucher_redeemed'])
                     raise CartError(error_messages['voucher_required'])
 
                 if (
                     (op.item.hide_without_voucher or (op.variation and op.variation.hide_without_voucher)) and
                     (op.voucher is None or not op.voucher.show_hidden_items)
                 ):
+                    if getattr(op, 'voucher_ignored', False):
+                        raise CartError(error_messages['voucher_redeemed'])
                     raise CartError(error_messages['voucher_required'])
 
             if not op.item.is_available() or (op.variation and not op.variation.is_available()):
@@ -449,12 +453,15 @@ class CartManager:
             if cp.is_bundled:
                 bundle = cp.addon_to.item.bundles.filter(bundled_item=cp.item, bundled_variation=cp.variation).first()
                 if bundle:
-                    listed_price = bundle.designated_price or 0
+                    listed_price = bundle.designated_price or Decimal('0.00')
                 else:
                     listed_price = cp.price
                 price_after_voucher = listed_price
             else:
-                listed_price = get_listed_price(cp.item, cp.variation, cp.subevent)
+                if cp.addon_to_id and is_included_for_free(cp.item, cp.addon_to):
+                    listed_price = Decimal('0.00')
+                else:
+                    listed_price = get_listed_price(cp.item, cp.variation, cp.subevent)
                 if cp.voucher:
                     price_after_voucher = cp.voucher.calculate_price(listed_price)
                 else:
@@ -480,7 +487,7 @@ class CartManager:
             self._check_item_constraints(op)
 
             if cp.voucher:
-                self._voucher_use_diff[cp.voucher] += 1
+                self._voucher_use_diff[cp.voucher] += 2
 
             self._operations.append(op)
         return err
@@ -586,6 +593,7 @@ class CartManager:
             item = self._items_cache[i['item']]
             variation = self._variations_cache[i['variation']] if i['variation'] is not None else None
             voucher = None
+            voucher_ignored = False
 
             if i.get('voucher'):
                 try:
@@ -594,6 +602,24 @@ class CartManager:
                     raise CartError(error_messages['voucher_invalid'])
                 else:
                     voucher_use_diff[voucher] += i['count']
+
+                    if i.get('voucher_ignore_if_redeemed', False):
+                        # This is a special case handling for when a user clicks "+" on an existing line in their cart
+                        # that has a voucher attached. If the voucher still has redemptions left, we'll add another line
+                        # with the same voucher, but if it does not we silently continue as if there was no voucher,
+                        # leading to either a higher-priced ticket or an error. Still, this leads to less error cases
+                        # than either of the possible default assumptions.
+                        predicted_redeemed_after = (
+                            voucher.redeemed +
+                            CartPosition.objects.filter(voucher=voucher, expires__gte=self.now_dt).count() +
+                            self._voucher_use_diff[voucher] +
+                            voucher_use_diff[voucher]
+                        )
+                        if predicted_redeemed_after > voucher.max_usages:
+                            i.pop('voucher')
+                            voucher_ignored = True
+                            voucher = None
+                            voucher_use_diff[voucher] -= i['count']
 
             # Fetch all quotas. If there are no quotas, this item is not allowed to be sold.
             quotas = list(item.quotas.filter(subevent=subevent)
@@ -641,6 +667,7 @@ class CartManager:
                     price_after_voucher=bundle.designated_price,
                     custom_price_input=None,
                     custom_price_input_is_net=False,
+                    voucher_ignored=False,
                 )
                 self._check_item_constraints(bop, operations)
                 bundled.append(bop)
@@ -670,6 +697,7 @@ class CartManager:
                 price_after_voucher=price_after_voucher,
                 custom_price_input=custom_price,
                 custom_price_input_is_net=self.event.settings.display_net_prices,
+                voucher_ignored=voucher_ignored,
             )
             self._check_item_constraints(op, operations)
             operations.append(op)
@@ -801,6 +829,7 @@ class CartManager:
                     price_after_voucher=listed_price,
                     custom_price_input=custom_price,
                     custom_price_input_is_net=self.event.settings.display_net_prices,
+                    voucher_ignored=False,
                 )
                 self._check_item_constraints(op, operations)
                 operations.append(op)
@@ -945,7 +974,7 @@ class CartManager:
                 continue
             if count < voucher.min_usages_remaining:
                 self._operations = [o for o in self._operations if not (
-                    isinstance(o, self.AddOperation) and o.voucher.pk == voucher.pk
+                    isinstance(o, self.AddOperation) and o.voucher and o.voucher.pk == voucher.pk
                 )]
                 removals = [o.position.pk for o in self._operations if isinstance(o, self.RemoveOperation)]
                 for p in self.positions:
@@ -1236,44 +1265,71 @@ class CartManager:
                 raise CartError(err)
 
 
-def get_fees(event, request, total, invoice_address, provider, positions):
+def add_payment_to_cart(request, provider, min_value: Decimal=None, max_value: Decimal=None, info_data: dict=None):
+    """
+    :param request: The current HTTP request context.
+    :param provider: The instance of your payment provider.
+    :param min_value: The minimum value this payment instrument supports, or ``None`` for unlimited.
+    :param max_value: The maximum value this payment instrument supports, or ``None`` for unlimited. Highly discouraged
+                      to use for payment providers which charge a payment fee, as this can be very user-unfriendly if
+                      users need a second payment method just for the payment fee of the first method.
+    :param info_data: A dictionary of information that will be passed through to the ``OrderPayment.info_data`` attribute.
+    :return:
+    """
     from pretix.presale.views.cart import cart_session
+
+    cs = cart_session(request)
+    cs.setdefault('payments', [])
+
+    cs['payments'].append({
+        'id': str(uuid.uuid4()),
+        'provider': provider.identifier,
+        'multi_use_supported': provider.multi_use_supported,
+        'min_value': str(min_value) if min_value is not None else None,
+        'max_value': str(max_value) if max_value is not None else None,
+        'info_data': info_data or {},
+    })
+
+
+def get_fees(event, request, total, invoice_address, payments, positions):
+    if payments and not isinstance(payments, list):
+        raise TypeError("payments must now be a list")
 
     fees = []
     for recv, resp in fee_calculation_for_cart.send(sender=event, request=request, invoice_address=invoice_address,
-                                                    total=total, positions=positions):
+                                                    total=total, positions=positions, payment_requests=payments):
         if resp:
             fees += resp
 
     total = total + sum(f.value for f in fees)
 
-    cs = cart_session(request)
-    if cs.get('gift_cards'):
-        gcs = cs['gift_cards']
-        gc_qs = event.organizer.accepted_gift_cards.filter(pk__in=cs.get('gift_cards'), currency=event.currency)
-        for gc in gc_qs:
-            if gc.testmode != event.testmode:
-                gcs.remove(gc.pk)
+    if total != 0 and payments:
+        total_remaining = total
+        for p in payments:
+            # This algorithm of treating min/max values and fees needs to stay in sync between the following
+            # places in the code base:
+            # - pretix.base.services.cart.get_fees
+            # - pretix.base.services.orders._get_fees
+            # - pretix.presale.views.CartMixin.current_selected_payments
+            if p.get('min_value') and total_remaining < Decimal(p['min_value']):
                 continue
-            fval = Decimal(gc.value)  # TODO: don't require an extra query
-            fval = min(fval, total)
-            if fval > 0:
-                total -= fval
-                fees.append(OrderFee(
-                    fee_type=OrderFee.FEE_TYPE_GIFTCARD,
-                    internal_type='giftcard',
-                    description=gc.secret,
-                    value=-1 * fval,
-                    tax_rate=Decimal('0.00'),
-                    tax_value=Decimal('0.00'),
-                    tax_rule=TaxRule.zero()
-                ))
-        cs['gift_cards'] = gcs
 
-    if provider and total != 0:
-        provider = event.get_payment_providers().get(provider)
-        if provider:
-            payment_fee = provider.calculate_fee(total)
+            to_pay = total_remaining
+            if p.get('max_value') and to_pay > Decimal(p['max_value']):
+                to_pay = min(to_pay, Decimal(p['max_value']))
+
+            pprov = event.get_payment_providers(cached=True).get(p['provider'])
+            if not pprov:
+                continue
+
+            payment_fee = pprov.calculate_fee(to_pay)
+            total_remaining += payment_fee
+            to_pay += payment_fee
+
+            if p.get('max_value') and to_pay > Decimal(p['max_value']):
+                to_pay = min(to_pay, Decimal(p['max_value']))
+
+            total_remaining -= to_pay
 
             if payment_fee:
                 payment_fee_tax_rule = event.settings.tax_rate_default or TaxRule.zero()

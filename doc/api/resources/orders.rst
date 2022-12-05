@@ -98,30 +98,6 @@ last_modified                         datetime                   Last modificati
 ===================================== ========================== =======================================================
 
 
-.. versionchanged:: 3.5
-
-   The ``order.fees.canceled`` attribute has been added.
-
-.. versionchanged:: 3.8
-
-   The ``reactivate`` operation has been added.
-
-.. versionchanged:: 3.10
-
-   The ``search`` query parameter has been added.
-
-.. versionchanged:: 3.11
-
-   The ``exclude`` and ``subevent_after`` query parameter has been added.
-
-.. versionchanged:: 3.13
-
-   The ``subevent_before`` query parameter has been added.
-
-.. versionchanged:: 3.14
-
-   The ``phone`` attribute has been added.
-
 .. versionchanged:: 4.0
 
    The ``customer`` attribute has been added.
@@ -141,6 +117,10 @@ last_modified                         datetime                   Last modificati
 .. versionchanged:: 4.8
 
    The ``order.fees.id`` attribute has been added.
+
+.. versionchanged:: 4.15
+
+   The ``include`` query parameter has been added.
 
 
 .. _order-position-resource:
@@ -178,6 +158,7 @@ tax_rule                              integer                    The ID of the u
 secret                                string                     Secret code printed on the tickets for validation
 addon_to                              integer                    Internal ID of the position this position is an add-on for (or ``null``)
 subevent                              integer                    ID of the date inside an event series this position belongs to (or ``null``).
+discount                              integer                    ID of a discount that has been used during the creation of this position in some way (or ``null``).
 pseudonymization_id                   string                     A random ID, e.g. for use in lead scanning apps
 checkins                              list of objects            List of **successful** check-ins with this ticket
 ├ id                                  integer                    Internal ID of the check-in event
@@ -204,27 +185,6 @@ pdf_data                              object                     Data object req
                                                                  this field is missing. It will be added only if you add the
                                                                  ``pdf_data=true`` query parameter to your request.
 ===================================== ========================== =======================================================
-
-.. versionchanged:: 3.3
-
-  The ``url`` of a ticket ``download`` can now also return a ``text/uri-list`` instead of a file. See
-  :ref:`order-position-ticket-download` for details.
-
-.. versionchanged:: 3.5
-
-  The attribute ``canceled`` has been added.
-
-.. versionchanged:: 3.8
-
-  The attributes ``company``, ``street``, ``zipcode``, ``city``, ``country``, and ``state`` have been added.
-
-.. versionchanged:: 3.9
-
-  The ``checkin.type`` attribute has been added.
-
-.. versionchanged:: 3.16
-
-   Answers to file questions are now returned as an URL.
 
 .. _order-payment-resource:
 
@@ -272,14 +232,19 @@ created                               datetime                   Date and time o
 comment                               string                     Reason for refund (shown to the customer in some cases, can be ``null``).
 execution_date                        datetime                   Date and time of completion of this refund (or ``null``)
 provider                              string                     Identification string of the payment provider
+details                               object                     Refund-specific information. This is a dictionary
+                                                                 with various fields that can be different between
+                                                                 payment providers, versions, payment states, etc. If
+                                                                 you read this field, you always need to be able to
+                                                                 deal with situations where values that you expect are
+                                                                 missing. Mostly, the field contains various IDs that
+                                                                 can be used for matching with other systems. If a
+                                                                 payment provider does not implement this feature,
+                                                                 the object is empty.
 ===================================== ========================== =======================================================
 
 List of all orders
 ------------------
-
-.. versionchanged:: 3.5
-
-   The ``include_canceled_positions`` and ``include_canceled_fees`` query parameters have been added.
 
 .. http:get:: /api/v1/organizers/(organizer)/events/(event)/orders/
 
@@ -371,6 +336,7 @@ List of all orders
                 "secret": "z3fsn8jyufm5kpk768q69gkbyr5f4h6w",
                 "addon_to": null,
                 "subevent": null,
+                "discount": null,
                 "pseudonymization_id": "MQLJvANO3B",
                 "seat": null,
                 "checkins": [
@@ -447,6 +413,7 @@ List of all orders
    :query datetime subevent_after: Only return orders that contain a ticket for a subevent taking place after the given date. This is an exclusive after, and it considers the **end** of the subevent (or its start, if the end is not set).
    :query datetime subevent_before: Only return orders that contain a ticket for a subevent taking place after the given date. This is an exclusive before, and it considers the **start** of the subevent.
    :query string exclude: Exclude a field from the output, e.g. ``fees`` or ``positions.downloads``. Can be used as a performance optimization. Can be passed multiple times.
+   :query string include: Include only the given field in the output, e.g. ``fees`` or ``positions.downloads``. Can be used as a performance optimization. Can be passed multiple times. ``include`` is applied before ``exclude``, so ``exclude`` takes precedence.
    :param organizer: The ``slug`` field of the organizer to fetch
    :param event: The ``slug`` field of the event to fetch
    :resheader X-Page-Generated: The server time at the beginning of the operation. If you're using this API to fetch
@@ -457,10 +424,6 @@ List of all orders
 
 Fetching individual orders
 --------------------------
-
-.. versionchanged:: 3.5
-
-   The ``include_canceled_positions`` and ``include_canceled_fees`` query parameters have been added.
 
 .. http:get:: /api/v1/organizers/(organizer)/events/(event)/orders/(code)/
 
@@ -546,6 +509,7 @@ Fetching individual orders
             "secret": "z3fsn8jyufm5kpk768q69gkbyr5f4h6w",
             "addon_to": null,
             "subevent": null,
+            "discount": null,
             "pseudonymization_id": "MQLJvANO3B",
             "seat": null,
             "checkins": [
@@ -1035,10 +999,6 @@ Creating orders
 Order state operations
 ----------------------
 
-.. versionchanged:: 3.12
-
-   The ``mark_paid`` operation now takes a ``send_email`` parameter.
-
 .. http:post:: /api/v1/organizers/(organizer)/events/(event)/orders/(code)/mark_paid/
 
    Marks a pending or expired order as successfully paid.
@@ -1440,10 +1400,6 @@ Sending e-mails
 List of all order positions
 ---------------------------
 
-.. versionchanged:: 3.5
-
-   The ``include_canceled_positions`` and ``include_canceled_fees`` query parameters have been added.
-
 .. http:get:: /api/v1/organizers/(organizer)/events/(event)/orderpositions/
 
    Returns a list of all order positions within a given event.
@@ -1487,6 +1443,7 @@ List of all order positions
             "tax_rule": null,
             "tax_value": "0.00",
             "secret": "z3fsn8jyufm5kpk768q69gkbyr5f4h6w",
+            "discount": null,
             "pseudonymization_id": "MQLJvANO3B",
             "seat": null,
             "addon_to": null,
@@ -1597,6 +1554,7 @@ Fetching individual positions
         "secret": "z3fsn8jyufm5kpk768q69gkbyr5f4h6w",
         "addon_to": null,
         "subevent": null,
+        "discount": null,
         "pseudonymization_id": "MQLJvANO3B",
         "seat": null,
         "checkins": [
@@ -1695,10 +1653,6 @@ Order position ticket download
 
 Manipulating individual positions
 ---------------------------------
-
-.. versionchanged:: 3.15
-
-   The ``PATCH`` method has been added for individual positions.
 
 .. versionchanged:: 4.8
 
@@ -2006,14 +1960,6 @@ otherwise, such as splitting an order or changing fees.
 Order payment endpoints
 -----------------------
 
-.. versionchanged:: 3.6
-
-   Payments can now be created through the API.
-
-.. versionchanged:: 3.12
-
-   The ``confirm`` operation now takes a ``send_email`` parameter.
-
 .. http:get:: /api/v1/organizers/(organizer)/events/(event)/orders/(code)/payments/
 
    Returns a list of all payments for an order.
@@ -2319,6 +2265,7 @@ Order refund endpoints
             "created": "2017-12-01T10:00:00Z",
             "execution_date": "2017-12-04T12:13:12Z",
             "comment": "Cancellation",
+            "details": {},
             "provider": "banktransfer"
           }
         ]
@@ -2362,6 +2309,7 @@ Order refund endpoints
         "created": "2017-12-01T10:00:00Z",
         "execution_date": "2017-12-04T12:13:12Z",
         "comment": "Cancellation",
+        "details": {},
         "provider": "banktransfer"
       }
 
@@ -2419,6 +2367,7 @@ Order refund endpoints
         "created": "2017-12-01T10:00:00Z",
         "execution_date": null,
         "comment": "Cancellation",
+        "details": {},
         "provider": "manual"
       }
 
@@ -2547,10 +2496,6 @@ Revoked ticket secrets
 ----------------------
 
 With some non-default ticket secret generation methods, a list of revoked ticket secrets is required for proper validation.
-
-.. versionchanged:: 3.12
-
-   Added revocation lists.
 
 .. http:get:: /api/v1/organizers/(organizer)/events/(event)/revokedsecrets/
 

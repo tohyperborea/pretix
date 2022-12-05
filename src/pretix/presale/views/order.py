@@ -208,6 +208,14 @@ class OrderDetails(EventViewMixin, OrderDetailMixin, CartMixin, TicketPageMixin,
         self.kwargs = kwargs
         if not self.order:
             raise Http404(_('Unknown order code or not authorized to access this order.'))
+        if self.order.status == Order.STATUS_PENDING:
+            payment_to_complete = self.order.payments.filter(state=OrderPayment.PAYMENT_STATE_CREATED, process_initiated=False).first()
+            if payment_to_complete:
+                return redirect(eventreverse(self.request.event, 'presale:event.order.pay.complete', kwargs={
+                    'order': self.order.code,
+                    'secret': self.order.secret,
+                    'payment': payment_to_complete.pk
+                }))
         return super().get(request, *args, **kwargs)
 
     @cached_property
@@ -472,6 +480,8 @@ class OrderPaymentConfirm(EventViewMixin, OrderDetailMixin, TemplateView):
                         'invoice': i.pk
                     })
                     messages.success(self.request, _('An invoice has been generated.'))
+            self.payment.process_initiated = True
+            self.payment.save(update_fields=['process_initiated'])
             resp = self.payment.payment_provider.execute_payment(request, self.payment)
         except PaymentException as e:
             messages.error(request, str(e))
@@ -532,6 +542,8 @@ class OrderPaymentComplete(EventViewMixin, OrderDetailMixin, View):
 
     def get(self, request, *args, **kwargs):
         try:
+            self.payment.process_initiated = True
+            self.payment.save(update_fields=['process_initiated'])
             resp = self.payment.payment_provider.execute_payment(request, self.payment)
         except PaymentException as e:
             messages.error(request, str(e))
@@ -917,7 +929,10 @@ class OrderCancelDo(EventViewMixin, OrderDetailMixin, AsyncAction, View):
             auto_refund = self.request.event.settings.cancel_allow_user_paid_refund_as_giftcard != "manually"
         if self.order.total == Decimal('0.00'):
             fee = Decimal('0.00')
-        elif 'cancel_fee' in request.POST and self.request.event.settings.cancel_allow_user_paid_adjust_fees:
+        elif self.order.status == Order.STATUS_PENDING:
+            auto_refund = False
+            fee = self.order.user_cancel_fee
+        elif 'cancel_fee' in request.POST and self.order.status == Order.STATUS_PAID and self.request.event.settings.cancel_allow_user_paid_adjust_fees:
             fee = fee or Decimal('0.00')
             fee_in = re.sub('[^0-9.,]', '', request.POST.get('cancel_fee'))
             try:

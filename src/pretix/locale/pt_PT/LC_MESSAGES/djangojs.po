@@ -7,8 +7,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2022-10-26 18:57+0000\n"
-"PO-Revision-Date: 2020-10-27 06:00+0000\n"
+"POT-Creation-Date: 2022-11-29 20:31+0000\n"
+"PO-Revision-Date: 2022-11-16 16:12+0000\n"
 "Last-Translator: David Vaz <davidmgvaz@gmail.com>\n"
 "Language-Team: Portuguese (Portugal) <https://translate.pretix.eu/projects/"
 "pretix/pretix-js/pt_PT/>\n"
@@ -17,7 +17,7 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n > 1;\n"
-"X-Generator: Weblate 3.10.3\n"
+"X-Generator: Weblate 4.14.1\n"
 
 #: pretix/plugins/banktransfer/static/pretixplugins/banktransfer/ui.js:56
 #: pretix/plugins/banktransfer/static/pretixplugins/banktransfer/ui.js:62
@@ -131,7 +131,7 @@ msgstr ""
 msgid "Mercado Pago"
 msgstr ""
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:157
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:163
 #: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:48
 #, fuzzy
 #| msgctxt "widget"
@@ -139,13 +139,13 @@ msgstr ""
 msgid "Continue"
 msgstr "Continuar"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:215
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:221
 #: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:152
 #: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:183
 msgid "Confirming your payment …"
 msgstr "A confirmar o seu pagamento…"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:240
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:246
 msgid "Payment method unavailable"
 msgstr ""
 
@@ -287,7 +287,7 @@ msgstr "Erro desconhecido."
 
 #: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:57
 msgid "Ticket type not allowed here"
-msgstr ""
+msgstr "Tipo de bilhete não é permitido aqui"
 
 #: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:59
 msgid "Entry not allowed"
@@ -495,56 +495,56 @@ msgstr "Adicionar condição"
 
 #: pretix/static/pretixcontrol/js/ui/checkinrules.js:121
 msgid "minutes"
-msgstr ""
+msgstr "minutos"
 
 #: pretix/static/pretixcontrol/js/ui/editor.js:71
 msgid "Check-in QR"
 msgstr "Check-in QR"
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:378
+#: pretix/static/pretixcontrol/js/ui/editor.js:384
 msgid "The PDF background file could not be loaded for the following reason:"
 msgstr "O ficheiro de fundo PDF não pôde ser carregado pela seguinte razão:"
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:648
+#: pretix/static/pretixcontrol/js/ui/editor.js:653
 msgid "Group of objects"
 msgstr "Grupo de objectos"
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:654
+#: pretix/static/pretixcontrol/js/ui/editor.js:659
 msgid "Text object"
 msgstr "Objecto de texto"
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:656
+#: pretix/static/pretixcontrol/js/ui/editor.js:661
 msgid "Barcode area"
 msgstr "Área do código de barras"
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:658
+#: pretix/static/pretixcontrol/js/ui/editor.js:663
 #, fuzzy
 #| msgid "Barcode area"
 msgid "Image area"
 msgstr "Área do código de barras"
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:660
+#: pretix/static/pretixcontrol/js/ui/editor.js:665
 msgid "Powered by pretix"
 msgstr "Powered by pretix"
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:662
+#: pretix/static/pretixcontrol/js/ui/editor.js:667
 msgid "Object"
 msgstr "Objecto"
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:666
+#: pretix/static/pretixcontrol/js/ui/editor.js:671
 msgid "Ticket design"
 msgstr "Design do Bilhete"
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:956
+#: pretix/static/pretixcontrol/js/ui/editor.js:961
 msgid "Saving failed."
 msgstr "Salvar falhou."
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:1006
-#: pretix/static/pretixcontrol/js/ui/editor.js:1045
+#: pretix/static/pretixcontrol/js/ui/editor.js:1011
+#: pretix/static/pretixcontrol/js/ui/editor.js:1050
 msgid "Error while uploading your PDF file, please try again."
 msgstr "Erro ao carregar o seu ficheiro PDF, por favor tente novamente."
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:1030
+#: pretix/static/pretixcontrol/js/ui/editor.js:1035
 msgid "Do you really want to leave the editor without saving your changes?"
 msgstr "Quer mesmo deixar o editor sem guardar as suas alterações?"
 
@@ -634,27 +634,24 @@ msgstr[0] "(mais uma data)"
 msgstr[1] "(mais {num} datas)"
 
 #: pretix/static/pretixpresale/js/ui/cart.js:43
-#, fuzzy
-#| msgid "The items in your cart are no longer reserved for you."
 msgid ""
 "The items in your cart are no longer reserved for you. You can still "
 "complete your order as long as they’re available."
-msgstr "Os itens no seu carrinho já não estão reservados para si."
+msgstr ""
+"Os itens no seu carrinho já não estão mais reservados para você. Você ainda "
+"pode finalizar o seu pedido, desde que eles estejam disponíveis."
 
 #: pretix/static/pretixpresale/js/ui/cart.js:45
 msgid "Cart expired"
 msgstr "Carrinho expirado"
 
 #: pretix/static/pretixpresale/js/ui/cart.js:50
-#, fuzzy
-#| msgid "The items in your cart are reserved for you for one minute."
-#| msgid_plural ""
-#| "The items in your cart are reserved for you for {num} minutes."
 msgid "The items in your cart are reserved for you for one minute."
 msgid_plural "The items in your cart are reserved for you for {num} minutes."
-msgstr[0] "Os artigos no seu carrinho estão reservados para si por um minuto."
+msgstr[0] ""
+"Os artigos no seu carrinho estão reservados para você por um minuto."
 msgstr[1] ""
-"Os artigos no seu carrinho estão reservados para si por {num} minutos."
+"Os artigos no seu carrinho estão reservados para você por {num} minutos."
 
 #: pretix/static/pretixpresale/js/ui/main.js:152
 msgid "The organizer keeps %(currency)s %(amount)s"

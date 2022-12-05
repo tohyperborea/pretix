@@ -564,17 +564,30 @@ class Order(LockModel, LoggedModel):
     @cached_property
     def user_cancel_fee(self):
         fee = Decimal('0.00')
-        if self.event.settings.cancel_allow_user_paid_keep_fees:
-            fee += self.fees.filter(
-                fee_type__in=(OrderFee.FEE_TYPE_PAYMENT, OrderFee.FEE_TYPE_SHIPPING, OrderFee.FEE_TYPE_SERVICE,
-                              OrderFee.FEE_TYPE_CANCELLATION)
-            ).aggregate(
-                s=Sum('value')
-            )['s'] or 0
-        if self.event.settings.cancel_allow_user_paid_keep_percentage:
-            fee += self.event.settings.cancel_allow_user_paid_keep_percentage / Decimal('100.0') * (self.total - fee)
-        if self.event.settings.cancel_allow_user_paid_keep:
-            fee += self.event.settings.cancel_allow_user_paid_keep
+        if self.status == Order.STATUS_PAID:
+            if self.event.settings.cancel_allow_user_paid_keep_fees:
+                fee += self.fees.filter(
+                    fee_type__in=(OrderFee.FEE_TYPE_PAYMENT, OrderFee.FEE_TYPE_SHIPPING, OrderFee.FEE_TYPE_SERVICE,
+                                  OrderFee.FEE_TYPE_CANCELLATION)
+                ).aggregate(
+                    s=Sum('value')
+                )['s'] or 0
+            if self.event.settings.cancel_allow_user_paid_keep_percentage:
+                fee += self.event.settings.cancel_allow_user_paid_keep_percentage / Decimal('100.0') * (self.total - fee)
+            if self.event.settings.cancel_allow_user_paid_keep:
+                fee += self.event.settings.cancel_allow_user_paid_keep
+        else:
+            if self.event.settings.cancel_allow_user_unpaid_keep_fees:
+                fee += self.fees.filter(
+                    fee_type__in=(OrderFee.FEE_TYPE_PAYMENT, OrderFee.FEE_TYPE_SHIPPING, OrderFee.FEE_TYPE_SERVICE,
+                                  OrderFee.FEE_TYPE_CANCELLATION)
+                ).aggregate(
+                    s=Sum('value')
+                )['s'] or 0
+            if self.event.settings.cancel_allow_user_unpaid_keep_percentage:
+                fee += self.event.settings.cancel_allow_user_unpaid_keep_percentage / Decimal('100.0') * (self.total - fee)
+            if self.event.settings.cancel_allow_user_unpaid_keep:
+                fee += self.event.settings.cancel_allow_user_unpaid_keep
         return round_decimal(min(fee, self.total), self.event.currency)
 
     @property
@@ -642,10 +655,12 @@ class Order(LockModel, LoggedModel):
         if self.user_cancel_deadline and now() > self.user_cancel_deadline:
             return False
 
-        if self.status == Order.STATUS_PAID or self.payment_refund_sum > Decimal('0.00'):
+        if self.status == Order.STATUS_PAID:
             if self.total == Decimal('0.00'):
                 return self.event.settings.cancel_allow_user
             return self.event.settings.cancel_allow_user_paid
+        elif self.payment_refund_sum > Decimal('0.00'):
+            return False
         elif self.status == Order.STATUS_PENDING:
             return self.event.settings.cancel_allow_user
         return False
@@ -1027,7 +1042,7 @@ class Order(LockModel, LoggedModel):
         with language(self.locale, self.event.settings.region):
             email_template = self.event.settings.mail_text_resend_link
             email_context = get_email_context(event=self.event, order=self)
-            email_subject = _('Your order: %(code)s') % {'code': self.code}
+            email_subject = self.event.settings.mail_subject_resend_link
             self.send_mail(
                 email_subject, email_template, email_context,
                 'pretix.event.order.email.resend', user=user, auth=auth,
@@ -1494,6 +1509,9 @@ class OrderPayment(models.Model):
     :type info: str
     :param fee: The ``OrderFee`` object used to track the fee for this order.
     :type fee: pretix.base.models.OrderFee
+    :param process_initiated: Only for internal use inside pretix.presale to check which payments have started
+                              the execution process.
+    :type process_initiated: bool
     """
     PAYMENT_STATE_CREATED = 'created'
     PAYMENT_STATE_PENDING = 'pending'
@@ -1544,6 +1562,9 @@ class OrderPayment(models.Model):
         null=True, blank=True, related_name='payments', on_delete=models.SET_NULL
     )
     migrated = models.BooleanField(default=False)
+    process_initiated = models.BooleanField(
+        null=True  # null = created before this field was introduced
+    )
 
     objects = ScopedManager(organizer='order__event__organizer')
 
@@ -1738,8 +1759,8 @@ class OrderPayment(models.Model):
 
         with language(self.order.locale, self.order.event.settings.region):
             email_template = self.order.event.settings.mail_text_order_paid_attendee
+            email_subject = self.order.event.settings.mail_subject_order_paid_attendee
             email_context = get_email_context(event=self.order.event, order=self.order, position=position)
-            email_subject = _('Event registration confirmed: %(code)s') % {'code': self.order.code}
             try:
                 position.send_mail(
                     email_subject, email_template, email_context,
@@ -1756,8 +1777,8 @@ class OrderPayment(models.Model):
 
         with language(self.order.locale, self.order.event.settings.region):
             email_template = self.order.event.settings.mail_text_order_paid
+            email_subject = self.order.event.settings.mail_subject_order_paid
             email_context = get_email_context(event=self.order.event, order=self.order, payment_info=mail_text)
-            email_subject = _('Payment received for your order: %(code)s') % {'code': self.order.code}
             try:
                 self.order.send_mail(
                     email_subject, email_template, email_context,
@@ -2437,7 +2458,7 @@ class OrderPosition(AbstractPosition):
         with language(self.order.locale, self.order.event.settings.region):
             email_template = self.event.settings.mail_text_resend_link
             email_context = get_email_context(event=self.order.event, order=self.order, position=self)
-            email_subject = _('Your event registration: %(code)s') % {'code': self.order.code}
+            email_subject = self.event.settings.mail_subject_resend_link
             self.send_mail(
                 email_subject, email_template, email_context,
                 'pretix.event.order.email.resend', user=user, auth=auth,
@@ -2722,6 +2743,7 @@ class CartPosition(AbstractPosition):
             tax_rule=self.item.tax_rule,
             invoice_address=invoice_address,
             bundled_sum=sum([b.price_after_voucher for b in bundled_positions]),
+            is_bundled=self.is_bundled,
         )
         if line_price.gross != self.line_price_gross or line_price.rate != self.tax_rate:
             self.line_price_gross = line_price.gross

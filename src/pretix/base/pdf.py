@@ -40,6 +40,7 @@ import os
 import re
 import subprocess
 import tempfile
+import unicodedata
 import uuid
 from collections import OrderedDict
 from functools import partial
@@ -827,6 +828,13 @@ class Renderer:
         if o['italic']:
             font += ' I'
 
+        try:
+            ad = getAscentDescent(font, float(o['fontsize']))
+        except KeyError:  # font not known, fall back
+            logger.warning(f'Use of unknown font "{font}"')
+            font = 'Open Sans'
+            ad = getAscentDescent(font, float(o['fontsize']))
+
         align_map = {
             'left': TA_LEFT,
             'center': TA_CENTER,
@@ -853,10 +861,12 @@ class Renderer:
         except:
             logger.exception('Reshaping/Bidi fixes failed on string {}'.format(repr(text)))
 
+        # reportlab does not support unicode combination characters
+        text = unicodedata.normalize("NFKC", text)
+
         p = Paragraph(text, style=style)
         w, h = p.wrapOn(canvas, float(o['width']) * mm, 1000 * mm)
         # p_size = p.wrap(float(o['width']) * mm, 1000 * mm)
-        ad = getAscentDescent(font, float(o['fontsize']))
         canvas.saveState()
         # The ascent/descent offsets here are not really proven to be correct, they're just empirical values to get
         # reportlab render similarly to browser canvas.

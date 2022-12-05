@@ -31,12 +31,13 @@ from pretix.base.services.orders import OrderError
 from pretix.base.services.tasks import EventTask
 from pretix.celery_app import app
 
+from ...base.services.export import ExportError
 from .exporters import OPTIONS, render_pdf
 
 logger = logging.getLogger(__name__)
 
 
-@app.task(base=EventTask, throws=(OrderError,))
+@app.task(base=EventTask, throws=(OrderError, ExportError,))
 def badges_create_pdf(event: Event, fileid: int, positions: List[int]) -> int:
     file = CachedFile.objects.get(id=fileid)
 

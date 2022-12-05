@@ -221,7 +221,7 @@ MAIL_FROM_NOTIFICATIONS = config.get('mail', 'from_notifications', fallback=MAIL
 MAIL_FROM_ORGANIZERS = config.get('mail', 'from_organizers', fallback=MAIL_FROM)
 MAIL_CUSTOM_SENDER_VERIFICATION_REQUIRED = config.getboolean('mail', 'custom_sender_verification_required', fallback=True)
 MAIL_CUSTOM_SENDER_SPF_STRING = config.get('mail', 'custom_sender_spf_string', fallback='')
-MAIL_CUSTOM_SMTP_ALLOW_PRIVATE_NETWORKS = config.getboolean('mail', 'custom_smtp_allow_private_networks', fallback=False)
+MAIL_CUSTOM_SMTP_ALLOW_PRIVATE_NETWORKS = config.getboolean('mail', 'custom_smtp_allow_private_networks', fallback=DEBUG)
 EMAIL_HOST = config.get('mail', 'host', fallback='localhost')
 EMAIL_PORT = config.getint('mail', 'port', fallback=25)
 EMAIL_HOST_USER = config.get('mail', 'user', fallback='')
@@ -802,6 +802,7 @@ if config.has_option('sentry', 'dsn') and not any(c in sys.argv for c in ('shell
         environment=urlparse(SITE_URL).netloc,
         release=__version__,
         send_default_pii=False,
+        propagate_traces=False,  # see https://github.com/getsentry/sentry-python/issues/1717
     )
     ignore_logger('pretix.base.tasks')
     ignore_logger('django.security.DisallowedHost')

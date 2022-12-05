@@ -788,7 +788,18 @@ class VoucherTestCase(BaseQuotaTestCase):
         self.assertTrue(v.is_in_cart())
         self.assertFalse(v.is_ordered())
 
-        order = perform_order(event=self.event.id, payment_provider='free', positions=[cart.id])
+        order = perform_order(
+            event=self.event.id,
+            positions=[cart.id],
+            payments=[{
+                "id": "test0",
+                "provider": "free",
+                "max_value": None,
+                "min_value": None,
+                "multi_use_supported": False,
+                "info_data": {},
+            }],
+        )
         v.refresh_from_db()
         self.assertFalse(v.is_active())
         self.assertFalse(v.is_in_cart())
@@ -797,10 +808,23 @@ class VoucherTestCase(BaseQuotaTestCase):
         # assert that the voucher cannot be reused
         cart = CartPosition.objects.create(event=self.event, item=self.item1, price=self.item1.default_price,
                                            expires=now() + timedelta(days=3), voucher=v)
-        self.assertRaises(OrderError, perform_order, event=self.event.id, payment_provider='free', positions=[cart.id])
+        self.assertRaises(
+            OrderError,
+            perform_order,
+            event=self.event.id,
+            positions=[cart.id],
+            payments=[{
+                "id": "test0",
+                "provider": "free",
+                "max_value": None,
+                "min_value": None,
+                "multi_use_supported": False,
+                "info_data": {},
+            }],
+        )
 
         # assert that the voucher can be re-used after cancelling the successful order
-        cancel_order(order)
+        cancel_order(order['order_id'])
         v.refresh_from_db()
         self.assertTrue(v.is_active())
         self.assertFalse(v.is_in_cart())
@@ -808,7 +832,18 @@ class VoucherTestCase(BaseQuotaTestCase):
 
         cart = CartPosition.objects.create(event=self.event, item=self.item1, price=self.item1.default_price,
                                            expires=now() + timedelta(days=3), voucher=v)
-        perform_order(event=self.event.id, payment_provider='free', positions=[cart.id])
+        perform_order(
+            event=self.event.id,
+            positions=[cart.id],
+            payments=[{
+                "id": "test0",
+                "provider": "free",
+                "max_value": None,
+                "min_value": None,
+                "multi_use_supported": False,
+                "info_data": {},
+            }],
+        )
 
     @classscope(attr='o')
     def test_voucher_applicability_quota(self):
@@ -1403,6 +1438,8 @@ class OrderTestCase(BaseQuotaTestCase):
         self.order.total = 48
         self.order.save()
         self.order = Order.objects.get(pk=self.order.pk)
+        self.order.status = Order.STATUS_PAID
+        self.order.save()
         assert self.order.user_cancel_fee == Decimal('0.00')
 
         self.event.settings.cancel_allow_user_paid_keep = Decimal('2.50')
@@ -1418,6 +1455,27 @@ class OrderTestCase(BaseQuotaTestCase):
         assert self.order.user_cancel_fee == Decimal('9.10')
 
         self.event.settings.cancel_allow_user_paid_keep = Decimal('100.00')
+        self.order = Order.objects.get(pk=self.order.pk)
+        assert self.order.user_cancel_fee == Decimal('48.00')
+
+        self.order.status = Order.STATUS_PENDING
+        self.order.save()
+        self.order = Order.objects.get(pk=self.order.pk)
+        assert self.order.user_cancel_fee == Decimal('0.00')
+
+        self.event.settings.cancel_allow_user_unpaid_keep = Decimal('2.50')
+        self.order = Order.objects.get(pk=self.order.pk)
+        assert self.order.user_cancel_fee == Decimal('2.50')
+
+        self.event.settings.cancel_allow_user_unpaid_keep_percentage = Decimal('5.0')
+        self.order = Order.objects.get(pk=self.order.pk)
+        assert self.order.user_cancel_fee == Decimal('4.90')
+
+        self.event.settings.cancel_allow_user_unpaid_keep_fees = True
+        self.order = Order.objects.get(pk=self.order.pk)
+        assert self.order.user_cancel_fee == Decimal('6.80')
+
+        self.event.settings.cancel_allow_user_unpaid_keep = Decimal('100.00')
         self.order = Order.objects.get(pk=self.order.pk)
         assert self.order.user_cancel_fee == Decimal('48.00')
 
@@ -2014,7 +2072,8 @@ class EventTest(TestCase):
             "and": [
                 {"isBefore": [{"var": "now"}, {"buildTime": ["date_from"]}, None]},
                 {"inList": [{"var": "product"}, {"objectList": [{"lookup": ["product", str(i1new.pk), "Text"]}]}]},
-                {"inList": [{"var": "variation"}, {"objectList": [{"lookup": ["variation", str(i1new.variations.get().pk), "Text"]}]}]}
+                {"inList": [{"var": "variation"},
+                            {"objectList": [{"lookup": ["variation", str(i1new.variations.get().pk), "Text"]}]}]}
             ]
         }
 
@@ -2099,7 +2158,8 @@ class EventTest(TestCase):
             date_from=now()
         )
         q = Quota.objects.create(event=event, name='Quota', size=2)
-        item = Item.objects.create(event=event, name='Early-bird ticket', default_price=0, active=True, available_until=now() - timedelta(days=1))
+        item = Item.objects.create(event=event, name='Early-bird ticket', default_price=0, active=True,
+                                   available_until=now() - timedelta(days=1))
         q.items.add(item)
         assert Event.annotated(Event.objects).first().active_quotas == []
 

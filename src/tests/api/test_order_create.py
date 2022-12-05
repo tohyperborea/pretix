@@ -341,6 +341,7 @@ def test_order_create_simulate(token_client, organizer, event, item, quota, ques
                 'tax_value': '0.00',
                 'addon_to': None,
                 'subevent': None,
+                'discount': None,
                 'checkins': [],
                 'downloads': [],
                 'answers': [
@@ -409,13 +410,13 @@ def test_order_create_positionids_addons_simulated(token_client, organizer, even
         {'id': 0, 'order': '', 'positionid': 1, 'item': item.pk, 'variation': None, 'price': '23.00',
          'attendee_name': 'Peter', 'attendee_name_parts': {'full_name': 'Peter', '_scheme': 'full'}, 'company': None,
          'street': None, 'zipcode': None, 'city': None, 'country': None, 'state': None, 'attendee_email': None,
-         'voucher': None, 'tax_rate': '0.00', 'tax_value': '0.00',
+         'voucher': None, 'tax_rate': '0.00', 'tax_value': '0.00', 'discount': None,
          'addon_to': None, 'subevent': None, 'checkins': [], 'downloads': [], 'answers': [], 'tax_rule': None,
          'pseudonymization_id': 'PREVIEW', 'seat': None, 'canceled': False},
         {'id': 0, 'order': '', 'positionid': 2, 'item': item.pk, 'variation': None, 'price': '23.00',
          'attendee_name': 'Peter', 'attendee_name_parts': {'full_name': 'Peter', '_scheme': 'full'}, 'company': None,
          'street': None, 'zipcode': None, 'city': None, 'country': None, 'state': None, 'attendee_email': None,
-         'voucher': None, 'tax_rate': '0.00', 'tax_value': '0.00',
+         'voucher': None, 'tax_rate': '0.00', 'tax_value': '0.00', 'discount': None,
          'addon_to': 1, 'subevent': None, 'checkins': [], 'downloads': [], 'answers': [], 'tax_rule': None,
          'pseudonymization_id': 'PREVIEW', 'seat': None, 'canceled': False}
     ]
@@ -1123,6 +1124,48 @@ def test_order_create_positionids_addons(token_client, organizer, event, item, q
         pos1 = o.positions.first()
         pos2 = o.positions.last()
     assert pos2.addon_to == pos1
+
+
+@pytest.mark.django_db
+def test_order_create_is_bundled_addons(token_client, organizer, event, item, quota):
+    res = copy.deepcopy(ORDER_CREATE_PAYLOAD)
+    res['positions'] = [
+        {
+            "positionid": 1,
+            "item": item.pk,
+            "variation": None,
+            "price": "23.00",
+            "attendee_name_parts": {"full_name": "Peter"},
+            "attendee_email": None,
+            "addon_to": None,
+            "answers": [],
+            "subevent": None
+        },
+        {
+            "positionid": 2,
+            "item": item.pk,
+            "variation": None,
+            "price": "23.00",
+            "attendee_name_parts": {"full_name": "Peter"},
+            "attendee_email": None,
+            "addon_to": 1,
+            "is_bundled": True,
+            "answers": [],
+            "subevent": None
+        }
+    ]
+    resp = token_client.post(
+        '/api/v1/organizers/{}/events/{}/orders/'.format(
+            organizer.slug, event.slug
+        ), format='json', data=res
+    )
+    assert resp.status_code == 201
+    with scopes_disabled():
+        o = Order.objects.get(code=resp.data['code'])
+        pos1 = o.positions.first()
+        pos2 = o.positions.last()
+    assert pos2.addon_to == pos1
+    assert pos2.is_bundled
 
 
 @pytest.mark.django_db
@@ -2569,3 +2612,99 @@ def test_order_create_pdf_data(token_client, organizer, event, item, quota, ques
     )
     assert resp.status_code == 201
     assert 'secret' in resp.data['positions'][0]['pdf_data']
+
+
+@pytest.mark.django_db
+def test_create_cart_and_consume_cart_with_addons(token_client, organizer, event, item, quota, question):
+    # End to end test for the combination of cart creation and order creation, as used eg in POS
+    with scopes_disabled():
+        addon_cat = event.categories.create(name='Addons')
+        addon_item = event.items.create(name='Workshop', default_price=2, category=addon_cat)
+        item.addons.create(addon_category=addon_cat)
+        q = event.quotas.create(name="Addon Quota", size=1)
+        q.items.add(addon_item)
+
+    res = {
+        'cart_id': 'aaa@api',
+        'item': item.pk,
+        'variation': None,
+        'price': '23.00',
+        'attendee_name_parts': {'full_name': 'Peter'},
+        'attendee_email': None,
+        'addon_to': None,
+        'subevent': None,
+        'expires': (now() + datetime.timedelta(days=1)).isoformat(),
+        'includes_tax': True,
+        'sales_channel': 'web',
+        'answers': [],
+        'addons': [
+            {
+                'item': addon_item.pk,
+                'variation': None,
+                'price': '1.00',
+                'attendee_name_parts': {'full_name': 'Peter\'s friend'},
+                'attendee_email': None,
+                'subevent': None,
+                'includes_tax': True,
+                'answers': []
+            }
+        ],
+    }
+    resp = token_client.post(
+        '/api/v1/organizers/{}/events/{}/cartpositions/bulk_create/'.format(
+            organizer.slug, event.slug
+        ), format='json', data=[
+            res
+        ]
+    )
+    assert resp.status_code == 200
+    assert len(resp.data['results']) == 1
+    assert resp.data['results'][0]['success']
+    assert resp.data['results'][0]['data']['addons']
+
+    res = copy.deepcopy(ORDER_CREATE_PAYLOAD)
+    res['positions'] = [
+        {
+            "positionid": 1,
+            "item": item.pk,
+            "variation": None,
+            "price": "23.00",
+            "attendee_name_parts": {"full_name": "Peter"},
+            "attendee_email": None,
+            "addon_to": None,
+            "answers": [],
+            "subevent": None
+        },
+        {
+            "positionid": 2,
+            "item": addon_item.pk,
+            "variation": None,
+            "price": "23.00",
+            "attendee_name_parts": {"full_name": "Peter"},
+            "attendee_email": None,
+            "addon_to": 1,
+            "answers": [],
+            "subevent": None
+        }
+    ]
+
+    resp = token_client.post(
+        '/api/v1/organizers/{}/events/{}/orders/'.format(
+            organizer.slug, event.slug
+        ), format='json', data=res
+    )
+    assert resp.status_code == 400
+    assert resp.data == {
+        'positions': [
+            {},
+            {'item': ['There is not enough quota available on quota "Addon Quota" to perform the operation.']},
+        ]
+    }
+
+    res['consume_carts'] = ['aaa@api']
+    resp = token_client.post(
+        '/api/v1/organizers/{}/events/{}/orders/'.format(
+            organizer.slug, event.slug
+        ), format='json', data=res
+    )
+    assert resp.status_code == 201

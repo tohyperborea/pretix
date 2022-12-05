@@ -37,6 +37,7 @@ import re
 from datetime import timedelta
 from decimal import Decimal
 
+import bleach
 from django import forms
 from django.conf import settings
 from django.contrib import messages
@@ -204,7 +205,7 @@ class OrganizerDetail(OrganizerDetailViewMixin, OrganizerPermissionRequiredMixin
         ctx = super().get_context_data(**kwargs)
         ctx['filter_form'] = self.filter_form
         ctx['meta_fields'] = [
-            self.filter_form['meta_{}'.format(p.name)] for p in self.organizer.meta_properties.all()
+            self.filter_form['meta_{}'.format(p.name)] for p in self.organizer.meta_properties.filter(filter_allowed=True)
         ]
         return ctx
 
@@ -324,7 +325,7 @@ class MailSettingsPreview(OrganizerPermissionRequiredMixin, View):
         if preview_item not in MailSettingsForm.base_context:
             return HttpResponseBadRequest(_('invalid item'))
 
-        regex = r"^" + re.escape(preview_item) + r"_(?P<idx>[\d+])$"
+        regex = r"^" + re.escape(preview_item) + r"_(?P<idx>[\d]+)$"
         msgs = {}
         for k, v in request.POST.items():
             # only accept allowed fields
@@ -333,9 +334,12 @@ class MailSettingsPreview(OrganizerPermissionRequiredMixin, View):
                 idx = matched.group('idx')
                 if idx in self.supported_locale:
                     with language(self.supported_locale[idx], self.request.organizer.settings.region):
-                        msgs[self.supported_locale[idx]] = markdown_compile_email(
-                            v.format_map(self.placeholders(preview_item))
-                        )
+                        if k.startswith('mail_subject_'):
+                            msgs[self.supported_locale[idx]] = bleach.clean(v).format_map(self.placeholders(preview_item))
+                        else:
+                            msgs[self.supported_locale[idx]] = markdown_compile_email(
+                                v.format_map(self.placeholders(preview_item))
+                            )
 
         return JsonResponse({
             'item': preview_item,
@@ -2210,7 +2214,7 @@ class CustomerDetailView(OrganizerDetailViewMixin, OrganizerPermissionRequiredMi
 
     def get_queryset(self):
         q = Q(customer=self.customer)
-        if self.request.organizer.settings.customer_accounts_link_by_email:
+        if self.request.organizer.settings.customer_accounts_link_by_email and self.customer.email:
             # This is safe because we only let customers with verified emails log in
             q |= Q(email__iexact=self.customer.email)
         qs = Order.objects.filter(
@@ -2236,7 +2240,7 @@ class CustomerDetailView(OrganizerDetailViewMixin, OrganizerPermissionRequiredMi
             ) + '?id=' + self.customer.identifier + '&token=' + token
             mail(
                 self.customer.email,
-                _('Set a new password for your account at {organizer}').format(organizer=self.request.organizer.name),
+                self.request.organizer.settings.mail_subject_customer_reset,
                 self.request.organizer.settings.mail_text_customer_reset,
                 ctx,
                 locale=self.customer.locale,

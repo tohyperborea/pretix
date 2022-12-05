@@ -73,7 +73,7 @@
     {% endif %}
 
     <p>
-    {% if options == 0 %}
+    {% if options == 0 and not seating_available %}
         {% if request.event.has_subevents and not voucher.subevent %}
             {% blocktrans trimmed %}
                 For the selected date, there are currently no products available that can be bought with this voucher. Please try a different date or a different voucher.
@@ -149,7 +149,9 @@
                                                 from {{ minprice }}
                                             {% endblocktrans %}
                                         {% elif not item.min_price and not item.max_price %}
-                                            {% trans "FREE" context "price" %}
+                                            {% if not item.mandatory_priced_addons %}
+                                                <span class="text-uppercase">{% trans "free" context "price" %}</span>
+                                            {% endif %}
                                         {% else %}
                                             {{ item.min_price|money:event.currency }}
                                         {% endif %}
@@ -205,7 +207,9 @@
                                                     </div>
                                                     <p>
                                                 {% elif not var.display_price.gross %}
-                                                    {% trans "FREE" context "price" %}
+                                                    {% if not item.mandatory_priced_addons %}
+                                                        <span class="text-uppercase">{% trans "free" context "price" %}</span>
+                                                    {% endif %}
                                                 {% elif event.settings.display_net_prices %}
                                                     {{ var.display_price.net|money:event.currency }}
                                                 {% else %}
@@ -337,7 +341,9 @@
                                     </div>
                                     <p>
                                     {% elif not item.display_price.gross %}
-                                        {% trans "FREE" context "price" %}
+                                        {% if not item.mandatory_priced_addons %}
+                                            <span class="text-uppercase">{% trans "free" context "price" %}</span>
+                                        {% endif %}
                                     {% elif event.settings.display_net_prices %}
                                         {{ item.display_price.net|money:event.currency }}
                                     {% else %}

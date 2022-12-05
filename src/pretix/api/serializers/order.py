@@ -29,6 +29,7 @@ import pycountry
 from django.conf import settings
 from django.core.files import File
 from django.db.models import F, Q
+from django.utils.encoding import force_str
 from django.utils.timezone import now
 from django.utils.translation import gettext_lazy
 from django_countries.fields import Country
@@ -61,14 +62,25 @@ from pretix.base.services.pricing import (
 )
 from pretix.base.settings import COUNTRIES_WITH_STATE_IN_ADDRESS
 from pretix.base.signals import register_ticket_outputs
+from pretix.helpers.countries import CachedCountries
 from pretix.multidomain.urlreverse import build_absolute_uri
 
 logger = logging.getLogger(__name__)
 
 
 class CompatibleCountryField(serializers.Field):
+    countries = CachedCountries()
+    default_error_messages = {
+        'invalid_choice': gettext_lazy('"{input}" is not a valid choice.')
+    }
+
     def to_internal_value(self, data):
-        return {self.field_name: Country(data)}
+        country = self.countries.alpha2(data)
+        if data and not country:
+            country = self.countries.by_name(force_str(data))
+            if not country:
+                self.fail("invalid_choice", input=data)
+        return {self.field_name: Country(country)}
 
     def to_representation(self, instance: InvoiceAddress):
         if instance.country:
@@ -410,13 +422,13 @@ class OrderPositionSerializer(I18nAwareModelSerializer):
     class Meta:
         model = OrderPosition
         fields = ('id', 'order', 'positionid', 'item', 'variation', 'price', 'attendee_name', 'attendee_name_parts',
-                  'company', 'street', 'zipcode', 'city', 'country', 'state',
+                  'company', 'street', 'zipcode', 'city', 'country', 'state', 'discount',
                   'attendee_email', 'voucher', 'tax_rate', 'tax_value', 'secret', 'addon_to', 'subevent', 'checkins',
                   'downloads', 'answers', 'tax_rule', 'pseudonymization_id', 'pdf_data', 'seat', 'canceled')
         read_only_fields = (
             'id', 'order', 'positionid', 'item', 'variation', 'price', 'voucher', 'tax_rate', 'tax_value', 'secret',
             'addon_to', 'subevent', 'checkins', 'downloads', 'answers', 'tax_rule', 'pseudonymization_id', 'pdf_data',
-            'seat', 'canceled'
+            'seat', 'canceled', 'discount',
         )
 
     def __init__(self, *args, **kwargs):
@@ -553,12 +565,22 @@ class OrderPaymentSerializer(I18nAwareModelSerializer):
                   'details')
 
 
+class RefundDetailsField(serializers.Field):
+    def to_representation(self, value: OrderRefund):
+        pp = value.payment_provider
+        if not pp:
+            return {}
+        return pp.api_refund_details(value)
+
+
 class OrderRefundSerializer(I18nAwareModelSerializer):
     payment = SlugRelatedField(slug_field='local_id', read_only=True)
+    details = RefundDetailsField(source='*', allow_null=True, read_only=True)
 
     class Meta:
         model = OrderRefund
-        fields = ('local_id', 'state', 'source', 'amount', 'payment', 'created', 'execution_date', 'comment', 'provider')
+        fields = ('local_id', 'state', 'source', 'amount', 'payment', 'created', 'execution_date', 'comment', 'provider',
+                  'details')
 
 
 class OrderURLField(serializers.URLField):
@@ -599,6 +621,23 @@ class OrderSerializer(I18nAwareModelSerializer):
         super().__init__(*args, **kwargs)
         if not self.context['pdf_data']:
             self.fields['positions'].child.fields.pop('pdf_data', None)
+
+        includes = set(self.context['include'])
+        if includes:
+            for fname, field in list(self.fields.items()):
+                if fname in includes:
+                    continue
+                elif hasattr(field, 'child'):
+                    found_any = False
+                    for childfname, childfield in list(field.child.fields.items()):
+                        if f'{fname}.{childfname}' not in includes:
+                            field.child.fields.pop(childfname)
+                        else:
+                            found_any = True
+                    if not found_any:
+                        self.fields.pop(fname)
+                else:
+                    self.fields.pop(fname)
 
         for exclude_field in self.context['exclude']:
             p = exclude_field.split('.')
@@ -721,7 +760,7 @@ class OrderPositionCreateSerializer(I18nAwareModelSerializer):
     class Meta:
         model = OrderPosition
         fields = ('positionid', 'item', 'variation', 'price', 'attendee_name', 'attendee_name_parts', 'attendee_email',
-                  'company', 'street', 'zipcode', 'city', 'country', 'state',
+                  'company', 'street', 'zipcode', 'city', 'country', 'state', 'is_bundled',
                   'secret', 'addon_to', 'subevent', 'answers', 'seat', 'voucher')
 
     def __init__(self, *args, **kwargs):

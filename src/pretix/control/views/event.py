@@ -41,6 +41,7 @@ from decimal import Decimal
 from itertools import groupby
 from urllib.parse import urlsplit
 
+import bleach
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.contenttypes.models import ContentType
@@ -386,7 +387,7 @@ class EventPlugins(EventSettingsViewMixin, EventPermissionRequiredMixin, Templat
                 if key.startswith("plugin:"):
                     module = key.split(":")[1]
                     if value == "enable" and module in plugins_available:
-                        if getattr(plugins_available[module], 'restricted', False):
+                        if getattr(plugins_available[module].app, 'restricted', False):
                             if module not in request.event.settings.allowed_restricted_plugins:
                                 continue
 
@@ -723,7 +724,7 @@ class MailSettingsPreview(EventPermissionRequiredMixin, View):
         if preview_item not in MailSettingsForm.base_context:
             return HttpResponseBadRequest(_('invalid item'))
 
-        regex = r"^" + re.escape(preview_item) + r"_(?P<idx>[\d+])$"
+        regex = r"^" + re.escape(preview_item) + r"_(?P<idx>[\d]+)$"
         msgs = {}
         for k, v in request.POST.items():
             # only accept allowed fields
@@ -732,9 +733,12 @@ class MailSettingsPreview(EventPermissionRequiredMixin, View):
                 idx = matched.group('idx')
                 if idx in self.supported_locale:
                     with language(self.supported_locale[idx], self.request.event.settings.region):
-                        msgs[self.supported_locale[idx]] = markdown_compile_email(
-                            v.format_map(self.placeholders(preview_item))
-                        )
+                        if k.startswith('mail_subject_'):
+                            msgs[self.supported_locale[idx]] = bleach.clean(v).format_map(self.placeholders(preview_item))
+                        else:
+                            msgs[self.supported_locale[idx]] = markdown_compile_email(
+                                v.format_map(self.placeholders(preview_item))
+                            )
 
         return JsonResponse({
             'item': preview_item,

@@ -33,6 +33,7 @@
 # License for the specific language governing permissions and limitations under the License.
 
 import django_filters
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Prefetch, ProtectedError, Q
 from django.utils.timezone import now
@@ -250,7 +251,7 @@ class EventViewSet(viewsets.ModelViewSet):
         if copy_from:
             new_event.copy_data_from(copy_from)
 
-            if plugins:
+            if plugins is not None:
                 new_event.set_active_plugins(plugins)
             if 'is_public' in serializer.validated_data:
                 new_event.is_public = serializer.validated_data['is_public']
@@ -260,15 +261,16 @@ class EventViewSet(viewsets.ModelViewSet):
                 new_event.sales_channels = serializer.validated_data['sales_channels']
             if 'has_subevents' in serializer.validated_data:
                 new_event.has_subevents = serializer.validated_data['has_subevents']
+            if 'date_admission' in serializer.validated_data:
+                new_event.date_admission = serializer.validated_data['date_admission']
             new_event.save()
             if 'timezone' in serializer.validated_data:
                 new_event.settings.timezone = serializer.validated_data['timezone']
         else:
             serializer.instance.set_defaults()
 
-            if plugins:
-                new_event.set_active_plugins(plugins)
-                new_event.save(update_fields=['plugins'])
+            new_event.set_active_plugins(plugins if plugins is not None else settings.PRETIX_PLUGINS_DEFAULT.split(','))
+            new_event.save(update_fields=['plugins'])
 
         serializer.instance.log_action(
             'pretix.event.added',
@@ -330,6 +332,7 @@ with scopes_disabled():
         ends_after = django_filters.rest_framework.IsoDateTimeFilter(method='ends_after_qs')
         modified_since = django_filters.IsoDateTimeFilter(field_name='last_modified', lookup_expr='gte')
         sales_channel = django_filters.rest_framework.CharFilter(method='sales_channel_qs')
+        search = django_filters.rest_framework.CharFilter(method='search_qs')
 
         class Meta:
             model = SubEvent
@@ -364,6 +367,12 @@ with scopes_disabled():
 
         def sales_channel_qs(self, queryset, name, value):
             return queryset.filter(event__sales_channels__contains=value)
+
+        def search_qs(self, queryset, name, value):
+            return queryset.filter(
+                Q(name__icontains=i18ncomp(value))
+                | Q(location__icontains=i18ncomp(value))
+            )
 
 
 class SubEventViewSet(ConditionalListView, viewsets.ModelViewSet):

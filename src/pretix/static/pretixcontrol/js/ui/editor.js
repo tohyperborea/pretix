@@ -302,14 +302,18 @@ var editor = {
         editor.pdf.getPage(page_number).then(function (page) {
             var canvas = document.getElementById('pdf-canvas');
 
-            var scale = editor.$cva.width() / page.getViewport(1.0).width;
-            var viewport = page.getViewport(scale);
+            var scale = editor.$cva.width() / page.getViewport({scale: 1.0}).width;
+            var viewport = page.getViewport({ scale: scale });
+            var outputScale = window.devicePixelRatio || 1;
 
             // Prepare canvas using PDF page dimensions
             var context = canvas.getContext('2d');
             context.clearRect(0, 0, canvas.width, canvas.height);
-            canvas.height = viewport.height;
-            canvas.width = viewport.width;
+            canvas.width = Math.floor(viewport.width * outputScale);
+            canvas.height = Math.floor(viewport.height * outputScale);
+            canvas.style.width = Math.floor(viewport.width) + "px";
+            canvas.style.height =  Math.floor(viewport.height) + "px";
+            var transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null;
 
             editor.pdf_page = page;
             editor.pdf_scale = scale;
@@ -318,10 +322,11 @@ var editor = {
             // Render PDF page into canvas context
             var renderContext = {
                 canvasContext: context,
-                viewport: viewport
+                transform: transform,
+                viewport: viewport,
             };
             var renderTask = page.render(renderContext);
-            renderTask.then(function () {
+            renderTask.promise.then(function () {
                 editor.pdf_page_number = page_number
                 editor._init_page_nav();
 
@@ -361,10 +366,11 @@ var editor = {
         // TODO: Loading indicators
         var url = editor.pdf_url;
         // TODO: Handle cross-origin issues if static files are on a different origin
-        PDFJS.workerSrc = editor.$pdfcv.attr("data-worker-url");
+        var pdfjsLib = window['pdfjs-dist/build/pdf'];
+        pdfjsLib.GlobalWorkerOptions.workerSrc = editor.$pdfcv.attr("data-worker-url");
 
         // Asynchronous download of PDF
-        var loadingTask = PDFJS.getDocument(url);
+        var loadingTask = pdfjsLib.getDocument(url);
         loadingTask.promise.then(function (pdf) {
 
             editor.pdf = pdf;
@@ -381,8 +387,8 @@ var editor = {
     },
 
     _init_fabric: function (dump) {
-        editor.$fcv.get(0).width = editor.$pdfcv.get(0).width;
-        editor.$fcv.get(0).height = editor.$pdfcv.get(0).height;
+        editor.$fcv.get(0).width = editor.pdf_viewport.width;
+        editor.$fcv.get(0).height = editor.pdf_viewport.height;
         editor.fabric = new fabric.Canvas('fabric-canvas');
 
         editor.fabric.on('object:modified', editor._create_savepoint);
@@ -432,10 +438,9 @@ var editor = {
 
     _ready: function () {
         var isOpera = (!!window.opr && !!opr.addons) || !!window.opera || navigator.userAgent.indexOf(' OPR/') >= 0;
-        var isFirefox = typeof InstallTrigger !== 'undefined';
-        var isChrome = !!window.chrome && (!!window.chrome.webstore || !!window.chrome.runtime);
-        var isEdgeChromium = isChrome && (navigator.userAgent.indexOf("Edg") != -1);
-        if (isChrome || isOpera || isFirefox || isEdgeChromium) {
+        var isFirefox = navigator.userAgent.indexOf("Firefox") > 0;
+        var isChromeBased = !!window.chrome;
+        if (isChromeBased || isOpera || isFirefox) {
             $("#loading-container").hide();
             $("#loading-initial").remove();
         } else {

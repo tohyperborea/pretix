@@ -12,10 +12,13 @@ on:
       - 'src/pretix/locale/**'
       - 'src/pretix/static/**'
 
+permissions:
+  contents: read  #  to fetch code (actions/checkout)
+
 jobs:
   isort:
     name: isort
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v2
       - name: Set up Python 3.8
@@ -36,7 +39,7 @@ jobs:
         working-directory: ./src
   flake:
     name: flake8
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v2
       - name: Set up Python 3.8
@@ -57,7 +60,7 @@ jobs:
         working-directory: ./src
   licenseheader:
     name: licenseheaders
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v2
       - name: Set up Python 3.8

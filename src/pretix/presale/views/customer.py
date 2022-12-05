@@ -50,6 +50,7 @@ from pretix.base.customersso.oidc import (
 from pretix.base.models import Customer, InvoiceAddress, Order, OrderPosition
 from pretix.base.services.mail import mail
 from pretix.base.settings import PERSON_NAME_SCHEMES
+from pretix.helpers.http import redirect_to_url
 from pretix.multidomain.models import KnownDomain
 from pretix.multidomain.urlreverse import build_absolute_uri, eventreverse
 from pretix.presale.forms.customer import (
@@ -312,7 +313,7 @@ class ResetPasswordView(FormView):
         print( ctx['url'])
         mail(
             customer.email,
-            _('Set a new password for your account at {organizer}').format(organizer=self.request.organizer.name),
+            self.request.organizer.settings.mail_subject_customer_reset,
             self.request.organizer.settings.mail_text_customer_reset,
             ctx,
             locale=customer.locale,
@@ -350,7 +351,7 @@ class ProfileView(CustomerRequiredMixin, ListView):
 
     def get_queryset(self):
         q = Q(customer=self.request.customer)
-        if self.request.organizer.settings.customer_accounts_link_by_email:
+        if self.request.organizer.settings.customer_accounts_link_by_email and self.request.customer.email:
             # This is safe because we only let customers with verified emails log in
             q |= Q(email__iexact=self.request.customer.email)
         qs = Order.objects.filter(
@@ -505,7 +506,7 @@ class ChangeInformationView(CustomerRequiredMixin, FormView):
             }, salt='pretix.presale.views.customer.ChangeInformationView')
             mail(
                 new_email,
-                _('Confirm email address for your account at {organizer}').format(organizer=self.request.organizer.name),
+                self.request.organizer.settings.mail_subject_customer_email_change,
                 self.request.organizer.settings.mail_text_customer_email_change,
                 ctx,
                 locale=form.instance.locale,
@@ -621,7 +622,7 @@ class SSOLoginView(RedirectBackMixin, View):
         })
 
         if self.provider.method == "oidc":
-            return redirect(oidc_authorize_url(self.provider, f'{nonce}§{next_url}', redirect_uri))
+            return redirect_to_url(oidc_authorize_url(self.provider, f'{nonce}§{next_url}', redirect_uri))
         else:
             raise Http404("Unknown SSO method.")
 
@@ -822,7 +823,7 @@ class SSOLoginReturnView(RedirectBackMixin, View):
             })
         else:
             customer_login(self.request, customer)
-            return redirect(self.get_success_url(redirect_to))
+            return redirect_to_url(self.get_success_url(redirect_to))
 
     def _fail(self, message, popup_origin):
         if not popup_origin:

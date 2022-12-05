@@ -191,6 +191,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         ctx['event'] = self.request.event
         ctx['pdf_data'] = self.request.query_params.get('pdf_data', 'false') == 'true'
         ctx['exclude'] = self.request.query_params.getlist('exclude')
+        ctx['include'] = self.request.query_params.getlist('include')
         return ctx
 
     def get_queryset(self):
@@ -680,28 +681,33 @@ class OrderViewSet(viewsets.ModelViewSet):
                 )
                 if order.require_approval:
                     email_template = request.event.settings.mail_text_order_placed_require_approval
+                    subject_template = request.event.settings.mail_subject_order_placed_require_approval
                     log_entry = 'pretix.event.order.email.order_placed_require_approval'
                     email_attendees = False
                 elif free_flow:
                     email_template = request.event.settings.mail_text_order_free
+                    subject_template = request.event.settings.mail_subject_order_free
                     log_entry = 'pretix.event.order.email.order_free'
                     email_attendees = request.event.settings.mail_send_order_free_attendee
                     email_attendees_template = request.event.settings.mail_text_order_free_attendee
+                    subject_attendees_template = request.event.settings.mail_subject_order_free_attendee
                 else:
                     email_template = request.event.settings.mail_text_order_placed
+                    subject_template = request.event.settings.mail_subject_order_placed
                     log_entry = 'pretix.event.order.email.order_placed'
                     email_attendees = request.event.settings.mail_send_order_placed_attendee
                     email_attendees_template = request.event.settings.mail_text_order_placed_attendee
+                    subject_attendees_template = request.event.settings.mail_subject_order_placed_attendee
 
                 _order_placed_email(
-                    request.event, order, payment.payment_provider if payment else None, email_template,
-                    log_entry, invoice, payment, is_free=free_flow
+                    request.event, order, email_template, subject_template,
+                    log_entry, invoice, [payment] if payment else [], is_free=free_flow
                 )
                 if email_attendees:
                     for p in order.positions.all():
                         if p.addon_to_id is None and p.attendee_email and p.attendee_email != order.email:
-                            _order_placed_email_attendee(request.event, order, p, email_attendees_template, log_entry,
-                                                         is_free=free_flow)
+                            _order_placed_email_attendee(request.event, order, p, email_attendees_template, subject_attendees_template,
+                                                         log_entry, is_free=free_flow)
 
                 if not free_flow and order.status == Order.STATUS_PAID and payment:
                     payment._send_paid_mail(invoice, None, '')
@@ -1605,6 +1611,17 @@ class RefundViewSet(CreateModelMixin, viewsets.ReadOnlyModelViewSet):
                 user=request.user if request.user.is_authenticated else None,
                 auth=request.auth
             )
+
+            if r.state in (OrderRefund.REFUND_STATE_DONE, OrderRefund.REFUND_STATE_CANCELED, OrderRefund.REFUND_STATE_FAILED):
+                r.order.log_action(
+                    f'pretix.event.order.refund.{r.state}', {
+                        'local_id': r.local_id,
+                        'provider': r.provider,
+                    },
+                    user=request.user if request.user.is_authenticated else None,
+                    auth=request.auth
+                )
+
             if mark_refunded:
                 try:
                     mark_order_refunded(

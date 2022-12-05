@@ -73,7 +73,13 @@ var pretixpaypal = {
             pretixpaypal.locale = this.guessLocale();
         }
 
-        pretixpaypal.continue_button.prop("disabled", true);
+        // If no payment option is selected, and we're not on the paypage (which doesn't have a continue button),
+        // disable the continue button
+        if (!pretixpaypal.paypage) {
+            if (!pretixpaypal.continue_button[0].form.elements['payment'].value) {
+                pretixpaypal.continue_button.prop("disabled", true);
+            }
+        }
 
         // We are setting the cogwheel already here, as the renderAPM() method might take some time to get loaded.
         let apmtextselector = $("label[for=input_payment_paypal_apm]");
@@ -310,7 +316,6 @@ var pretixpaypal = {
             'tr_TR',
         ]
         let lang = $("body").attr("data-locale").split('-')[0];
-        console.log(allowed_locales.find(element => element.startsWith(lang)));
         return allowed_locales.find(element => element.startsWith(lang));
     }
 };
