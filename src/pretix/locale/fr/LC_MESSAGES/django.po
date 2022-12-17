@@ -2114,7 +2114,6 @@ msgstr "Bloquer les bons de réduction"
 msgid "Current user's carts"
 msgstr "Panier de l'utilisateur actuel"
 
-<<<<<<< HEAD
 msgid "How do tickets work for Hyperborea?"
 msgstr "Comment fonctionnent les billets pour Hyperborea ?"
 
@@ -2158,10 +2157,7 @@ msgstr "La loterie des billets a eu lieu le"
 msgid "Please register for the waiting list."
 msgstr "Veuillez vous inscrire sur la liste d'attente."
 
-#: pretix/base/exporters/orderlist.py:845
-=======
 #: pretix/base/exporters/orderlist.py:863
->>>>>>> release/4.15.x
 #, fuzzy
 #| msgid "Expire order"
 msgid "Exited orders"
