@@ -149,8 +149,8 @@ class WaitingListEntry(LoggedModel):
             if self.variation
             else self.item.check_quotas(count_waitinglist=False, subevent=self.subevent, _cache=quota_cache)
         )
-        if availability[1] is None or availability[1] < 1:
-            raise WaitingListException(_('This product is currently not available.'))
+        # if availability[1] is None or availability[1] < 1:
+        #     raise WaitingListException(_('This product is currently not available.'))
 
         ev = self.subevent or self.event
         if ev.seat_category_mappings.filter(product=self.item).exists():
@@ -196,6 +196,7 @@ class WaitingListEntry(LoggedModel):
                     email=self.email
                 ),
                 block_quota=True,
+                allow_ignore_quota=True,
                 subevent=self.subevent,
             )
             v.log_action('pretix.voucher.added.waitinglist', {
@@ -259,3 +260,8 @@ class WaitingListEntry(LoggedModel):
         ).exclude(pk=pk).exists():
             raise ValidationError(_('You are already on this waiting list! We will notify '
                                     'you as soon as we have a ticket available for you.'))
+        elif WaitingListEntry.objects.filter(
+        item=item, variation=variation, email__iexact=email, voucher__isnull=False, subevent=subevent
+        ).exclude(pk=pk).exists():
+            raise ValidationError(_('You have already been assigned a ticket! '
+                                    'Contact ticketing@sideburn.ca if this is in error.'))
