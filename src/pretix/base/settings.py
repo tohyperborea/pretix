@@ -2618,7 +2618,7 @@ Your {organizer} team"""))
     },
     'checkout_email_helptext': {
         'default': LazyI18nString.from_gettext(gettext_noop(
-            'Make sure to enter a valid email address. We will send you an order '
+            'We will send you an order '
             'confirmation including a link that you need to access your order later.'
         )),
         'type': LazyI18nString,
