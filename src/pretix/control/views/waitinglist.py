@@ -151,6 +151,13 @@ class WaitingListQuerySetMixin:
                 id__in=self.request_data.getlist('entry')
             )
 
+        if self.request_data.get("ordering", "") != "":
+            o = self.request_data.get("ordering", "")
+            if o == "name":
+                qs = sorted(qs, key=lambda w: w.name, reverse=False)
+            elif o == "-name":
+                qs = sorted(qs, key=lambda w: w.name, reverse=True)
+
         return qs
 
 
