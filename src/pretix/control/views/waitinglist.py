@@ -98,6 +98,21 @@ class WaitingListQuerySetMixin:
             'item__quotas', 'variation__quotas'
         )
 
+        if self.request_data.get("email", "") != "":
+            ms = self.request_data.get("email", "")
+            ms_list = ms.split(",")
+            mainq = Q()
+            for m in ms_list:
+                mainq = mainq | Q(email=m)
+            qs = qs.filter(mainq)
+
+
+        if self.request_data.get("name", "") != "":
+            n = self.request_data.get("name", "")
+            qs_list = [w.id for w in qs if w.name is not None and n.casefold() in w.name.casefold()]
+            qs = WaitingListEntry.objects.filter(id__in=qs_list)
+
+
         s = self.request_data.get("status", "")
         if s == 's':
             qs = qs.filter(voucher__isnull=False)
@@ -135,6 +150,13 @@ class WaitingListQuerySetMixin:
             qs = qs.filter(
                 id__in=self.request_data.getlist('entry')
             )
+
+        if self.request_data.get("ordering", "") != "":
+            o = self.request_data.get("ordering", "")
+            if o == "name":
+                qs = sorted(qs, key=lambda w: w.name, reverse=False)
+            elif o == "-name":
+                qs = sorted(qs, key=lambda w: w.name, reverse=True)
 
         return qs
 

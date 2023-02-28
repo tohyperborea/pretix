@@ -58,7 +58,7 @@
                                 {% endfor %}
                             </select>
                         {% endif %}
-                        <button class="btn btn-large btn-primary" type="submit">
+                        <button class="btn btn-large btn-primary" type="submit" disabled>
                             {% trans "Send as many vouchers as possible" %}
                         </button>
                     </div>
@@ -82,6 +82,10 @@
 
     <p>
     <form class="form-inline helper-display-inline" action="" method="get">
+        <label for="email"> Email </label>
+        <input type="email" title="enter 1 or more emails separated by comma" name="email" multiple>
+        <label for="name"> Name </label>
+        <input type="text" name="name">
         <select name="status" class="form-control">
             <option value="a"
                     {% if request.GET.status == "p" %}selected="selected"{% endif %}>{% trans "All entries" %}</option>
@@ -149,7 +153,9 @@
                         {% endif %}
                     </th>
                     {% if request.event.settings.waiting_list_names_asked %}
-                    <th>{% trans "Name" %}</th>
+                    <th>{% trans "Name" %}
+                      <a href="?{% url_replace request 'ordering' '-name' %}"><i class="fa fa-caret-down"></i></a>
+                      <a href="?{% url_replace request 'ordering' 'name' %}"><i class="fa fa-caret-up"></i></a></th>
                     {% endif %}
                     <th>{% trans "Email" %}</th>
                     {% if request.event.settings.waiting_list_phones_asked %}
