@@ -252,9 +252,6 @@ class WaitingRemoveView(EventViewMixin, CustomerRequiredMixin, TemplateView):
     def get_success_url(self):
         return self.get_index_url()
 
-
-@method_decorator(allow_frame_if_namespaced, 'dispatch')
-class WaitingRankView(EventViewMixin, CustomerRequiredMixin, View):
     """
     View to check a customer's rank in the waiting list.
     Returns JSON with the rank or error message.
