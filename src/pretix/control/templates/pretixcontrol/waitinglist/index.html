@@ -129,15 +129,24 @@
         <a href="?{% url_replace request "download" "yes" %}"
                 class="btn btn-default"><i class="fa fa-download"></i>
             {% trans "Download list" %}</a>
-        <button type="button" id="run-lottery-btn" class="btn btn-default">
-            <i class="fa fa-download"></i>
-            {% trans "Run lottery" %}
-        </button>
+        {% if request.GET.item %}
+            <a href="?{% url_replace request "lottery" "run" %}"
+                    class="btn btn-default"><i class="fa fa-download"></i>
+                {% trans "Run lottery" %}</a>
 
-        <button type="button" id="revert-list-btn" class="btn btn-default">
-            <i class="fa fa-download"></i>
-            {% trans "Revert list" %}
-        </button>
+            <a href="?{% url_replace request "lottery" "revert" %}"
+                    class="btn btn-default"><i class="fa fa-download"></i>
+                {% trans "Revert list" %}</a>
+        {% else %}
+            <button class="btn btn-default" disabled title="{% trans "Please select a product first" %}">
+                <i class="fa fa-download"></i>
+                {% trans "Run lottery" %}
+            </button>
+            <button class="btn btn-default" disabled title="{% trans "Please select a product first" %}">
+                <i class="fa fa-download"></i>
+                {% trans "Revert list" %}
+            </button>
+        {% endif %}
 
     </form>
     </p>
