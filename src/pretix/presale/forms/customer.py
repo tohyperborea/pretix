@@ -282,13 +282,13 @@ class SetPasswordForm(forms.Form):
     )
     password = forms.CharField(
         label=_('Password'),
-        widget=forms.PasswordInput(attrs={'minlength': '8', 'autocomplete': 'new-password'}),
+        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
         max_length=4096,
         required=True
     )
     password_repeat = forms.CharField(
         label=_('Repeat password'),
-        widget=forms.PasswordInput(attrs={'minlength': '8', 'autocomplete': 'new-password'}),
+        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
         max_length=4096,
     )
 
@@ -382,7 +382,7 @@ class ChangePasswordForm(forms.Form):
     )
     password_repeat = forms.CharField(
         label=_('Repeat password'),
-        widget=forms.PasswordInput(attrs={'minlength': '8', 'autocomplete': 'new-password'}),
+        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
         max_length=4096,
     )
 
