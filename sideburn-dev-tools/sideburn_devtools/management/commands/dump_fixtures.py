@@ -39,5 +39,3 @@ class Command(BaseCommand):
 
         with scopes_disabled():
             return call_command("dumpdata", *unknown_args)
-
-

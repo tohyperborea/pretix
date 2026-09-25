@@ -27,14 +27,16 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        # Fixture names resolve via sideburn_devtools/fixtures/ (app must be in INSTALLED_APPS).
         # Deterministic order matters due to foreign keys.
         base_fixtures = [
-            "pretix/base/fixtures/organizer.json",
-            "pretix/base/fixtures/customer.json",
-            "pretix/base/fixtures/event.json",
-            "pretix/base/fixtures/tickets.json",
-            "pretix/base/fixtures/tax_and_global_settings.json",
+            "organizer",
+            "customer",
+            "event",
+            "tickets",
+            "tax_and_global_settings",
         ]
+        # Core pretix plugin fixture (still ships with pretix).
         plugin_fixtures = [
             "pretix/plugins/ticketoutputpdf/fixtures/ticketlayout.json",
         ]
@@ -54,5 +56,3 @@ class Command(BaseCommand):
 
         with scopes_disabled():
             call_command("loaddata", *fixtures, **loaddata_opts)
-
-
