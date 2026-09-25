@@ -22,4 +22,3 @@ def ordinal(value):
         return f"{num}th"
     except (ValueError, TypeError):
         return value
-
