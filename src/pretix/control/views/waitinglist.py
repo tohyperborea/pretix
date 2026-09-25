@@ -34,7 +34,6 @@
 
 import csv
 import io
-import random
 
 from django.contrib import messages
 from django.db import transaction
@@ -185,6 +184,7 @@ class WaitingListActionView(EventPermissionRequiredMixin, WaitingListQuerySetMix
             })
         elif request.POST.get('action') == 'delete_confirm':
             for obj in self.get_queryset():
+                # Allow bulk-deleting entries that already have an assigned voucher.
                 # if not obj.voucher_id:
                 obj.log_action('pretix.event.orders.waitinglist.deleted', user=self.request.user)
                 obj.delete()
@@ -322,108 +322,7 @@ class WaitingListView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, Pa
     def get(self, request, *args, **kwargs):
         if request.GET.get("download", "") == "yes":
             return self._download_csv()
-        elif request.GET.get("lottery", "") == "run" or request.GET.get("lottery", "") == "revert":
-            item_id = request.GET.get("item", "")
-            if not item_id:
-                messages.error(request, _('You must select a product to run or revert its lottery.'))
-                return redirect(reverse('control:event.orders.waitinglist', kwargs={
-                    'event': self.request.event.slug,
-                    'organizer': self.request.event.organizer.slug
-                }))
-            try:
-                item = Item.objects.get(pk=item_id, event=self.request.event)
-            except (ValueError, Item.DoesNotExist):
-                messages.error(request, _('Invalid product selected.'))
-                return redirect(reverse('control:event.orders.waitinglist', kwargs={
-                    'event': self.request.event.slug,
-                    'organizer': self.request.event.organizer.slug
-                }))
-            revert = request.GET.get("lottery", "") == "revert"
-            return self._run_lottery(item_id=item_id, revert=revert)
         return super().get(request, *args, **kwargs)
-
-    def _run_lottery(self, item_id, revert=False):
-        output = io.StringIO()
-        writer = csv.writer(output, quoting=csv.QUOTE_NONNUMERIC, delimiter=",")
-
-        # Get queryset and filter to only the specified item
-        qs = self.get_queryset().filter(item_id=item_id)
-        
-        if not qs.exists():
-            messages.error(self.request, _('No waiting list entries found for the selected product.'))
-            return redirect(reverse('control:event.orders.waitinglist', kwargs={
-                'event': self.request.event.slug,
-                'organizer': self.request.event.organizer.slug
-            }))
-        
-        qs = sorted(qs, key=lambda o: o.created,reverse=True)
-        priority_count = len(qs)
-        new_priorities = list(range(1, priority_count + 1))
-
-        if revert==False:
-            random.shuffle(new_priorities)
-            print(f"new_priority list: {new_priorities}")
-        new_priorities_iter = iter(new_priorities)
-
-        for w in qs:
-            w.old_priority = w.priority
-            w.priority = next(new_priorities_iter)
-            print(f"{w} created {w.created.isoformat(),} old priority {w.old_priority}, new {w.priority}")
-            w.save(update_fields=['priority'])
-            # w.save(update_fields=['old_priority'])
-
-        qs = sorted(qs, key=lambda o: o.priority, reverse=True)
-
-        # Set or delete lottery date for the specific item
-        if not revert:
-            self.request.event.settings.set(f'lottery_date_for_item_{item_id}', now().isoformat())
-        else:
-            self.request.event.settings.delete(f'lottery_date_for_item_{item_id}')
-
-        headers = [
-            _('Name'), _('E-mail address'), _('Phone number'), _('Product'), _('On list since'), _('Status'),
-            _('Voucher code'),
-            _('Language'), _('Priority'), 'OldPriority'
-        ]
-        # if self.request.event.has_subevents:
-        #     headers.append(pgettext('subevent', 'Date'))
-        writer.writerow(headers)
-
-        for w in qs:
-            if w.item:
-                if w.variation:
-                    prod = '%s – %s' % (str(w.item), str(w.variation))
-                else:
-                    prod = '%s' % str(w.item)
-            if w.voucher:
-                if w.voucher.redeemed >= w.voucher.max_usages:
-                    status = _('Voucher redeemed')
-                elif not w.voucher.is_active():
-                    status = _('Voucher expired')
-                else:
-                    status = _('Voucher assigned')
-            else:
-                status = _('Waiting')
-
-            row = [
-                w.name,
-                w.email,
-                w.phone,
-                prod,
-                w.created.isoformat(),
-                status,
-                w.voucher.code if w.voucher else '',
-                w.locale,
-                str(w.priority),
-                str(w.old_priority)
-            ]
-            if self.request.event.has_subevents:
-                row.append(str(w.subevent))
-            writer.writerow(row)
-
-        r = HttpResponse(output.getvalue().encode("utf-8"), content_type='text/csv')
-        r['Content-Disposition'] = 'attachment; filename="{}.csv"'.format(self.get_lottery_filename(revert=revert))
-        return r
 
     def _download_csv(self):
         output = io.StringIO()
@@ -476,12 +375,6 @@ class WaitingListView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, Pa
     def get_filename(self):
         return '{}_waitinglist'.format(self.request.event.slug)
 
-    def get_lottery_filename(self, revert):
-        if revert:
-            return '{}_lottery_results_REVERTED'.format(self.request.event.slug)
-        else:
-            return '{}_lottery_results'.format(self.request.event.slug)
-
 
 class EntryDelete(EventPermissionRequiredMixin, CompatDeleteView):
     model = WaitingListEntry
@@ -493,6 +386,7 @@ class EntryDelete(EventPermissionRequiredMixin, CompatDeleteView):
         try:
             return self.request.event.waitinglistentries.get(
                 id=self.kwargs['entry'],
+                # Allow deleting entries that already have an assigned voucher.
                 # voucher__isnull=True,
             )
         except WaitingListEntry.DoesNotExist:
