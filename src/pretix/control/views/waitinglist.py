@@ -184,6 +184,7 @@ class WaitingListActionView(EventPermissionRequiredMixin, WaitingListQuerySetMix
             })
         elif request.POST.get('action') == 'delete_confirm':
             for obj in self.get_queryset():
+                # Allow bulk-deleting entries that already have an assigned voucher.
                 # if not obj.voucher_id:
                 obj.log_action('pretix.event.orders.waitinglist.deleted', user=self.request.user)
                 obj.delete()
@@ -385,6 +386,7 @@ class EntryDelete(EventPermissionRequiredMixin, CompatDeleteView):
         try:
             return self.request.event.waitinglistentries.get(
                 id=self.kwargs['entry'],
+                # Allow deleting entries that already have an assigned voucher.
                 # voucher__isnull=True,
             )
         except WaitingListEntry.DoesNotExist:

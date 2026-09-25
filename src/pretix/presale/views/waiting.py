@@ -31,9 +31,10 @@ from django.utils.translation import gettext_lazy as _, pgettext_lazy
 from django.views.generic import FormView, TemplateView
 
 from pretix.base.models import Quota, SubEvent
+from pretix.base.signals import waitinglist_entry_created
 from pretix.base.templatetags.urlreplace import url_replace
 from pretix.multidomain.urlreverse import eventreverse
-from pretix.presale.signals import waitinglist_form_class
+from pretix.presale.signals import waitinglist_form_class, waitinglist_template_name
 from pretix.presale.views import EventViewMixin, iframe_entry_view_wrapper
 from pretix.presale.views.customer import CustomerRequiredMixin
 
@@ -56,6 +57,12 @@ class WaitingView(EventViewMixin, CustomerRequiredMixin, FormView):
                 form_class = response
                 break
         return form_class
+
+    def get_template_names(self):
+        for receiver, response in waitinglist_template_name.send(self.request.event):
+            if response is not None:
+                return [response]
+        return [self.template_name]
 
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
@@ -137,7 +144,12 @@ class WaitingView(EventViewMixin, CustomerRequiredMixin, FormView):
             return redirect(self.get_index_url())
 
         form.save()
-        form.instance.send_confirm()
+        waitinglist_entry_created.send(
+            self.request.event,
+            entry=form.instance,
+            user=None,
+            auth=None,
+        )
 
         form.instance.log_action("pretix.event.orders.waitinglist.added")
         messages.success(self.request, _("We've added you to the waiting list. You will receive "
