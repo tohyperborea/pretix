@@ -25,7 +25,6 @@ Then:
 cd src
 python manage.py migrate
 python manage.py load_fixtures
-python manage.py load_fixtures --only base
 python manage.py dump_fixtures pretixbase.Event --indent 2 -o out.json
 ```
 

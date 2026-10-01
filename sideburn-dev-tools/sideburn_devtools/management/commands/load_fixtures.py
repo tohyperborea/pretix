@@ -10,16 +10,10 @@ class Command(BaseCommand):
 
             Examples:
             python manage.py load_fixtures
-            python manage.py load_fixtures --only all --ignorenonexistent
+            python manage.py load_fixtures --ignorenonexistent
             """
 
     def add_arguments(self, parser):
-        parser.add_argument(
-            "--only",
-            choices=("all", "base", "plugin"),
-            default="all",
-            help="Load only a subset of fixtures (default: all).",
-        )
         parser.add_argument(
             "--ignorenonexistent",
             action="store_true",
@@ -28,27 +22,15 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         # Fixture names resolve via sideburn_devtools/fixtures/ (app must be in INSTALLED_APPS).
-        # Deterministic order matters due to foreign keys.
-        base_fixtures = [
+        # All fixtures load in one loaddata call, so cross-references resolve regardless of order.
+        fixtures = [
             "organizer",
             "customer",
             "event",
             "tickets",
             "tax_and_global_settings",
-        ]
-        # Data for pretix's bundled plugins (requires the plugin's tables).
-        plugin_fixtures = [
             "ticketlayout",
         ]
-
-        only = options["only"]
-        fixtures: list[str]
-        if only == "base":
-            fixtures = base_fixtures
-        elif only == "plugin":
-            fixtures = plugin_fixtures
-        else:
-            fixtures = base_fixtures + plugin_fixtures
 
         loaddata_opts = {}
         if options.get("ignorenonexistent"):
