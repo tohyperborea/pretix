@@ -65,12 +65,13 @@ from pretix.presale.signals import change_information_form_class
 from pretix.presale.utils import (
     customer_login, customer_logout, update_customer_session_auth_hash,
 )
+
 SessionStore = import_module(settings.SESSION_ENGINE).SessionStore
 
-# FIXME:Hacky solution to get around the fact that there is no event variable in the customer request context. Assumes
-# Assumes "/current" URL will redirect to the appropriate event.
+# Sideburn: default post-login destination instead of the customer profile. Customer views have no
+# event in context; "/current" is redirected to the current event outside this app (nginx).
+STOREFRONT_URL = '/current'
 
-STOREFRONT_URL='/current'
 
 class RedirectBackMixin:
     redirect_field_name = 'next'
@@ -139,7 +140,6 @@ class LoginView(RedirectBackMixin, FormView):
 
         if not url:
             return STOREFRONT_URL
-            # return eventreverse(self.request.organizer, 'presale:organizer.customer.profile', kwargs={})
 
         if self.request.GET.get("request_cross_domain_customer_auth") == "true":
             otpstore = SessionStore()
@@ -649,14 +649,9 @@ class SSOLoginView(RedirectBackMixin, View):
     def get_success_url(self):
         url = self.get_redirect_url()
 
-
-        # default_url =  eventreverse(self.request.organizer, 'presale:organizer.customer.profile', kwargs={})
-        # default_url = eventreverse(self.request.event, 'presale:event.index', kwargs=kwargs)
-        # if not url:ss
-        #     default_url = '/'
-        # else:
-        #     default_url = eventreverse(self.request.organizer, 'presale:organizer.customer.profile', kwargs={})
-        return url or STOREFRONT_URL
+        if not url:
+            return STOREFRONT_URL
+        return url
 
 
 class SSOLoginReturnView(RedirectBackMixin, View):
@@ -878,7 +873,6 @@ class SSOLoginReturnView(RedirectBackMixin, View):
 
         if not url:
             return STOREFRONT_URL
-            # return eventreverse(self.request.organizer, 'presale:organizer.customer.profile', kwargs={})
         else:
             if self.request.session.get(f'pretix_customerauth_{self.provider.pk}_cross_domain_requested'):
                 otpstore = SessionStore()
