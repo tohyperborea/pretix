@@ -36,9 +36,9 @@ class Command(BaseCommand):
             "tickets",
             "tax_and_global_settings",
         ]
-        # Core pretix plugin fixture (still ships with pretix).
+        # Data for pretix's bundled plugins (requires the plugin's tables).
         plugin_fixtures = [
-            "pretix/plugins/ticketoutputpdf/fixtures/ticketlayout.json",
+            "ticketlayout",
         ]
 
         only = options["only"]
