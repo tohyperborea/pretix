@@ -25,7 +25,6 @@ Then:
 cd src
 python manage.py migrate
 python manage.py load_fixtures
-python manage.py load_fixtures --only base
 python manage.py dump_fixtures pretixbase.Event --indent 2 -o out.json
 ```
 
@@ -33,7 +32,7 @@ python manage.py dump_fixtures pretixbase.Event --indent 2 -o out.json
 
 | Path | Purpose |
 |------|---------|
-| `sideburn_devtools/fixtures/*.json` | SideBurn staging organizer/event/tickets/settings |
+| `sideburn_devtools/fixtures/*.json` | SideBurn staging organizer/event/tickets/settings, PDF ticket layout |
 | `management/commands/load_fixtures` | Ordered `loaddata` with django-scopes disabled |
 | `management/commands/dump_fixtures` | `dumpdata` wrapper with django-scopes disabled |
 
