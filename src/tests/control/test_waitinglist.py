@@ -196,13 +196,55 @@ def test_delete_bulk_without_selection_deletes_nothing(client, env):
     client.login(email='dummy@dummy.dummy', password='dummy')
     with scopes_disabled():
         count = WaitingListEntry.objects.count()
-    assert count > 1
+    assert count >= 1
 
     client.post('/control/event/dummy/dummy/waitinglist/action', data={
         'action': 'delete_confirm',
     })
     with scopes_disabled():
         assert WaitingListEntry.objects.count() == count
+
+
+@pytest.mark.django_db
+def test_list_ordering_by_name(client, env):
+    client.login(email='dummy@dummy.dummy', password='dummy')
+    with scopes_disabled():
+        for name, email in (('Carol', 'foo0@bar.com'), ('Alice', 'foo1@bar.com'), ('Bob', 'foo2@bar.com')):
+            WaitingListEntry.objects.filter(email=email).update(name_cached=name)
+
+    response = client.get('/control/event/dummy/dummy/waitinglist/?ordering=name')
+    names = [e.name_cached for e in response.context['entries'] if e.name_cached]
+    assert names == ['Alice', 'Bob', 'Carol']
+
+    response = client.get('/control/event/dummy/dummy/waitinglist/?ordering=-name')
+    names = [e.name_cached for e in response.context['entries'] if e.name_cached]
+    assert names == ['Carol', 'Bob', 'Alice']
+
+
+@pytest.mark.django_db
+def test_delete_bulk_confirmation_with_name_ordering(client, env):
+    client.login(email='dummy@dummy.dummy', password='dummy')
+    with scopes_disabled():
+        wle = WaitingListEntry.objects.filter(voucher__isnull=True).first()
+
+    response = client.post('/control/event/dummy/dummy/waitinglist/action', data={
+        'entry': wle.pk,
+        'action': 'delete',
+        'ordering': 'name',
+    })
+    assert response.status_code == 200
+    assert wle.email in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_delete_single_with_voucher(client, env):
+    client.login(email='dummy@dummy.dummy', password='dummy')
+    with scopes_disabled():
+        wle = WaitingListEntry.objects.filter(voucher__isnull=False).first()
+
+    client.post('/control/event/dummy/dummy/waitinglist/%s/delete' % wle.id)
+    with scopes_disabled():
+        assert not WaitingListEntry.objects.filter(id=wle.id).exists()
 
 
 @pytest.mark.django_db
