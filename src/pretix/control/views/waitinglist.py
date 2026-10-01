@@ -183,11 +183,10 @@ class WaitingListActionView(EventPermissionRequiredMixin, WaitingListQuerySetMix
                 'forbidden': self.get_queryset().filter(voucher__isnull=False),
             })
         elif request.POST.get('action') == 'delete_confirm':
-            for obj in self.get_queryset():
-                # Allow bulk-deleting entries that already have an assigned voucher.
-                # if not obj.voucher_id:
-                obj.log_action('pretix.event.orders.waitinglist.deleted', user=self.request.user)
-                obj.delete()
+            for obj in self.get_queryset(force_filtered=True):
+                if not obj.voucher_id:
+                    obj.log_action('pretix.event.orders.waitinglist.deleted', user=self.request.user)
+                    obj.delete()
             messages.success(request, _('The selected entries have been deleted.'))
             return self._redirect_back()
 
