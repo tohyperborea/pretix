@@ -192,6 +192,20 @@ def test_delete_bulk(client, env):
 
 
 @pytest.mark.django_db
+def test_delete_bulk_without_selection_deletes_nothing(client, env):
+    client.login(email='dummy@dummy.dummy', password='dummy')
+    with scopes_disabled():
+        count = WaitingListEntry.objects.count()
+    assert count > 1
+
+    client.post('/control/event/dummy/dummy/waitinglist/action', data={
+        'action': 'delete_confirm',
+    })
+    with scopes_disabled():
+        assert WaitingListEntry.objects.count() == count
+
+
+@pytest.mark.django_db
 def test_dashboard(client, env):
     with scopes_disabled():
         quota = Quota.objects.create(name="Test", size=2, event=env[0])

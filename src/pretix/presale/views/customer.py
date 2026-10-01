@@ -322,7 +322,6 @@ class ResetPasswordView(FormView):
         token = TokenGenerator().make_token(customer)
         ctx['url'] = build_absolute_uri(self.request.organizer,
                                         'presale:organizer.customer.recoverpw') + '?id=' + customer.identifier + '&token=' + token
-        print( ctx['url'])
         mail(
             customer.email,
             self.request.organizer.settings.mail_subject_customer_reset,
