@@ -815,9 +815,10 @@ def test_cross_domain_login_validate_redirect_url(env, client, client2):
     }, HTTP_HOST='org.test')
     assert r.status_code == 302
 
+    # Sideburn: an unsafe "next" falls back to STOREFRONT_URL ("/current") instead of the account page.
     u = urlparse(r.headers['Location'])
-    assert u.netloc == 'org.test'
-    assert u.path == '/account/'
+    assert u.netloc == ''
+    assert u.path == '/current'
     q = parse_qs(u.query)
     assert 'cross_domain_customer_auth' not in q
 

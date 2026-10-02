@@ -36,7 +36,6 @@ from pretix.base.templatetags.urlreplace import url_replace
 from pretix.multidomain.urlreverse import eventreverse
 from pretix.presale.signals import waitinglist_form_class, waitinglist_template_name
 from pretix.presale.views import EventViewMixin, iframe_entry_view_wrapper
-from pretix.presale.views.customer import CustomerRequiredMixin
 
 from ...base.i18n import get_language_without_region
 from ...base.models import Voucher, WaitingListEntry
@@ -46,7 +45,7 @@ from . import allow_frame_if_namespaced
 
 @method_decorator(allow_frame_if_namespaced, 'dispatch')
 @method_decorator(iframe_entry_view_wrapper, 'dispatch')
-class WaitingView(EventViewMixin, CustomerRequiredMixin, FormView):
+class WaitingView(EventViewMixin, FormView):
     template_name = 'pretixpresale/event/waitinglist.html'
     form_class = WaitingListForm
 
@@ -157,7 +156,7 @@ class WaitingView(EventViewMixin, CustomerRequiredMixin, FormView):
 
 
 @method_decorator(allow_frame_if_namespaced, 'dispatch')
-class WaitingRemoveView(EventViewMixin, CustomerRequiredMixin, TemplateView):
+class WaitingRemoveView(EventViewMixin, TemplateView):
     template_name = 'pretixpresale/event/waitinglist_remove.html'
 
     def get_context_data(self, **kwargs):
