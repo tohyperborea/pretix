@@ -74,8 +74,6 @@ from pretix.presale.views.event import (
     get_grouped_items, item_group_by_category,
 )
 from pretix.presale.views.robots import NoSearchIndexViewMixin
-from pretix.presale.views.customer import CustomerRequiredMixin
-
 try:
     widget_data_cache = caches['redis']
 except:
@@ -543,7 +541,7 @@ class CartAdd(EventViewMixin, CartActionMixin, AsyncAction, View):
 
 @method_decorator(allow_frame_if_namespaced, 'dispatch')
 @method_decorator(iframe_entry_view_wrapper, 'dispatch')
-class RedeemView(CustomerRequiredMixin, NoSearchIndexViewMixin, EventViewMixin, CartMixin, TemplateView):
+class RedeemView(NoSearchIndexViewMixin, EventViewMixin, CartMixin, TemplateView):
     template_name = "pretixpresale/event/voucher.html"
 
     def get_context_data(self, **kwargs):
