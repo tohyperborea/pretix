@@ -492,6 +492,7 @@ class ChangeInformationView(CustomerRequiredMixin, FormView):
     template_name = 'pretixpresale/organizers/customer_info.html'
     form_class = ChangeInfoForm
 
+    # Sideburn: lets plugins extend the form (Twilio adds an SMS opt-in). Not in upstream pretix.
     def get_form_class(self):
         return change_information_form_class.send_chained(
             self.request.organizer, 'cls', cls=ChangeInfoForm, request=self.request
