@@ -122,10 +122,12 @@ class WaitingListEntry(LoggedModel):
             WaitingListEntry.clean_duplicate(self.event, self.email, self.item, self.variation, self.subevent, self.pk)
             WaitingListEntry.clean_itemvar(self.event, self.item, self.variation)
             WaitingListEntry.clean_subevent(self.event, self.subevent)
+            # Sideburn: plugin validation hook (waitinglist_entry_validate).
             WaitingListEntry.run_plugin_validators(self)
         except ObjectDoesNotExist:
             raise ValidationError('Invalid input')
 
+    # Sideburn: not in upstream pretix.
     @staticmethod
     def run_plugin_validators(entry):
         from pretix.base.signals import waitinglist_entry_validate
@@ -159,6 +161,8 @@ class WaitingListEntry(LoggedModel):
         return build_name(self.name_parts, "concatenation_all_components", fallback_scheme=lambda: self.event.settings.name_scheme)
 
     def send_voucher(self, quota_cache=None, user=None, auth=None):
+        # Sideburn: plugins can ask to skip the quota check (waiting_list_send_voucher); used below
+        # for the availability check and allow_ignore_quota.
         from pretix.base.signals import waiting_list_send_voucher
 
         send_kwargs = {}
@@ -256,6 +260,7 @@ class WaitingListEntry(LoggedModel):
                 auth=auth,
             )
 
+        # Sideburn: not in upstream pretix.
         from pretix.base.signals import waiting_list_voucher_sent
         waiting_list_voucher_sent.send(self.event, entry=self, user=user, auth=auth)
 

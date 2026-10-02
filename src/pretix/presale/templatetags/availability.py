@@ -1,3 +1,5 @@
+# Sideburn: not in upstream pretix. Renders the sold-out label through the sold_out_availability
+# signal (used by pretix-sideburn-lottery), falling back to upstream's markup.
 from django import template
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe

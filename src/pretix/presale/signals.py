@@ -403,6 +403,7 @@ additional text to the description. You are passed the ``item``, ``variation`` a
 expected to return HTML.
 """
 
+# Sideburn: not in upstream pretix (used by pretix-sideburn-lottery).
 sold_out_availability = EventPluginSignal()
 """
 Arguments: ``item``, ``variation``, ``allow_waitinglist``, ``cart_namespace``, ``subevent``, ``compact``
@@ -413,6 +414,7 @@ to replace the default "SOLD OUT" label and optional waiting-list link text.
 As with all plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
+# Sideburn: not in upstream pretix (used by pretix-sideburn-lottery).
 checkout_questions_top = EventPluginSignal()
 """
 Arguments: ``request``
@@ -433,6 +435,7 @@ consent state. Receivers should return a list of ``pretix.presale.cookies.Cookie
 As with all event-plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
+# Sideburn: not in upstream pretix (used by pretix-sideburn-core and pretix-sideburn-twilio).
 waitinglist_form_class = EventPluginSignal()
 """
 Arguments: ``cls``
@@ -445,6 +448,7 @@ unchanged if you do not want to modify it.
 As with all plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
+# Sideburn: not in upstream pretix (used by pretix-sideburn-lottery).
 waitinglist_template_name = EventPluginSignal()
 """
 Arguments: (none)
@@ -455,6 +459,7 @@ The first non-None response is used.
 As with all plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
+# Sideburn: not in upstream pretix (used by pretix-sideburn-twilio).
 change_information_form_class = GlobalSignal()
 """
 Arguments: ``cls``, ``request``
@@ -467,6 +472,7 @@ and must return a form class, usually a subclass of ``cls``.
 The ``sender`` keyword argument is the organizer.
 """
 
+# Sideburn: not in upstream pretix (used by pretix-sideburn-twilio).
 customer_profile_extra = Signal()
 """
 Arguments: ``request``, ``customer``

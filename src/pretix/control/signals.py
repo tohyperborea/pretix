@@ -213,6 +213,7 @@ quota as argument in the ``quota`` keyword argument.
 As with all plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
+# Sideburn: not in upstream pretix (used by pretix-sideburn-lottery).
 waitinglist_index_html = EventPluginSignal()
 """
 Arguments: ``request``
