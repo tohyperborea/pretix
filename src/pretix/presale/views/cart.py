@@ -74,6 +74,7 @@ from pretix.presale.views.event import (
     get_grouped_items, item_group_by_category,
 )
 from pretix.presale.views.robots import NoSearchIndexViewMixin
+
 try:
     widget_data_cache = caches['redis']
 except:
@@ -612,6 +613,7 @@ class RedeemView(NoSearchIndexViewMixin, EventViewMixin, CartMixin, TemplateView
             v = v.strip()
             try:
                 self.voucher = Voucher.objects.get(code__iexact=v, event=request.event)
+                # Sideburn: voucher helpers (SID-95).
                 if self.voucher.is_fully_redeemed():
                     err = error_messages['voucher_redeemed']
                 elif self.voucher.is_expired():

@@ -553,6 +553,8 @@ class Voucher(LoggedModel):
         """
         return not self.is_fully_redeemed() and not self.is_expired()
 
+    # Sideburn: not in upstream pretix (SID-95). Lets callers tell a used-up voucher apart from an
+    # expired one, which upstream reports as "expired".
     def is_fully_redeemed(self):
         return self.redeemed >= self.max_usages
 
