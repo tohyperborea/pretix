@@ -1251,6 +1251,7 @@ class OrderCreateSerializer(I18nAwareModelSerializer):
                         ]
                         continue
 
+                # Sideburn: expiry is checked after the "used up" check (SID-95).
                 if v.is_expired():
                     errs[i]['voucher'] = [error_messages['voucher_expired']]
                     continue

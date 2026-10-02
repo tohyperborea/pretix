@@ -44,6 +44,7 @@ class WaitingListSerializer(I18nAwareModelSerializer):
         WaitingListEntry.clean_itemvar(event, full_data.get('item'), full_data.get('variation'))
         WaitingListEntry.clean_subevent(event, full_data.get('subevent'))
 
+        # Sideburn: plugin validation hook (waitinglist_entry_validate).
         entry = self.instance or WaitingListEntry(event=event)
         for field in ('email', 'item', 'variation', 'subevent'):
             if field in full_data:

@@ -903,6 +903,8 @@ class StripePaymentIntentMethod(StripeMethod):
                     payment_method_types=[self.method],
                     confirmation_method='manual',
                     confirm=True,
+                    # Sideburn: buyer's email in description and metadata so staff can search the
+                    # Stripe dashboard by email.
                     description='{user}-{event}-{code}'.format(
                         user=payment.order.email,
                         event=self.event.slug.upper(),

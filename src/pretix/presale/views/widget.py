@@ -718,6 +718,7 @@ class WidgetAPIProductList(EventListMixin, View):
         if 'voucher' in request.GET:
             try:
                 self.voucher = request.event.vouchers.get(code__iexact=request.GET.get('voucher').strip())
+                # Sideburn: voucher helpers (SID-95).
                 if self.voucher.is_fully_redeemed():
                     data['error'] = error_messages['voucher_redeemed']
                     fail = True

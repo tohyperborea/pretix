@@ -103,12 +103,14 @@ class AuthorizationView(RecentAuthenticationRequiredMixin, BaseAuthorizationView
         self.success_url = uri
         logger.debug("Success url for the request: {0}".format(self.success_url))
 
-        msgs = [
+        msgs = [  # NOQA: F841
             _('The application "{application_name}" has been authorized to access your account.').format(
                 application_name=application.name
             )
         ]
-        #self.request.user.send_security_notice(msgs)
+        # Sideburn: no security email on every authorization; a Sideburn tool signs users in through
+        # pretix's OAuth provider.
+        # self.request.user.send_security_notice(msgs)
         self.request.user.log_action('pretix.user.oauth.authorized', user=self.request.user, data={
             'application_id': application.pk,
             'application_name': application.name,
