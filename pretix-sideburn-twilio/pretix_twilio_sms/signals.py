@@ -83,10 +83,10 @@ def inject_waitinglist_form_with_sms(sender, cls, **kwargs):
 
 
 @receiver(change_information_form_class, dispatch_uid="twilio_sms_change_info_form")
-def inject_change_info_form_with_sms(sender, **kwargs):
-    from .forms import ChangeInfoFormWithSms
+def inject_change_info_form_with_sms(sender, cls, **kwargs):
+    from .forms import change_info_form_with_sms
 
-    return ChangeInfoFormWithSms
+    return change_info_form_with_sms(cls)
 
 
 @receiver(customer_profile_extra, dispatch_uid="twilio_sms_customer_profile_extra")

@@ -34,7 +34,7 @@
 
 from django.dispatch import Signal
 
-from pretix.base.signals import EventPluginSignal
+from pretix.base.signals import EventPluginSignal, GlobalSignal
 
 global_html_head = Signal()
 """
@@ -455,13 +455,14 @@ The first non-None response is used.
 As with all plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
-change_information_form_class = Signal()
+change_information_form_class = GlobalSignal()
 """
-Arguments: ``request``
+Arguments: ``cls``, ``request``
 
 This signal is sent when the customer change-information form class is resolved on the
-organizer account page. Receivers may return a form class (subclass of
-``pretix.presale.forms.customer.ChangeInfoForm``). The first non-None response is used.
+organizer account page. It is sent with ``send_chained``: each receiver gets the class returned
+by the previous one as ``cls`` (starting with ``pretix.presale.forms.customer.ChangeInfoForm``)
+and must return a form class, usually a subclass of ``cls``.
 
 The ``sender`` keyword argument is the organizer.
 """

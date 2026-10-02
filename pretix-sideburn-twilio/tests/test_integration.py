@@ -10,11 +10,16 @@ from django.test import RequestFactory
 from django_scopes import scope, scopes_disabled
 
 from pretix.base.models import WaitingListEntry
+from pretix.presale.forms.customer import ChangeInfoForm
 from pretix.presale.forms.waitinglist import WaitingListForm
-from pretix.presale.signals import waitinglist_form_class
-from pretix_twilio_sms.forms import WaitingListSmsMixin
+from pretix.presale.signals import (
+    change_information_form_class, waitinglist_form_class,
+)
+from pretix_twilio_sms.forms import ChangeInfoSmsMixin, WaitingListSmsMixin
 from pretix_twilio_sms.models import CustomerSmsPreference
-from pretix_twilio_sms.signals import inject_waitinglist_form_with_sms
+from pretix_twilio_sms.signals import (
+    inject_change_info_form_with_sms, inject_waitinglist_form_with_sms,
+)
 
 TEST_PHONE = "+12125552368"
 TEST_EMAIL = "waitlist@example.com"
@@ -222,3 +227,38 @@ def test_waitinglist_form_hook_keeps_previous_plugins_form(twilio_env):
     assert issubclass(form_class, EarlierPluginForm)
     assert "earlier_plugin_field" in form.fields
     assert "sms_opt_in" in form.fields
+
+
+@pytest.mark.django_db
+def test_change_info_form_hook_resolves_sms_form(twilio_env):
+    organizer = twilio_env["organizer"]
+
+    form_class = change_information_form_class.send_chained(
+        organizer, "cls", cls=ChangeInfoForm, request=RequestFactory().get("/"),
+    )
+
+    assert issubclass(form_class, ChangeInfoForm)
+    assert issubclass(form_class, ChangeInfoSmsMixin)
+
+
+@pytest.mark.django_db
+def test_change_info_form_hook_keeps_previous_plugins_form(twilio_env):
+    """The SMS checkbox is stacked onto whatever class an earlier plugin returned."""
+    organizer = twilio_env["organizer"]
+    customer = twilio_env["customer"]
+
+    class EarlierPluginForm(ChangeInfoForm):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.fields["earlier_plugin_field"] = forms.CharField(required=False)
+
+    form_class = inject_change_info_form_with_sms(sender=organizer, cls=EarlierPluginForm)
+    request = RequestFactory().get("/")
+    request.organizer = organizer
+    with scope(organizer=organizer):
+        form = form_class(request=request, instance=customer)
+
+    assert issubclass(form_class, EarlierPluginForm)
+    assert "earlier_plugin_field" in form.fields
+    assert "sms_opt_in" in form.fields
+    assert list(form.fields).index("sms_opt_in") == list(form.fields).index("phone") + 1
