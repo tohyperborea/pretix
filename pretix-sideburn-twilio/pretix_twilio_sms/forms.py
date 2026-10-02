@@ -14,7 +14,6 @@ from pretix.base.forms.questions import (
 )
 from pretix.base.models import Customer
 from pretix.presale.forms.customer import ChangeInfoForm
-from pretix.presale.forms.waitinglist import WaitingListForm
 
 
 class ChangeInfoFormWithSms(ChangeInfoForm):
@@ -69,23 +68,25 @@ class ChangeInfoFormWithSms(ChangeInfoForm):
         return instance
 
 
-class WaitingListFormWithSms(WaitingListForm):
+class WaitingListSmsMixin:
     """
-    Extends WaitingListForm with SMS opt-in and optional phone field when
-    the event does not ask for phone. Updates Customer.phone and
+    Adds SMS opt-in and optional phone field (when the event does not ask
+    for phone) to a waiting list form. Updates Customer.phone and
     CustomerSmsPreference on save when applicable.
-    """
 
-    sms_opt_in = forms.BooleanField(
-        label=_("Send me SMS notifications when my waitlist spot is ready"),
-        required=False,
-        initial=False,
-    )
+    Mixed into whatever form class the ``waitinglist_form_class`` chain
+    provides; see ``waitinglist_form_with_sms``.
+    """
 
     def __init__(self, *args, **kwargs):
         self._customer = kwargs.get("customer")
         self._request = kwargs.get("request")
         super().__init__(*args, **kwargs)
+        self.fields["sms_opt_in"] = forms.BooleanField(
+            label=_("Send me SMS notifications when my waitlist spot is ready"),
+            required=False,
+            initial=False,
+        )
         # Pre-populate sms_opt_in from CustomerSmsPreference when customer is known
         if self._customer:
             try:
@@ -182,3 +183,7 @@ class WaitingListFormWithSms(WaitingListForm):
             pref.save(update_fields=["sms_opt_in", "last_changed"])
 
         return instance
+
+
+def waitinglist_form_with_sms(cls):
+    return type("WaitingListFormWithSms", (WaitingListSmsMixin, cls), {})

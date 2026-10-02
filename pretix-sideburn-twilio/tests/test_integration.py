@@ -5,10 +5,16 @@ Run from the monorepo:
     cd src && pytest ../pretix-sideburn-twilio/tests/test_integration.py -v
 """
 import pytest
+from django import forms
+from django.test import RequestFactory
 from django_scopes import scope, scopes_disabled
 
 from pretix.base.models import WaitingListEntry
+from pretix.presale.forms.waitinglist import WaitingListForm
+from pretix.presale.signals import waitinglist_form_class
+from pretix_twilio_sms.forms import WaitingListSmsMixin
 from pretix_twilio_sms.models import CustomerSmsPreference
+from pretix_twilio_sms.signals import inject_waitinglist_form_with_sms
 
 TEST_PHONE = "+12125552368"
 TEST_EMAIL = "waitlist@example.com"
@@ -183,3 +189,36 @@ def test_admin_path_send_voucher_queues_sms(twilio_env, sms_calls):
 
     assert len(sms_calls) == 1
     assert sms_calls[0]["entry_id"] == entry.pk
+
+
+@pytest.mark.django_db
+def test_waitinglist_form_hook_resolves_sms_form(twilio_env):
+    event = twilio_env["event"]
+
+    form_class = waitinglist_form_class.send_chained(event, "cls", cls=WaitingListForm)
+
+    assert issubclass(form_class, WaitingListForm)
+    assert issubclass(form_class, WaitingListSmsMixin)
+
+
+@pytest.mark.django_db
+def test_waitinglist_form_hook_keeps_previous_plugins_form(twilio_env):
+    """The SMS form is stacked onto whatever class an earlier plugin returned."""
+    event = twilio_env["event"]
+    item = twilio_env["item"]
+
+    class EarlierPluginForm(WaitingListForm):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.fields["earlier_plugin_field"] = forms.CharField(required=False)
+
+    form_class = inject_waitinglist_form_with_sms(sender=event, cls=EarlierPluginForm)
+    with scope(organizer=event.organizer):
+        form = form_class(
+            request=RequestFactory().get("/"), event=event, channel="web", customer=None,
+            instance=WaitingListEntry(event=event, item=item),
+        )
+
+    assert issubclass(form_class, EarlierPluginForm)
+    assert "earlier_plugin_field" in form.fields
+    assert "sms_opt_in" in form.fields
