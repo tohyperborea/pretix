@@ -68,7 +68,7 @@ def test_waitinglist_signup_opt_out(client, twilio_env, logged_in_customer):
 
 
 @pytest.mark.django_db
-def test_send_voucher_queues_sms_when_opted_in(twilio_env, sms_calls):
+def test_send_voucher_queues_sms_when_opted_in(twilio_env, ticket_available, sms_calls):
     event = twilio_env["event"]
     item = twilio_env["item"]
     customer = twilio_env["customer"]
@@ -91,7 +91,7 @@ def test_send_voucher_queues_sms_when_opted_in(twilio_env, sms_calls):
 
 
 @pytest.mark.django_db
-def test_send_voucher_skips_sms_when_opted_out(twilio_env, sms_calls):
+def test_send_voucher_skips_sms_when_opted_out(twilio_env, ticket_available, sms_calls):
     event = twilio_env["event"]
     item = twilio_env["item"]
     customer = twilio_env["customer"]
@@ -111,7 +111,7 @@ def test_send_voucher_skips_sms_when_opted_out(twilio_env, sms_calls):
 
 
 @pytest.mark.django_db
-def test_send_voucher_skips_sms_without_phone(twilio_env, sms_calls):
+def test_send_voucher_skips_sms_without_phone(twilio_env, ticket_available, sms_calls):
     event = twilio_env["event"]
     item = twilio_env["item"]
     customer = twilio_env["customer"]
@@ -172,7 +172,7 @@ def test_change_account_form_saves_sms_preference(client, twilio_env, logged_in_
 
 
 @pytest.mark.django_db
-def test_admin_path_send_voucher_queues_sms(twilio_env, sms_calls):
+def test_admin_path_send_voucher_queues_sms(twilio_env, ticket_available, sms_calls):
     """Direct send_voucher call mirrors control/admin assignment paths."""
     event = twilio_env["event"]
     item = twilio_env["item"]
