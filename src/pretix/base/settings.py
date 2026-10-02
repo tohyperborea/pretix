@@ -2395,7 +2395,6 @@ as possible to the next person on the waiting list:
 Best regards,  
 Your {event} team"""))  # noqa: W291
     },
-
     'mail_subject_order_canceled': {
         'type': LazyI18nString,
         'default': LazyI18nString.from_gettext(gettext_noop("Order canceled: {code}")),
@@ -3011,7 +3010,7 @@ Your {organizer} team"""))  # noqa: W291
     },
     'checkout_email_helptext': {
         'default': LazyI18nString.from_gettext(gettext_noop(
-            'We will send you an order '
+            'Make sure to enter a valid email address. We will send you an order '
             'confirmation including a link that you need to access your order later.'
         )),
         'type': LazyI18nString,
