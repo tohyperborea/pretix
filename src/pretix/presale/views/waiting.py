@@ -51,12 +51,7 @@ class WaitingView(EventViewMixin, CustomerRequiredMixin, FormView):
     form_class = WaitingListForm
 
     def get_form_class(self):
-        form_class = WaitingListForm
-        for receiver, response in waitinglist_form_class.send(self.request.event):
-            if response is not None:
-                form_class = response
-                break
-        return form_class
+        return waitinglist_form_class.send_chained(self.request.event, 'cls', cls=WaitingListForm)
 
     def get_template_names(self):
         for receiver, response in waitinglist_template_name.send(self.request.event):

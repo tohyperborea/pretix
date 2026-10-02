@@ -72,14 +72,14 @@ def register_twilio_global_settings(sender, **kwargs):
 
 
 @receiver(waitinglist_form_class, dispatch_uid="twilio_sms_waitinglist_form")
-def inject_waitinglist_form_with_sms(sender, **kwargs):
+def inject_waitinglist_form_with_sms(sender, cls, **kwargs):
     """
-    Provide an extended waiting list form that adds SMS opt-in and phone
-    handling for CustomerSmsPreference and customer.phone updates.
+    Extend the waiting list form with SMS opt-in and phone handling for
+    CustomerSmsPreference and customer.phone updates.
     """
-    from .forms import WaitingListFormWithSms
+    from .forms import waitinglist_form_with_sms
 
-    return WaitingListFormWithSms
+    return waitinglist_form_with_sms(cls)
 
 
 @receiver(change_information_form_class, dispatch_uid="twilio_sms_change_info_form")

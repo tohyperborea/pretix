@@ -435,11 +435,12 @@ As with all event-plugin signals, the ``sender`` keyword argument will contain t
 
 waitinglist_form_class = EventPluginSignal()
 """
-Arguments: (none)
+Arguments: ``cls``
 
-This signal is sent when the waiting list form class is resolved. Receivers may return a form class
-(subclass of ``pretix.presale.forms.waitinglist.WaitingListForm``) to use instead of the default.
-The first non-None response is used.
+This signal allows you to replace the form class that is used for signing up to the waiting list.
+You will receive the default form class (or the class returned by a previous plugin) in the
+``cls`` argument so that you can inherit from it. You must return a form class; return ``cls``
+unchanged if you do not want to modify it.
 
 As with all plugin signals, the ``sender`` keyword argument will contain the event.
 """
