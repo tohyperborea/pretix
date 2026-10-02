@@ -4,11 +4,24 @@ from django.dispatch import receiver
 from django.http import Http404
 from django.shortcuts import redirect
 from django.urls import Resolver404, resolve
+from django.utils.translation import gettext_noop
+from i18nfield.strings import LazyI18nString
 
+from pretix.base.settings import settings_hierarkey
 from pretix.multidomain.urlreverse import eventreverse
 from pretix.presale.signals import process_request, waitinglist_form_class
 
 from .forms import waitinglist_form_with_readonly_email
+
+# Hierarkey defaults are global, so this applies to every event on the instance, with or
+# without the plugin enabled.
+settings_hierarkey.add_default(
+    "checkout_email_helptext",
+    LazyI18nString.from_gettext(gettext_noop(
+        "We will send you an order confirmation including a link that you need to access your order later."
+    )),
+    LazyI18nString,
+)
 
 # Storefront pages that need a logged-in customer. Everything else stays public, notably
 # order pages (secret links), resend_link, auth, favicon, iCal, widget CSS and

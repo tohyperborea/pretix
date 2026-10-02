@@ -63,11 +63,23 @@ RUN pip3 install -U \
     PRETIX_DOCKER_BUILD=TRUE pip3 install \
         -e ".[memcached]" \
         gunicorn django-extensions ipython && \
-    pip3 install -e /pretix/pretix-sideburn-twilio && \
-    pip3 install -e /pretix/pretix-sideburn-lottery && \
-    pip3 install -e /pretix/pretix-sideburn-core && \
     rm -rf ~/.cache/pip
 
+# Sideburn plugins must be installed before "make production" so their static files are collected.
+RUN cd /pretix/pretix-sideburn-twilio && \
+    pip install -e . && \
+    make && \
+    cd ..
+
+RUN cd /pretix/pretix-sideburn-lottery && \
+    pip install -e . && \
+    make && \
+    cd ..
+
+RUN cd /pretix/pretix-sideburn-core && \
+    pip install -e . && \
+    make && \
+    cd ..
 
 RUN chmod +x /usr/local/bin/pretix && \
     rm /etc/nginx/sites-enabled/default && \
