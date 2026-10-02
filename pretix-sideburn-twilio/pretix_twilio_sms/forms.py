@@ -4,7 +4,6 @@ Form extensions for the Twilio SMS plugin.
 from collections import OrderedDict
 
 from django import forms
-from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
 from phonenumber_field.formfields import PhoneNumberField
 
@@ -13,23 +12,24 @@ from pretix.base.forms.questions import (
     guess_phone_prefix_from_request,
 )
 from pretix.base.models import Customer
-from pretix.presale.forms.customer import ChangeInfoForm
 
 
-class ChangeInfoFormWithSms(ChangeInfoForm):
+class ChangeInfoSmsMixin:
     """
-    Extends ChangeInfoForm with an SMS opt-in checkbox under the phone field.
+    Adds an SMS opt-in checkbox under the phone field of the customer change-information form.
     Prepopulated from CustomerSmsPreference; updates CustomerSmsPreference on save.
-    """
 
-    sms_opt_in = forms.BooleanField(
-        label=_("I want to receive SMS updates"),
-        required=False,
-        initial=False,
-    )
+    Mixed into whatever form class the ``change_information_form_class`` chain provides; see
+    ``change_info_form_with_sms``.
+    """
 
     def __init__(self, request=None, *args, **kwargs):
         super().__init__(request=request, *args, **kwargs)
+        self.fields["sms_opt_in"] = forms.BooleanField(
+            label=_("I want to receive SMS updates"),
+            required=False,
+            initial=False,
+        )
         # Prepopulate from customer's SMS preference
         if self.instance:
             try:
@@ -183,6 +183,10 @@ class WaitingListSmsMixin:
             pref.save(update_fields=["sms_opt_in", "last_changed"])
 
         return instance
+
+
+def change_info_form_with_sms(cls):
+    return type("ChangeInfoFormWithSms", (ChangeInfoSmsMixin, cls), {})
 
 
 def waitinglist_form_with_sms(cls):
