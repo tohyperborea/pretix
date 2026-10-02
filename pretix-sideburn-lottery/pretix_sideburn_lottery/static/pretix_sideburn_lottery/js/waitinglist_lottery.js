@@ -13,6 +13,11 @@ $(function () {
     var confirmBtn = $('#lottery-confirm-btn');
     var actionUrl = null;
 
+    // Vouchers are sent by running the lottery, not by core's "Send as many vouchers as possible".
+    $('form[action$="/waitinglist/auto_assign"] button[type="submit"]').prop('disabled', true);
+    // Priorities come from the lottery; hide manual move to top / end so they can't be changed by accident.
+    $('button[name="move_top"], button[name="move_end"], button.disabled:has(.fa-thumbs-up), button.disabled:has(.fa-thumbs-down)').remove();
+
     function buildFilterParams() {
         var urlParams = new URLSearchParams();
         var currentParams = new URLSearchParams(window.location.search);
@@ -23,13 +28,6 @@ $(function () {
         if (currentParams.has('subevent')) {
             urlParams.set('subevent', currentParams.get('subevent'));
         }
-        if (currentParams.has('email')) {
-            urlParams.set('email', currentParams.get('email'));
-        }
-        if (currentParams.has('name')) {
-            urlParams.set('name', currentParams.get('name'));
-        }
-
         return urlParams;
     }
 

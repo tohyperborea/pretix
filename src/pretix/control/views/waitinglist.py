@@ -48,7 +48,6 @@ from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _, pgettext
 from django.views import View
 from django.views.generic import ListView
-from django.views.generic.edit import DeleteView
 
 from pretix.base.models import Item, Quota, WaitingListEntry
 from pretix.base.models.waitinglist import WaitingListException
@@ -99,21 +98,6 @@ class WaitingListQuerySetMixin:
             'item__quotas', 'variation__quotas'
         )
 
-        if self.request_data.get("email", "") != "":
-            ms = self.request_data.get("email", "")
-            ms_list = ms.split(",")
-            mainq = Q()
-            for m in ms_list:
-                mainq = mainq | Q(email=m)
-            qs = qs.filter(mainq)
-
-
-        if self.request_data.get("name", "") != "":
-            n = self.request_data.get("name", "")
-            qs_list = [w.id for w in qs if w.name is not None and n.casefold() in w.name.casefold()]
-            qs = WaitingListEntry.objects.filter(id__in=qs_list)
-
-
         s = self.request_data.get("status", "")
         if s == 's':
             qs = qs.filter(voucher__isnull=False)
@@ -154,12 +138,10 @@ class WaitingListQuerySetMixin:
         elif force_filtered and '__ALL' not in self.request_data:
             qs = qs.none()
 
-        if self.request_data.get("ordering", "") != "":
-            o = self.request_data.get("ordering", "")
-            if o == "name":
-                qs = sorted(qs, key=lambda w: w.name, reverse=False)
-            elif o == "-name":
-                qs = sorted(qs, key=lambda w: w.name, reverse=True)
+        # Sideburn: sort by name from the column header links.
+        o = self.request_data.get("ordering", "")
+        if o in ("name", "-name"):
+            qs = qs.order_by(o.replace("name", "name_cached"))
 
         return qs
 
@@ -265,9 +247,9 @@ class WaitingListView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, Pa
             else:
                 ev = (wle.subevent or self.request.event)
                 disabled = (
-                        not ev.presale_is_running or
-                        (wle.subevent and not wle.subevent.active) or
-                        not wle.item.is_available()
+                    not ev.presale_is_running or
+                    (wle.subevent and not wle.subevent.active) or
+                    not wle.item.is_available()
                 )
                 if disabled:
                     wle.availability = (0, "forbidden")
@@ -277,8 +259,7 @@ class WaitingListView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, Pa
                         if wle.variation
                         else wle.item.check_quotas(count_waitinglist=False, subevent=wle.subevent, _cache=quota_cache)
                     )
-                if wle.availability[0] == Quota.AVAILABILITY_OK and ev.seat_category_mappings.filter(
-                        product=wle.item).exists():
+                if wle.availability[0] == Quota.AVAILABILITY_OK and ev.seat_category_mappings.filter(product=wle.item).exists():
                     # See comment in WaitingListEntry.send_voucher() for rationale
                     num_free_seats_for_product = ev.free_seats().filter(product=wle.item).count()
                     num_valid_vouchers_for_product = self.request.event.vouchers.filter(
@@ -302,8 +283,8 @@ class WaitingListView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, Pa
         ctx['estimate'] = self.get_sales_estimate()
 
         ctx['running'] = (
-                self.request.event.live
-                and (self.request.event.has_subevents or self.request.event.presale_is_running)
+            self.request.event.live
+            and (self.request.event.has_subevents or self.request.event.presale_is_running)
         )
 
         return ctx
@@ -328,8 +309,7 @@ class WaitingListView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, Pa
         writer = csv.writer(output, quoting=csv.QUOTE_NONNUMERIC, delimiter=",")
 
         headers = [
-            _('Name'), _('E-mail address'), _('Phone number'), _('Product'), _('On list since'), _('Status'),
-            _('Voucher code'),
+            _('Name'), _('E-mail address'), _('Phone number'), _('Product'), _('On list since'), _('Status'), _('Voucher code'),
             _('Language'), _('Priority')
         ]
         if self.request.event.has_subevents:
@@ -384,9 +364,8 @@ class EntryDelete(EventPermissionRequiredMixin, CompatDeleteView):
     def get_object(self, queryset=None) -> WaitingListEntry:
         try:
             return self.request.event.waitinglistentries.get(
+                # Sideburn: entries that already have a voucher can be deleted too.
                 id=self.kwargs['entry'],
-                # Allow deleting entries that already have an assigned voucher.
-                # voucher__isnull=True,
             )
         except WaitingListEntry.DoesNotExist:
             raise Http404(_("The requested entry does not exist."))

@@ -336,7 +336,7 @@ class WaitingListEntry(LoggedModel):
     @staticmethod
     def clean_duplicate(event, email, item, variation, subevent, pk):
         if WaitingListEntry.objects.filter(
-            item=item, variation=variation, email__iexact=email, voucher__isnull=True, subevent=subevent
+                item=item, variation=variation, email__iexact=email, voucher__isnull=True, subevent=subevent
         ).exclude(pk=pk).count() >= event.settings.waiting_list_limit_per_user:
             raise ValidationError(_('You are already on this waiting list! We will notify '
                                     'you as soon as we have a ticket available for you.'))
