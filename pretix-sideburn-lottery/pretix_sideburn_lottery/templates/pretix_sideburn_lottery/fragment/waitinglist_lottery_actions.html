@@ -38,4 +38,14 @@
     </div>
 </div>
 
+{% if delete_selected_url %}
+    {# This hook renders inside the filter form; the JavaScript moves the button next to "Delete selected" in the list's form. #}
+    <template id="delete-selected-with-vouchers-template">
+        <button type="submit" class="btn btn-danger" formaction="{{ delete_selected_url }}?next={{ request.get_full_path|urlencode }}">
+            <i class="fa fa-trash"></i>
+            {% trans "Delete selected (including entries with vouchers)" %}
+        </button>
+    </template>
+{% endif %}
+
 <script type="text/javascript" src="{% static "pretix_sideburn_lottery/js/waitinglist_lottery.js" %}"></script>

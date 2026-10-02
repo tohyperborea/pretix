@@ -124,16 +124,16 @@ def render_waitinglist_lottery_actions(sender, request, **kwargs):
         "organizer": request.event.organizer.slug,
         "event": request.event.slug,
     }
-    return template.render(
-        {
-            "request": request,
-            "run_url": reverse("plugins:pretix_sideburn_lottery:run", kwargs=kwargs),
-            "revert_url": reverse(
-                "plugins:pretix_sideburn_lottery:revert", kwargs=kwargs
-            ),
-        },
-        request=request,
-    )
+    ctx = {
+        "request": request,
+        "run_url": reverse("plugins:pretix_sideburn_lottery:run", kwargs=kwargs),
+        "revert_url": reverse(
+            "plugins:pretix_sideburn_lottery:revert", kwargs=kwargs
+        ),
+    }
+    if "can_change_orders" in request.eventpermset:
+        ctx["delete_selected_url"] = reverse("plugins:pretix_sideburn_lottery:delete_selected_entries", kwargs=kwargs)
+    return template.render(ctx, request=request)
 
 
 @receiver(waitinglist_entry_created, dispatch_uid="sideburn_lottery_signup_confirm")
