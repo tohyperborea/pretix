@@ -33,7 +33,7 @@
                     <dt>{% trans "Phone" %}</dt>
                     <dd>{{ customer.phone }}</dd>
                 {% endif %}
-                {% block customer_profile_after_phone %}{% endblock %}
+                {# Sideburn: plugin hook, not in upstream pretix (Twilio SMS status). #}
                 {% signal "pretix.presale.signals.customer_profile_extra" request customer=customer %}
             </dl>
             <div class="text-right">

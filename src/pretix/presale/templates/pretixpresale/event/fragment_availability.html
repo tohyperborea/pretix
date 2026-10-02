@@ -6,6 +6,7 @@
         {% if price != None and not price %}
             <strong>{% trans "FULLY BOOKED" %}</strong>
         {% else %}
+            {# Sideburn: replaces upstream's "SOLD OUT" + waiting-list link so plugins can change it. #}
             {% sold_out_availability_tag event item var %}
         {% endif %}
     </div>

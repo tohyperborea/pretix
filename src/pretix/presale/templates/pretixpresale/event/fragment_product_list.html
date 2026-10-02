@@ -71,6 +71,7 @@
                                     {% if not item.min_price %}
                                         <strong class="gone">{% trans "FULLY BOOKED" %}</strong>
                                     {% else %}
+                                        {# Sideburn: replaces upstream's "SOLD OUT" + "Waiting list" so plugins can change it. #}
                                         {% sold_out_availability_tag event item compact=True %}
                                     {% endif %}
                                     <br>

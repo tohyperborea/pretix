@@ -382,6 +382,7 @@ because an already-paid order has been split.
 As with all event-plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
+# Sideburn: not in upstream pretix (used by pretix-sideburn-twilio).
 waiting_list_voucher_sent = EventPluginSignal()
 """
 Arguments: ``entry``, ``user``, ``auth``
@@ -393,6 +394,7 @@ SMS notifications.
 As with all event-plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
+# Sideburn: not in upstream pretix (used by pretix-sideburn-lottery).
 waitinglist_entry_created = EventPluginSignal()
 """
 Arguments: ``entry``, ``user``, ``auth``
@@ -404,6 +406,7 @@ perform side effects such as sending a confirmation email.
 As with all event-plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
+# Sideburn: not in upstream pretix (used by pretix-sideburn-lottery).
 waitinglist_entry_validate = EventPluginSignal()
 """
 Arguments: ``entry``
@@ -414,6 +417,7 @@ This signal is sent during validation of a waiting list entry. Receivers may ret
 As with all event-plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
+# Sideburn: not in upstream pretix (used by pretix-sideburn-lottery).
 waiting_list_send_voucher = EventPluginSignal()
 """
 Arguments: ``entry``, ``user``, ``auth``

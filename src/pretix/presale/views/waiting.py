@@ -49,9 +49,13 @@ class WaitingView(EventViewMixin, FormView):
     template_name = 'pretixpresale/event/waitinglist.html'
     form_class = WaitingListForm
 
+    # Sideburn: lets plugins extend the form (sideburn-core locks the email, Twilio adds an SMS
+    # opt-in). Not in upstream pretix.
     def get_form_class(self):
         return waitinglist_form_class.send_chained(self.request.event, 'cls', cls=WaitingListForm)
 
+    # Sideburn: lets a plugin replace the page template (the lottery's waiting-list page). Not in
+    # upstream pretix.
     def get_template_names(self):
         for receiver, response in waitinglist_template_name.send(self.request.event):
             if response is not None:
@@ -138,6 +142,7 @@ class WaitingView(EventViewMixin, FormView):
             return redirect(self.get_index_url())
 
         form.save()
+        # Sideburn: not in upstream pretix.
         waitinglist_entry_created.send(
             self.request.event,
             entry=form.instance,

@@ -18,6 +18,7 @@
     <form class="form-horizontal" method="post" enctype="multipart/form-data">
         {% csrf_token %}
         <div class="panel-group" id="questions_group">
+            {# Sideburn: plugin hook, not in upstream pretix (lottery waiver banner). #}
             {% eventsignal event "pretix.presale.signals.checkout_questions_top" request=request %}
             <details class="panel panel-default" open>
                 <summary class="panel-heading">

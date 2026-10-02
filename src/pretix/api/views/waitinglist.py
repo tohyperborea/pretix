@@ -70,6 +70,7 @@ class WaitingListViewSet(viewsets.ModelViewSet):
             user=self.request.user,
             auth=self.request.auth,
         )
+        # Sideburn: not in upstream pretix.
         waitinglist_entry_created.send(
             self.request.event,
             entry=serializer.instance,
