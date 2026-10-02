@@ -6,7 +6,9 @@ from django.shortcuts import redirect
 from django.urls import Resolver404, resolve
 
 from pretix.multidomain.urlreverse import eventreverse
-from pretix.presale.signals import process_request
+from pretix.presale.signals import process_request, waitinglist_form_class
+
+from .forms import waitinglist_form_with_readonly_email
 
 # Storefront pages that need a logged-in customer. Everything else stays public, notably
 # order pages (secret links), resend_link, auth, favicon, iCal, widget CSS and
@@ -33,3 +35,8 @@ def require_customer_login(sender, request, **kwargs):
         eventreverse(request.organizer, "presale:organizer.customer.login", kwargs={})
         + "?next=" + quote(request.path_info + "?" + request.GET.urlencode())
     )
+
+
+@receiver(waitinglist_form_class, dispatch_uid="sideburn_core_waitinglist_readonly_email")
+def waitinglist_readonly_email(sender, cls, **kwargs):
+    return waitinglist_form_with_readonly_email(cls)
