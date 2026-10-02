@@ -2171,9 +2171,6 @@ msgstr "Produit"
 msgid "Attendee name"
 msgstr "Nom du participant"
 
-msgid "Attendee's legal (ID) name"
-msgstr "Nom légal (carte d'identité) du participant"
-
 #: pretix/base/exporters/orderlist.py:566 pretix/base/forms/questions.py:642
 #: pretix/base/models/customers.py:296 pretix/base/models/orders.py:1384
 #: pretix/base/pdf.py:215
@@ -2528,46 +2525,6 @@ msgstr "Bloquer les bons de réduction"
 #: pretix/base/exporters/orderlist.py:1087 pretix/control/views/item.py:968
 msgid "Current user's carts"
 msgstr "Panier de l'utilisateur actuel"
-
-msgid "How do tickets work for SideBurn?"
-msgstr "Comment fonctionnent les billets pour SideBurn ?"
-
-msgid "Since demand for SideBurn tickets outnumbers supply,"
-msgstr "Étant donné que la demande de billets SideBurn dépasse l'offre,"
-
-msgid "the first stage of getting a ticket is registering for the ticket lottery"
-msgstr "la première étape pour obtenir un billet consiste à s'inscrire à la loterie de billets"
-
-msgid "Our ticket registration opens on"
-msgstr "Notre inscription aux billets ouvre le"
-
-msgid "The registrations for the general sale are drawn in a lottery, ensuring that everyone registered has an equal chance of being offered a ticket."
-msgstr "Les inscriptions à la vente générale sont mélangées dans une loterie garantissant que chaque inscrit a une chance égale de se voir offrir un billet."
-
-msgid "Available tickets are then offered in the order of the lottery, and registrants have three days to buy their available ticket before it’s added back to the pool and offered to the next in the list."
-msgstr "Les billets disponibles sont ensuite proposés dans l'ordre de la loterie, et les inscrits ont trois jours pour acheter leur billet disponible avant qu'il ne soit rajouté au groupe et offert et offert au suivant dans la liste."
-
-msgid "If you register for a ticket after sales are already in progress, you simply get added to the bottom of the list."
-msgstr "Si vous vous inscrivez pour un billet alors que les ventes sont déjà en cours, vous êtes simplement ajouté au bas de la liste."
-
-msgid "Register only once per person"
-msgstr "Inscrivez-vous une seule fois par personne"
-
-msgid "Registering again with another email - or trying again with the same one - could disqualify you from the ticketing lottery!"
-msgstr "Vous inscrire à nouveau avec une autre adresse e-mail - ou réessayer avec la même - pourrait vous disqualifier de la loterie de billetterie !"
-
-#: pretix/presale/templates/pretixpresale/event/fragment_product_list.html:77
-msgid "Register here"
-msgstr "Inscrivez-vous ici"
-
-msgid "Ticket lottery will be held on"
-msgstr "La loterie des billets aura lieu le"
-
-msgid "The ticket lottery was held on"
-msgstr "La loterie des billets a eu lieu le"
-
-msgid "Please register for the waiting list."
-msgstr "Veuillez vous inscrire sur la liste d'attente."
 
 #: pretix/base/exporters/orderlist.py:1087
 msgid "Exited orders"
@@ -30889,23 +30846,6 @@ msgstr "Il n' y a pas d'add-ons disponibles pour ce produit."
 #: pretix/presale/templates/pretixpresale/event/fragment_product_list.html:71
 msgid "FULLY BOOKED"
 msgstr "COMPLÈTEMENT RÉSERVÉ"
-
-msgid "SideBurn general sale tickets will be assigned by lottery"
-msgstr "Les billets de la vente générale SideBurn seront attribués par lotterie"
-
-#: pretix/presale/templates/pretixpresale/event/checkout_questions.html:22
-msgid "Before you proceed, please read the following documents"
-msgstr "Avant de continuer, veuillez lire les documents suivants"
-
-msgid "Release of Waiver and Liability"
-msgstr "Libération de renonciation et de responsabilité"
-
-msgid "SideBurn Code of Conduct"
-msgstr "Code de conduite SideBurn"
-
-msgid "For each document, enter the confirmation words in the form below to show you agree."
-msgstr "Pour chaque document, saisissez les mots de confirmation dans le formulaire ci-dessous pour montrer que vous êtes d'accord."
-
 
 #: pretix/presale/templates/pretixpresale/event/fragment_availability.html:8
 #: pretix/presale/templates/pretixpresale/event/fragment_product_list.html:73
