@@ -52,6 +52,7 @@ COPY src /pretix/src
 COPY pretix-regex-validation /pretix/pretix-regex-validation
 COPY pretix-sideburn-twilio /pretix/pretix-sideburn-twilio
 COPY pretix-sideburn-lottery /pretix/pretix-sideburn-lottery
+COPY pretix-sideburn-core /pretix/pretix-sideburn-core
 COPY pretix-passbook /pretix/pretix-passbook
 
 RUN pip3 install -U \
@@ -64,6 +65,7 @@ RUN pip3 install -U \
         gunicorn django-extensions ipython && \
     pip3 install -e /pretix/pretix-sideburn-twilio && \
     pip3 install -e /pretix/pretix-sideburn-lottery && \
+    pip3 install -e /pretix/pretix-sideburn-core && \
     rm -rf ~/.cache/pip
 
 
