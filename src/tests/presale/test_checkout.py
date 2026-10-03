@@ -3494,7 +3494,8 @@ class CheckoutTestCase(BaseCheckoutTestCase, TestCase):
             assert not Order.objects.last().testmode
             assert "0" not in Order.objects.last().code
 
-    def test_receive_order_confirmation_and_paid_mail(self):
+    # Sideburn: no "order placed" email for paid orders; the payment confirmation email covers it.
+    def test_receive_only_paid_mail(self):
         with scopes_disabled():
             cp1 = CartPosition.objects.create(
                 event=self.event, cart_id=self.session_key, item=self.ticket,
@@ -3502,10 +3503,28 @@ class CheckoutTestCase(BaseCheckoutTestCase, TestCase):
             )
             djmail.outbox = []
             oid = _perform_order(self.event, self._manual_payment(), [cp1.pk], 'admin@example.org', 'en', None, {}, 'web')
-            assert len(djmail.outbox) == 1
+            assert len(djmail.outbox) == 0
             o = Order.objects.get(pk=oid['order_id'])
             o.payments.first().confirm()
-            assert len(djmail.outbox) == 2
+            assert len(djmail.outbox) == 1
+            assert djmail.outbox[0].subject == 'Payment received for your order: %s' % o.code
+
+    # Sideburn: free orders still get their confirmation email.
+    def test_free_order_still_receives_confirmation_mail(self):
+        self.ticket.default_price = 0
+        self.ticket.save()
+        with scopes_disabled():
+            cp1 = CartPosition.objects.create(
+                event=self.event, cart_id=self.session_key, item=self.ticket,
+                price=0, listed_price=0, price_after_voucher=0, expires=now() + timedelta(minutes=10)
+            )
+            djmail.outbox = []
+            free_payment = [dict(self._manual_payment()[0], provider="free")]
+            oid = _perform_order(self.event, free_payment, [cp1.pk], 'admin@example.org', 'en', None, {}, 'web')
+            o = Order.objects.get(pk=oid['order_id'])
+            assert o.status == Order.STATUS_PAID
+            assert len(djmail.outbox) == 1
+            assert djmail.outbox[0].subject == 'Your order: %s' % o.code
 
     def test_order_confirmation_and_paid_mail_not_send_on_disabled_sales_channel(self):
         with scopes_disabled():
@@ -4540,41 +4559,41 @@ class CustomerCheckoutTestCase(BaseCheckoutTestCase, TestCase):
         with scopes_disabled():
             return Order.objects.last()
 
-    def test_guest(self):
+    # Sideburn: guest checkout is turned off; customers must log in to buy.
+    def test_guest_not_allowed(self):
         response = self.client.get('/%s/%s/checkout/start' % (self.orga.slug, self.event.slug), follow=True)
         self.assertRedirects(response, '/%s/%s/checkout/customer/' % (self.orga.slug, self.event.slug),
                              target_status_code=200)
+        assert 'value="guest"' not in response.content.decode()
 
         response = self.client.post('/%s/%s/checkout/customer/' % (self.orga.slug, self.event.slug), {
             'customer_mode': 'guest'
-        }, follow=True)
-        self.assertRedirects(response, '/%s/%s/checkout/questions/' % (self.orga.slug, self.event.slug),
+        }, follow=False)
+        assert response.status_code == 200
+
+        response = self.client.get('/%s/%s/checkout/questions/' % (self.orga.slug, self.event.slug), follow=True)
+        self.assertRedirects(response, '/%s/%s/checkout/customer/' % (self.orga.slug, self.event.slug),
                              target_status_code=200)
 
-        order = self._finish()
-        assert order.email == 'admin@localhost'
-        assert not order.customer
-
-    def test_guest_even_if_logged_in(self):
+    # Sideburn: guest checkout is turned off; customers must log in to buy.
+    def test_guest_not_allowed_even_if_logged_in(self):
         self.client.post('/%s/account/login' % self.orga.slug, {
             'email': 'john@example.org',
             'password': 'foo',
         })
 
-        response = self.client.get('/%s/%s/checkout/start' % (self.orga.slug, self.event.slug), follow=True)
-        self.assertRedirects(response, '/%s/%s/checkout/customer/' % (self.orga.slug, self.event.slug),
-                             target_status_code=200)
-        assert 'john@example.org' in response.content.decode()
-
         response = self.client.post('/%s/%s/checkout/customer/' % (self.orga.slug, self.event.slug), {
             'customer_mode': 'guest'
+        }, follow=False)
+        assert response.status_code == 200
+
+        response = self.client.post('/%s/%s/checkout/customer/' % (self.orga.slug, self.event.slug), {
+            'customer_mode': 'login'
         }, follow=True)
         self.assertRedirects(response, '/%s/%s/checkout/questions/' % (self.orga.slug, self.event.slug),
                              target_status_code=200)
-
         order = self._finish()
-        assert order.email == 'admin@localhost'
-        assert not order.customer
+        assert order.customer == self.customer
 
     def test_login_already_logged_in_and_forced_email(self):
         self.client.post('/%s/account/login' % self.orga.slug, {
@@ -4650,55 +4669,22 @@ class CustomerCheckoutTestCase(BaseCheckoutTestCase, TestCase):
         assert response.status_code == 200
         assert b'alert-danger' in response.content
 
-    def test_register_valid(self):
+    # Sideburn: no account sign-up during checkout; customers need an existing account.
+    def test_register_not_allowed(self):
         response = self.client.get('/%s/%s/checkout/start' % (self.orga.slug, self.event.slug), follow=True)
         self.assertRedirects(response, '/%s/%s/checkout/customer/' % (self.orga.slug, self.event.slug),
                              target_status_code=200)
+        assert 'value="register"' not in response.content.decode()
 
         response = self.client.post('/%s/%s/checkout/customer/' % (self.orga.slug, self.event.slug), {
             'customer_mode': 'register',
             'register-email': 'foo@example.com',
             'register-name_parts_0': 'John Doe',
         }, follow=False)
-        self.assertRedirects(response, '/%s/%s/checkout/questions/' % (self.orga.slug, self.event.slug),
-                             target_status_code=200)
-        assert len(djmail.outbox) == 1
-
-        # After a valid registration form, we apply a kind of soft login. Since the email address hasn't yet been
-        # verified, we do not do a proper login, since that would cause security problems. However, if the customer
-        # goes back to this step manually, they can re-use the account.
-        response = self.client.get('/%s/%s/checkout/customer/' % (self.orga.slug, self.event.slug))
-        assert response.content.decode().count('foo@example.com') == 1
-
-        response = self.client.post('/%s/%s/checkout/customer/' % (self.orga.slug, self.event.slug), {
-            'customer_mode': 'login',
-        }, follow=False)
-        self.assertRedirects(response, '/%s/%s/checkout/questions/' % (self.orga.slug, self.event.slug),
-                             target_status_code=200)
-
-        response = self.client.post('/%s/%s/checkout/questions/' % (self.orga.slug, self.event.slug), {
-            'email': 'will-be-ignored'
-        }, follow=True)
-        self.assertRedirects(response, '/%s/%s/checkout/payment/' % (self.orga.slug, self.event.slug),
-                             target_status_code=200)
-        order = self._finish()
-        assert order.customer != self.customer
-        assert order.customer.email == 'foo@example.com'
-        assert order.email == 'foo@example.com'
-        assert not order.customer.is_verified
-
-    def test_register_invalid(self):
-        response = self.client.get('/%s/%s/checkout/start' % (self.orga.slug, self.event.slug), follow=True)
-        self.assertRedirects(response, '/%s/%s/checkout/customer/' % (self.orga.slug, self.event.slug),
-                             target_status_code=200)
-
-        response = self.client.post('/%s/%s/checkout/customer/' % (self.orga.slug, self.event.slug), {
-            'customer_mode': 'register',
-            'register-email': 'john@example.org',
-            'register-name_parts_0': 'John Doe',
-        }, follow=False)
         assert response.status_code == 200
-        assert b'has-error' in response.content
+        assert len(djmail.outbox) == 0
+        with scopes_disabled():
+            assert not self.orga.customers.filter(email='foo@example.com').exists()
 
     def test_guest_not_allowed_if_granting_membership(self):
         self.ticket.grant_membership_type = self.orga.membership_types.create(

@@ -247,6 +247,18 @@ def test_delete_single_with_voucher(client, env):
         assert not WaitingListEntry.objects.filter(id=wle.id).exists()
 
 
+# Sideburn: "Send a voucher" is offered for every entry without a voucher, even when the product is sold out.
+@pytest.mark.django_db
+def test_send_voucher_offered_when_sold_out(client, env):
+    client.login(email='dummy@dummy.dummy', password='dummy')
+    with scopes_disabled():
+        Quota.objects.create(name="Sold out", size=0, event=env[0]).items.add(env[3])
+        wle = WaitingListEntry.objects.filter(item=env[3], voucher__isnull=True).first()
+
+    response = client.get('/control/event/dummy/dummy/waitinglist/')
+    assert 'name="assign" value="%d"' % wle.pk in response.content.decode()
+
+
 @pytest.mark.django_db
 def test_dashboard(client, env):
     with scopes_disabled():

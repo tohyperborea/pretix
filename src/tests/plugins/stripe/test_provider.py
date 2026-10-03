@@ -140,6 +140,38 @@ def test_perform_success(env, factory, monkeypatch):
     assert order.status == Order.STATUS_PAID
 
 
+# Sideburn: the buyer's email is sent to Stripe so staff can search the Stripe dashboard by email.
+@pytest.mark.django_db
+def test_perform_sends_buyer_email_to_stripe(env, factory, monkeypatch):
+    event, order = env
+    sent = {}
+
+    def paymentintent_create(**kwargs):
+        sent.update(kwargs)
+        c = MockedPaymentintent()
+        c.status = 'succeeded'
+        c.charges.data[0].paid = True
+        return c
+
+    monkeypatch.setattr("stripe.PaymentIntent.create", paymentintent_create)
+
+    prov = StripeCC(event)
+    req = factory.post('/', {
+        'stripe_card_payment_method_id': 'pm_189fTT2eZvKYlo2CvJKzEzeu',
+        'stripe_card_last4': '4242',
+        'stripe_card_brand': 'Visa'
+    })
+    req.session = {}
+    prov.checkout_prepare(req, {})
+    payment = order.payments.create(
+        provider='stripe_cc', amount=order.total
+    )
+    prov.execute_payment(req, payment)
+
+    assert sent['description'] == 'dummy@dummy.test-DUMMY-FOOBAR'
+    assert sent['metadata']['customer'] == 'dummy@dummy.test'
+
+
 @pytest.mark.django_db
 def test_perform_success_zero_decimal_currency(env, factory, monkeypatch):
     event, order = env
