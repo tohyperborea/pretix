@@ -14,7 +14,8 @@ from django_scopes import scopes_disabled
 from pretix.base.models import (
     Event, Item, Organizer, Quota, Team, User, WaitingListEntry,
 )
-from pretix_sideburn_lottery.views.presale import get_waiting_list_ranks
+
+ORDINALS = {1: "1st", 2: "2nd", 3: "3rd", 4: "4th"}
 
 
 @pytest.fixture
@@ -52,10 +53,14 @@ def presale_rank_env():
     team.members.add(user)
     team.limit_events.add(event)
 
+    with scopes_disabled():
+        create_customer(organizer)
+
     return {
         "organizer": organizer,
         "event": event,
         "item": item,
+        "quota": quota,
         "user": user,
     }
 
@@ -77,146 +82,135 @@ def create_customer(organizer, email="test@example.com", password="test"):
     return customer
 
 
-@pytest.mark.django_db
-def test_get_waiting_list_ranks_single_product(presale_rank_env):
-    event = presale_rank_env["event"]
-    item = presale_rank_env["item"]
-
-    with scopes_disabled():
-        WaitingListEntry.objects.create(
-            event=event, item=item, email="test@example.com"
-        )
-        ranks = get_waiting_list_ranks(event, "test@example.com")
-    assert len(ranks) == 1
-    assert ranks[0]["item_name"] == "Early-bird ticket"
-    assert ranks[0]["rank"] == 1
-    assert ranks[0]["lottery_run"] is False
-
-
-@pytest.mark.django_db
-def test_get_waiting_list_ranks_multiple_products(presale_rank_env):
-    event = presale_rank_env["event"]
-    item = presale_rank_env["item"]
-
-    with scopes_disabled():
-        item2 = Item.objects.create(
-            event=event,
-            name="VIP ticket",
-            default_price=Decimal("50.00"),
-            active=True,
-        )
-        Quota.objects.get(event=event).items.add(item2)
-        WaitingListEntry.objects.create(
-            event=event, item=item, email="test@example.com"
-        )
-        WaitingListEntry.objects.create(
-            event=event, item=item2, email="test@example.com"
-        )
-        ranks = get_waiting_list_ranks(event, "test@example.com")
-    assert len(ranks) == 2
-    assert {r["item_name"] for r in ranks} == {"Early-bird ticket", "VIP ticket"}
-
-
-@pytest.mark.django_db
-def test_get_waiting_list_ranks_with_voucher(presale_rank_env):
-    event = presale_rank_env["event"]
-    item = presale_rank_env["item"]
-
-    with scopes_disabled():
-        voucher = event.vouchers.create(
-            item=item,
-            block_quota=True,
-            valid_until=now() + datetime.timedelta(days=5),
-        )
-        WaitingListEntry.objects.create(
-            event=event,
-            item=item,
-            email="test@example.com",
-            voucher=voucher,
-        )
-        ranks = get_waiting_list_ranks(event, "test@example.com")
-    assert len(ranks) == 1
-    assert ranks[0]["rank"] == 0
-    assert ranks[0]["voucher_code"] == voucher.code
-
-
-@pytest.mark.django_db
-def test_get_waiting_list_ranks_no_entries(presale_rank_env):
-    with scopes_disabled():
-        ranks = get_waiting_list_ranks(presale_rank_env["event"], "test@example.com")
-    assert ranks == []
-
-
-@pytest.mark.django_db
-def test_presale_rank_display_single_product(client, presale_rank_env):
-    organizer = presale_rank_env["organizer"]
-    event = presale_rank_env["event"]
-    item = presale_rank_env["item"]
-
-    with scopes_disabled():
-        create_customer(organizer)
-        WaitingListEntry.objects.create(
-            event=event, item=item, email="test@example.com"
-        )
-
-    login_customer(client, organizer)
-    response = client.get(f"/{organizer.slug}/{event.slug}/")
+def event_page(client, env):
+    login_customer(client, env["organizer"])
+    response = client.get(f"/{env['organizer'].slug}/{env['event'].slug}/")
     assert response.status_code == 200
-    content = response.content.decode()
+    return response.content.decode()
+
+
+@pytest.mark.django_db
+def test_rank_box_before_lottery(client, presale_rank_env):
+    with scopes_disabled():
+        WaitingListEntry.objects.create(
+            event=presale_rank_env["event"], item=presale_rank_env["item"], email="test@example.com"
+        )
+
+    content = event_page(client, presale_rank_env)
     assert "Check my spot in line" in content
     assert "Early-bird ticket" in content
-    assert "lottery hasn" in content
+    assert "yet been run" in content
 
 
 @pytest.mark.django_db
-def test_presale_rank_display_no_entries(client, presale_rank_env):
-    organizer = presale_rank_env["organizer"]
+def test_rank_box_not_on_waiting_list(client, presale_rank_env):
+    content = event_page(client, presale_rank_env)
+    assert "You are not on the waiting list for this event." in content
+
+
+@pytest.mark.django_db
+def test_rank_box_hidden_when_logged_out(client, presale_rank_env):
+    env = presale_rank_env
+    response = client.get(f"/{env['organizer'].slug}/{env['event'].slug}/")
+    assert "Check my spot in line" not in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_rank_box_lists_each_product(client, presale_rank_env):
     event = presale_rank_env["event"]
-
     with scopes_disabled():
-        create_customer(organizer)
+        item2 = Item.objects.create(
+            event=event, name="VIP ticket", default_price=Decimal("50.00"), active=True,
+        )
+        presale_rank_env["quota"].items.add(item2)
+        WaitingListEntry.objects.create(event=event, item=presale_rank_env["item"], email="test@example.com")
+        WaitingListEntry.objects.create(event=event, item=item2, email="test@example.com")
 
-    login_customer(client, organizer)
-    response = client.get(f"/{organizer.slug}/{event.slug}/")
-    assert response.status_code == 200
-    assert "You are not on the waiting list for this event." in response.content.decode()
+    content = event_page(client, presale_rank_env)
+    assert "Early-bird ticket" in content
+    assert "VIP ticket" in content
 
 
 @pytest.mark.django_db
-def test_presale_rank_display_after_lottery(client, presale_rank_env):
+def test_rank_after_lottery_matches_admin_list(client, presale_rank_env):
     organizer = presale_rank_env["organizer"]
     event = presale_rank_env["event"]
     item = presale_rank_env["item"]
     user = presale_rank_env["user"]
 
     with scopes_disabled():
-        create_customer(organizer)
         for i in range(3):
-            WaitingListEntry.objects.create(
-                event=event,
-                item=item,
-                email=f"other{i}@example.com",
-            )
-        WaitingListEntry.objects.create(
-            event=event, item=item, email="test@example.com"
-        )
+            WaitingListEntry.objects.create(event=event, item=item, email=f"other{i}@example.com")
+        WaitingListEntry.objects.create(event=event, item=item, email="test@example.com")
 
-    login_customer(client, organizer)
-    response = client.get(f"/{organizer.slug}/{event.slug}/")
-    assert response.status_code == 200
-    assert "lottery hasn" in response.content.decode()
-
-    client.logout()
     client.login(email=user.email, password="admin")
     response = client.get(
         f"/control/event/{organizer.slug}/{event.slug}/sideburn-lottery/run/?item={item.pk}"
     )
     assert response.status_code == 200
-
+    response = client.get(f"/control/event/{organizer.slug}/{event.slug}/waitinglist/?item={item.pk}")
+    admin_order = [e.email for e in response.context["entries"]]
+    expected = ORDINALS[admin_order.index("test@example.com") + 1]
     client.logout()
-    login_customer(client, organizer)
-    response = client.get(f"/{organizer.slug}/{event.slug}/")
-    assert response.status_code == 200
-    content = response.content.decode()
-    assert "in line" in content
-    assert "lottery hasn" not in content
+
+    content = event_page(client, presale_rank_env)
+    assert f"You are {expected} in line" in content
+    assert "yet been run" not in content
+
+
+@pytest.mark.django_db
+def test_rank_box_shows_voucher_waiting(client, presale_rank_env):
+    event = presale_rank_env["event"]
+    item = presale_rank_env["item"]
+    with scopes_disabled():
+        voucher = event.vouchers.create(
+            item=item, block_quota=True, valid_until=now() + datetime.timedelta(days=5),
+        )
+        WaitingListEntry.objects.create(event=event, item=item, email="test@example.com", voucher=voucher)
+
+    content = event_page(client, presale_rank_env)
+    assert "You have a voucher waiting for redemption!" in content
+
+
+@pytest.mark.django_db
+def test_rank_box_shows_expired_voucher(client, presale_rank_env):
+    event = presale_rank_env["event"]
+    item = presale_rank_env["item"]
+    with scopes_disabled():
+        voucher = event.vouchers.create(
+            item=item, block_quota=True, valid_until=now() - datetime.timedelta(days=1),
+        )
+        WaitingListEntry.objects.create(event=event, item=item, email="test@example.com", voucher=voucher)
+
+    content = event_page(client, presale_rank_env)
+    assert "Your voucher expired on" in content
+    assert "re-enter the waiting list" in content
+
+
+@pytest.mark.django_db
+def test_rank_box_hides_product_after_ticket_bought(client, presale_rank_env):
+    event = presale_rank_env["event"]
+    item = presale_rank_env["item"]
+    with scopes_disabled():
+        voucher = event.vouchers.create(item=item, block_quota=True, redeemed=1)
+        WaitingListEntry.objects.create(event=event, item=item, email="test@example.com", voucher=voucher)
+
+    content = event_page(client, presale_rank_env)
+    assert "You are not on the waiting list for this event." in content
+
+
+@pytest.mark.django_db
+def test_rank_box_uses_latest_signup_after_expired_voucher(client, presale_rank_env):
+    event = presale_rank_env["event"]
+    item = presale_rank_env["item"]
+    with scopes_disabled():
+        voucher = event.vouchers.create(
+            item=item, block_quota=True, valid_until=now() - datetime.timedelta(days=1),
+        )
+        old = WaitingListEntry.objects.create(event=event, item=item, email="test@example.com", voucher=voucher)
+        WaitingListEntry.objects.filter(pk=old.pk).update(created=now() - datetime.timedelta(days=3))
+        WaitingListEntry.objects.create(event=event, item=item, email="test@example.com")
+
+    content = event_page(client, presale_rank_env)
+    assert "Your voucher expired on" not in content
+    assert "yet been run" in content

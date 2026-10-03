@@ -12,10 +12,6 @@ from django.utils.timezone import now
 from django_scopes import scopes_disabled
 
 from pretix.base.models import Event, Item, Organizer, Quota
-from pretix_sideburn_lottery.services.presale import (
-    get_lottery_date_display,
-    get_sold_out_label,
-)
 
 
 @pytest.fixture
@@ -64,34 +60,6 @@ def login_customer(client, organizer, email="test@example.com", password="test")
 
 
 @pytest.mark.django_db
-def test_get_sold_out_label_without_lottery_date(presale_copy_env):
-    event = presale_copy_env["event"]
-    item = presale_copy_env["item"]
-
-    with scopes_disabled():
-        assert "lottery" in get_sold_out_label(event, item.pk).lower()
-
-
-@pytest.mark.django_db
-def test_get_sold_out_label_with_lottery_date(presale_copy_env):
-    event = presale_copy_env["event"]
-    item = presale_copy_env["item"]
-    lottery_time = datetime.datetime(
-        2026, 3, 15, 12, 0, tzinfo=datetime.timezone.utc
-    )
-
-    with scopes_disabled():
-        event.settings.set(
-            f"lottery_date_for_item_{item.pk}", lottery_time.isoformat()
-        )
-        label = get_sold_out_label(event, item.pk)
-        date_display = get_lottery_date_display(event, item.pk)
-
-    assert date_display in label
-    assert "Ticket lottery held on" in label
-
-
-@pytest.mark.django_db
 def test_waitinglist_page_sideburn_copy(client, presale_copy_env):
     organizer = presale_copy_env["organizer"]
     event = presale_copy_env["event"]
@@ -121,21 +89,22 @@ def test_event_page_sold_out_lottery_copy(client, presale_copy_env):
 
 
 @pytest.mark.django_db
-def test_event_page_shows_lottery_date_when_set(client, presale_copy_env):
+def test_checkout_questions_step_shows_waiver(client, presale_copy_env):
     organizer = presale_copy_env["organizer"]
     event = presale_copy_env["event"]
-    item = presale_copy_env["item"]
-    lottery_time = datetime.datetime(
-        2026, 3, 15, 12, 0, tzinfo=datetime.timezone.utc
-    )
-
     with scopes_disabled():
-        event.settings.set(
-            f"lottery_date_for_item_{item.pk}", lottery_time.isoformat()
+        on_sale = Item.objects.create(
+            event=event, name="Regular ticket", default_price=Decimal("10.00"), active=True,
         )
-        date_display = get_lottery_date_display(event, item.pk)
+        Quota.objects.create(event=event, name="On sale", size=10).items.add(on_sale)
 
     login_customer(client, organizer)
-    response = client.get(f"/{organizer.slug}/{event.slug}/")
+    client.post(f"/{organizer.slug}/{event.slug}/cart/add", {f"item_{on_sale.pk}": "1"}, follow=True)
+    client.post(f"/{organizer.slug}/{event.slug}/checkout/customer/", {"customer_mode": "login"}, follow=True)
+    response = client.get(f"/{organizer.slug}/{event.slug}/checkout/questions/")
+
     assert response.status_code == 200
-    assert date_display in response.content.decode()
+    content = response.content.decode()
+    assert "Before you proceed, please read the following documents" in content
+    assert "Release of Waiver and Liability" in content
+    assert "SideBurn Code of Conduct" in content
