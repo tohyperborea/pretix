@@ -89,3 +89,19 @@ API
 
 .. automodule:: pretix.base.signals
    :members: validate_event_settings, api_event_settings_fields
+
+Sideburn
+--------
+
+These signals are not in upstream pretix. They are used by the ``pretix-sideburn-lottery``,
+``pretix-sideburn-twilio`` and ``pretix-sideburn-core`` plugins.
+
+.. automodule:: pretix.base.signals
+   :members: waitinglist_entry_validate, waitinglist_entry_created, waiting_list_send_voucher, waiting_list_voucher_sent
+
+.. automodule:: pretix.presale.signals
+   :members: sold_out_availability, waitinglist_form_class, waitinglist_template_name, checkout_questions_top,
+      customer_profile_extra, change_information_form_class
+
+.. automodule:: pretix.control.signals
+   :members: waitinglist_index_html
