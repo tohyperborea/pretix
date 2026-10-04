@@ -62,6 +62,16 @@ class CheckinList(LoggedModel):
                                              'and valid for check-in regardless of which date they are purchased for. '
                                              'You can limit their validity through the advanced check-in rules, '
                                              'though.'))
+    ignore_in_statistics = models.BooleanField(
+        verbose_name=pgettext_lazy('checkin', 'Ignore check-ins on this list in statistics'),
+        default=False
+    )
+    consider_tickets_used = models.BooleanField(
+        verbose_name=pgettext_lazy('checkin', 'Tickets with a check-in on this list should be considered "used"'),
+        help_text=_('This is relevant in various situations, e.g. for deciding if a ticket can still be canceled by '
+                    'the customer.'),
+        default=True
+    )
     include_pending = models.BooleanField(verbose_name=pgettext_lazy('checkin', 'Include pending orders'),
                                           default=False,
                                           help_text=_('With this option, people will be able to check in even if the '
@@ -270,11 +280,12 @@ class CheckinList(LoggedModel):
             '<', '<=', '>', '>=', '==', '!=', 'inList', 'isBefore', 'isAfter', 'or', 'and'
         }
         allowed_operators = top_level_operators | {
-            'buildTime', 'objectList', 'lookup', 'var', 'entries_since', 'entries_before'
+            'buildTime', 'objectList', 'lookup', 'var', 'entries_since', 'entries_before', 'entries_days_since',
+            'entries_days_before',
         }
         allowed_vars = {
             'product', 'variation', 'now', 'now_isoweekday', 'entries_number', 'entries_today', 'entries_days',
-            'minutes_since_last_entry', 'minutes_since_first_entry', 'gate',
+            'minutes_since_last_entry', 'minutes_since_first_entry', 'gate', 'entry_status',
         }
         if not rules or not isinstance(rules, dict):
             return rules
@@ -299,7 +310,7 @@ class CheckinList(LoggedModel):
                 raise ValidationError(f'Logic variable "{values[0]}" is currently not allowed.')
             return rules
 
-        if operator in ('entries_since', 'entries_before'):
+        if operator in ('entries_since', 'entries_before', 'entries_days_since', 'entries_days_before'):
             if len(values) != 1 or "buildTime" not in values[0]:
                 raise ValidationError(f'Operator "{operator}" takes exactly one "buildTime" argument.')
 
@@ -342,6 +353,7 @@ class Checkin(models.Model):
     REASON_AMBIGUOUS = 'ambiguous'
     REASON_ERROR = 'error'
     REASON_BLOCKED = 'blocked'
+    REASON_UNAPPROVED = 'unapproved'
     REASON_INVALID_TIME = 'invalid_time'
     REASONS = (
         (REASON_CANCELED, _('Order canceled')),
@@ -355,6 +367,7 @@ class Checkin(models.Model):
         (REASON_AMBIGUOUS, _('Ticket code is ambiguous on list')),
         (REASON_ERROR, _('Server error')),
         (REASON_BLOCKED, _('Ticket blocked')),
+        (REASON_UNAPPROVED, _('Order not approved')),
         (REASON_INVALID_TIME, _('Ticket not valid at this time')),
     )
 

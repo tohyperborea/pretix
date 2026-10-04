@@ -24,11 +24,11 @@ from urllib.parse import urlencode
 from django.contrib.messages import constants as messages, get_messages
 from django.core.exceptions import PermissionDenied
 from django.dispatch import receiver
-from django.shortcuts import redirect
 from django.urls import resolve, reverse
 from django.utils.translation import gettext_lazy as _
 
 from pretix.control.signals import nav_event_settings
+from pretix.helpers.http import redirect_to_url
 from pretix.presale.signals import process_request
 
 
@@ -64,16 +64,20 @@ def returnurl_process_request(sender, request, **kwargs):
                     url += '&' + urlencode(query)
                 else:
                     url += '?' + urlencode(query)
-            r = redirect(url)
+            r = redirect_to_url(url)
             del request.session[key]
             return r
         elif urlname != 'event.order' and 'return_url' in request.GET:
             u = request.GET.get('return_url')
             if not sender.settings.returnurl_prefix:
                 raise PermissionDenied('No return URL prefix set.')
-            elif not u.startswith(sender.settings.returnurl_prefix):
+            elif not check_against_prefix_list(u, sender.settings.returnurl_prefix):
                 raise PermissionDenied('Invalid return URL.')
             request.session[key] = u
+
+
+def check_against_prefix_list(u, allowlist):
+    return any(u.startswith(allow.strip()) for allow in allowlist.split("\n") if allow.strip() != "")
 
 
 @receiver(nav_event_settings, dispatch_uid='returnurl_nav')

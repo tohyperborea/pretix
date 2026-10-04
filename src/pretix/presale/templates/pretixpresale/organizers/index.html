@@ -33,6 +33,7 @@
             </div>
         </div>
     </div>
+    {% include "pretixpresale/fragment_event_list_filter.html" with request=request %}
     {% if events %}
     <div class="event-list">
         <div class="row hidden-xs hidden-sm">
@@ -60,16 +61,24 @@
                 <div class="col-md-3 col-xs-12">
 
                     {% if e.settings.show_dates_on_frontpage %}
-                        {{ e.daterange|default:e.get_date_range_display_as_html }}
-                        {% if e.settings.show_times and not e.has_subevents %}
-                            {% timezone e.tzname %}
-                                <br><small class="text-muted" data-time="{{ e.date_from.isoformat }}" data-timezone="{{ e.tzname }}">
-                                {{ e.date_from|date:"TIME_FORMAT" }}
-                                {% if e.settings.show_date_to and e.date_to and e.date_to.date == e.date_from.date %}
-                                    – {{ e.date_to|date:"TIME_FORMAT" }}
-                                {% endif %}
-                            </small>
-                            {% endtimezone %}
+                        {% if e.has_subevents %}
+                            <span class="fa fa-calendar"></span> {% trans "Multiple dates" context "subevent" %}
+                            <br>
+                            <span class="text-muted">
+                               {{ e.daterange|default:e.get_date_range_display_as_html }}
+                            </span>
+                        {% else %}
+                            {{ e.daterange|default:e.get_date_range_display_as_html }}
+                            {% if e.settings.show_times %}
+                                {% timezone e.tzname %}
+                                    <br><small class="text-muted" data-time="{{ e.date_from.isoformat }}" data-timezone="{{ e.tzname }}">
+                                    {{ e.date_from|date:"TIME_FORMAT" }}
+                                    {% if e.settings.show_date_to and e.date_to and e.date_to.date == e.date_from.date %}
+                                        – {{ e.date_to|date:"TIME_FORMAT" }}
+                                    {% endif %}
+                                </small>
+                                {% endtimezone %}
+                            {% endif %}
                         {% endif %}
                     {% else %}
                         &nbsp;
@@ -90,7 +99,7 @@
                                     <span class="label label-success">{% trans "Book now" %}</span>
                                 {% endif %}
                             {% endif %}
-                        {% elif e.settings.waiting_list_enabled and e.best_availability_state >= 0 %}
+                        {% elif e.waiting_list_active and e.best_availability_state >= 0 %}
                             <span class="label label-warning">{% trans "Waiting list" %}</span>
                         {% elif e.best_availability_state == 20 %}
                             <span class="label label-danger">{% trans "Reserved" %}</span>
@@ -116,7 +125,7 @@
                     {% endif %}
                 </div>
                 <div class="col-md-2 col-xs-6 text-right flip">
-                    <a class="btn btn-primary btn-block" href="{{ url }}">
+                    <a class="btn btn-primary btn-block" href="{{ url }}{% if e.has_subevents and e.match_by_subevents %}{{ filterquery }}{% endif %}">
                         {% if e.has_subevents %}<span class="fa fa-ticket" aria-hidden="true"></span> {% trans "Tickets" %}
                         {% elif e.presale_is_running and e.best_availability_state == 100 %}
                             <span class="fa fa-ticket" aria-hidden="true"></span> {% trans "Tickets" %}

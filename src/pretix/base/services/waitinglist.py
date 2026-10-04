@@ -80,7 +80,7 @@ def assign_automatically(event: Event, user_id: int=None, subevent_id: int=None)
         voucher__isnull=True
     ).select_related('item', 'variation', 'subevent').prefetch_related(
         'item__quotas', 'variation__quotas'
-    ).order_by('-priority', 'created')
+    ).order_by('-priority', 'created', 'pk')
 
     if subevent_id and event.has_subevents:
         subevent = event.subevents.get(id=subevent_id)
@@ -109,6 +109,9 @@ def assign_automatically(event: Event, user_id: int=None, subevent_id: int=None)
             if not ev.presale_is_running or (wle.subevent and not wle.subevent.active):
                 continue
             if wle.subevent and not wle.subevent.presale_is_running:
+                continue
+            if event.settings.waiting_list_auto_disable and event.settings.waiting_list_auto_disable.datetime(wle.subevent or event) <= now():
+                gone.add((wle.item, wle.variation, wle.subevent))
                 continue
             if not wle.item.is_available():
                 gone.add((wle.item, wle.variation, wle.subevent))

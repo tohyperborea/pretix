@@ -209,7 +209,7 @@ class OrderListExporter(MultiSheetListExporter):
             return qs.annotate(**annotations).filter(**filters)
         return qs
 
-    def iterate_orders(self, form_data: dict):
+    def orders_qs(self, form_data):
         p_date = OrderPayment.objects.filter(
             order=OuterRef('pk'),
             state__in=(OrderPayment.PAYMENT_STATE_CONFIRMED, OrderPayment.PAYMENT_STATE_REFUNDED),
@@ -250,11 +250,15 @@ class OrderListExporter(MultiSheetListExporter):
 
         if form_data['paid_only']:
             qs = qs.filter(status=Order.STATUS_PAID)
+        return qs
+
+    def iterate_orders(self, form_data: dict):
+        qs = self.orders_qs(form_data)
         tax_rates = self._get_all_tax_rates(qs)
 
         headers = [
-            _('Event slug'), _('Order code'), _('Order total'), _('Status'), _('Email'), _('Phone number'),
-            _('Order date'), _('Order time'), _('Company'), _('Name'),
+            _('Event slug'), _('Event name'), _('Order code'), _('Order total'), _('Status'), _('Email'),
+            _('Phone number'), _('Order date'), _('Order time'), _('Company'), _('Name'),
         ]
         name_scheme = PERSON_NAME_SCHEMES[self.event.settings.name_scheme] if not self.is_multievent else None
         if name_scheme and len(name_scheme['fields']) > 1:
@@ -275,6 +279,7 @@ class OrderListExporter(MultiSheetListExporter):
         headers.append(_('Invoice numbers'))
         headers.append(_('Sales channel'))
         headers.append(_('Requires special attention'))
+        headers.append(_('Check-in text'))
         headers.append(_('Comment'))
         headers.append(_('Follow-up date'))
         headers.append(_('Positions'))
@@ -330,9 +335,10 @@ class OrderListExporter(MultiSheetListExporter):
 
             row = [
                 self.event_object_cache[order.event_id].slug,
+                str(self.event_object_cache[order.event_id].name),
                 order.code,
                 order.total,
-                order.get_status_display(),
+                order.get_extended_status_display(),
                 order.email,
                 str(order.phone) if order.phone else '',
                 order.datetime.astimezone(tz).strftime('%Y-%m-%d'),
@@ -384,6 +390,7 @@ class OrderListExporter(MultiSheetListExporter):
             row.append(order.invoice_numbers)
             row.append(order.sales_channel)
             row.append(_('Yes') if order.checkin_attention else _('No'))
+            row.append(order.checkin_text or "")
             row.append(order.comment or "")
             row.append(order.custom_followup_at.strftime("%Y-%m-%d") if order.custom_followup_at else "")
             row.append(order.pcnt)
@@ -404,7 +411,7 @@ class OrderListExporter(MultiSheetListExporter):
             row += self.event_object_cache[order.event_id].meta_data.values()
             yield row
 
-    def iterate_fees(self, form_data: dict):
+    def fees_qs(self, form_data):
         p_providers = OrderPayment.objects.filter(
             order=OuterRef('order'),
             state__in=(OrderPayment.PAYMENT_STATE_CONFIRMED, OrderPayment.PAYMENT_STATE_REFUNDED,
@@ -423,9 +430,14 @@ class OrderListExporter(MultiSheetListExporter):
             qs = qs.filter(order__status=Order.STATUS_PAID, canceled=False)
 
         qs = self._date_filter(qs, form_data, rel='order__')
+        return qs
+
+    def iterate_fees(self, form_data: dict):
+        qs = self.fees_qs(form_data)
 
         headers = [
             _('Event slug'),
+            _('Event name'),
             _('Order code'),
             _('Status'),
             _('Email'),
@@ -462,8 +474,9 @@ class OrderListExporter(MultiSheetListExporter):
             tz = ZoneInfo(order.event.settings.timezone)
             row = [
                 self.event_object_cache[order.event_id].slug,
+                str(self.event_object_cache[order.event_id].name),
                 order.code,
-                _("canceled") if op.canceled else order.get_status_display(),
+                _("canceled") if op.canceled else order.get_extended_status_display(),
                 order.email,
                 str(order.phone) if order.phone else '',
                 order.datetime.astimezone(tz).strftime('%Y-%m-%d'),
@@ -504,7 +517,19 @@ class OrderListExporter(MultiSheetListExporter):
             row += self.event_object_cache[order.event_id].meta_data.values()
             yield row
 
+    def positions_qs(self, form_data: dict):
+        qs = OrderPosition.all.filter(
+            order__event__in=self.events,
+        )
+        if form_data['paid_only']:
+            qs = qs.filter(order__status=Order.STATUS_PAID, canceled=False)
+
+        qs = self._date_filter(qs, form_data, rel='order__')
+        return qs
+
     def iterate_positions(self, form_data: dict):
+        base_qs = self.positions_qs(form_data)
+
         p_providers = OrderPayment.objects.filter(
             order=OuterRef('order'),
             state__in=(OrderPayment.PAYMENT_STATE_CONFIRMED, OrderPayment.PAYMENT_STATE_REFUNDED,
@@ -514,9 +539,6 @@ class OrderListExporter(MultiSheetListExporter):
         ).values(
             'm'
         ).order_by()
-        base_qs = OrderPosition.all.filter(
-            order__event__in=self.events,
-        )
         qs = base_qs.annotate(
             payment_providers=Subquery(p_providers, output_field=CharField()),
         ).select_related(
@@ -526,15 +548,12 @@ class OrderListExporter(MultiSheetListExporter):
             'subevent', 'subevent__meta_values',
             'answers', 'answers__question', 'answers__options'
         )
-        if form_data['paid_only']:
-            qs = qs.filter(order__status=Order.STATUS_PAID, canceled=False)
-
-        qs = self._date_filter(qs, form_data, rel='order__')
 
         has_subevents = self.events.filter(has_subevents=True).exists()
 
         headers = [
             _('Event slug'),
+            _('Event name'),
             _('Order code'),
             _('Position ID'),
             _('Status'),
@@ -636,9 +655,10 @@ class OrderListExporter(MultiSheetListExporter):
                 tz = ZoneInfo(self.event_object_cache[order.event_id].settings.timezone)
                 row = [
                     self.event_object_cache[order.event_id].slug,
+                    str(self.event_object_cache[order.event_id].name),
                     order.code,
                     op.positionid,
-                    _("canceled") if op.canceled else order.get_status_display(),
+                    _("canceled") if op.canceled else order.get_extended_status_display(),
                     order.email,
                     str(order.phone) if order.phone else '',
                     order.datetime.astimezone(tz).strftime('%Y-%m-%d'),
@@ -1007,20 +1027,20 @@ class PaymentListExporter(ListExporter):
         if form_data.get('end_date_range'):
             dt_start, dt_end = resolve_timeframe_to_datetime_start_inclusive_end_exclusive(now(), form_data['end_date_range'], self.timezone)
             if dt_start:
-                payments = payments.filter(created__gte=dt_start)
-                refunds = refunds .filter(created__gte=dt_start)
+                payments = payments.filter(payment_date__gte=dt_start)
+                refunds = refunds.filter(execution_date__gte=dt_start)
             if dt_end:
-                payments = payments.filter(created__lt=dt_end)
-                refunds = refunds .filter(created__lt=dt_end)
+                payments = payments.filter(payment_date__lt=dt_end)
+                refunds = refunds.filter(execution_date__lt=dt_end)
 
         if form_data.get('start_end_date_range'):
             dt_start, dt_end = resolve_timeframe_to_datetime_start_inclusive_end_exclusive(now(), form_data['start_date_range'], self.timezone)
             if dt_start:
-                payments = payments.filter(payment_date__gte=dt_start)
-                refunds = refunds .filter(execution_date__gte=dt_start)
+                payments = payments.filter(created__gte=dt_start)
+                refunds = refunds.filter(created__gte=dt_start)
             if dt_end:
-                payments = payments.filter(payment_date__lt=dt_end)
-                refunds = refunds.filter(execution_date__lt=dt_end)
+                payments = payments.filter(created__lt=dt_end)
+                refunds = refunds.filter(created__lt=dt_end)
 
         objs = sorted(list(payments) + list(refunds), key=lambda o: o.created)
 

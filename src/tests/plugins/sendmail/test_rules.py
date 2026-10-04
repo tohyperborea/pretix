@@ -265,7 +265,7 @@ def test_sendmail_rule_specified_subevent(order, event_series, subevent1, subeve
     order.save()
 
     rule = event_series.sendmail_rules.create(date_is_absolute=False, offset_is_after=False, send_offset_days=1,
-                                              send_offset_time=datetime.time(4, 30), subevent=subevent1,
+                                              send_offset_time=datetime.time(0, 0), subevent=subevent1,
                                               subject='meow', template='meow meow meow')
 
     sendmail_run_rules(None)
@@ -283,13 +283,13 @@ def test_sendmail_rule_all_subevents(event_series, subevent1, subevent2, item):
 
     o1 = Order.objects.create(event=item.event, status=Order.STATUS_PAID,
                               expires=now() + datetime.timedelta(hours=1),
-                              total=13, code='DUMMY', email='dummy1@dummy.test',
+                              total=13, code='DUMMY1', email='dummy1@dummy.test',
                               datetime=now(), locale='en')
     o1.all_positions.create(item=item, price=13, subevent=subevent1)
     o1.all_positions.create(item=item, price=13, subevent=subevent2)
     o2 = Order.objects.create(event=item.event, status=Order.STATUS_PAID,
                               expires=now() + datetime.timedelta(hours=1),
-                              total=13, code='DUMMY', email='dummy2@dummy.test',
+                              total=13, code='DUMMY2', email='dummy2@dummy.test',
                               datetime=now(), locale='en')
     o2.all_positions.create(item=item, price=23, subevent=subevent1)
     o2.all_positions.create(item=item, price=23, subevent=subevent2)

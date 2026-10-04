@@ -284,6 +284,29 @@ class QuotaTestCase(BaseQuotaTestCase):
         self.assertEqual(self.var1.check_quotas(), (Quota.AVAILABILITY_ORDERED, 0))
 
     @classscope(attr='o')
+    def test_voucher_all_variations(self):
+        self.quota.variations.add(self.var1)
+        self.quota.size = 1
+        self.quota.save()
+
+        self.quota2 = Quota.objects.create(name="Test", size=2, event=self.event)
+        self.quota2.variations.add(self.var2)
+
+        self.quota3 = Quota.objects.create(name="Test", size=2, event=self.event)
+        self.quota3.variations.add(self.var3)
+
+        v = Voucher.objects.create(item=self.item2, event=self.event)
+        self.assertEqual(self.var1.check_quotas(), (Quota.AVAILABILITY_OK, 1))
+        self.assertEqual(self.var2.check_quotas(), (Quota.AVAILABILITY_OK, 2))
+        self.assertEqual(self.var3.check_quotas(), (Quota.AVAILABILITY_OK, 2))
+
+        v.block_quota = True
+        v.save()
+        self.assertEqual(self.var1.check_quotas(), (Quota.AVAILABILITY_ORDERED, 0))
+        self.assertEqual(self.var2.check_quotas(), (Quota.AVAILABILITY_OK, 1))
+        self.assertEqual(self.var3.check_quotas(), (Quota.AVAILABILITY_OK, 2))
+
+    @classscope(attr='o')
     def test_voucher_quota(self):
         self.quota.variations.add(self.var1)
         self.quota.size = 1
@@ -412,6 +435,25 @@ class QuotaTestCase(BaseQuotaTestCase):
         self.assertEqual(qa.count_vouchers[self.quota], 0)
         self.assertEqual(qa.count_cart[self.quota], 1)
         self.assertEqual(self.item1.check_quotas(), (Quota.AVAILABILITY_OK, 1))
+
+    @classscope(attr='o')
+    def test_waitinglist_auto_disable(self):
+        self.event.settings.waiting_list_auto_disable = RelativeDateWrapper(
+            RelativeDate(days=0, time=None, base_date_name='date_from', minutes=20, is_after=True)
+        )
+        self.quota.items.add(self.item1)
+        self.quota.size = 1
+        self.quota.save()
+        WaitingListEntry.objects.create(
+            event=self.event, item=self.item1, email='foo@bar.com'
+        )
+        self.assertEqual(self.item1.check_quotas(), (Quota.AVAILABILITY_ORDERED, 0))
+        self.assertEqual(self.item1.check_quotas(count_waitinglist=False), (Quota.AVAILABILITY_OK, 1))
+        self.event.settings.waiting_list_auto_disable = RelativeDateWrapper(
+            RelativeDate(days=0, time=None, base_date_name='date_from', minutes=20, is_after=False)
+        )
+        self.assertEqual(self.item1.check_quotas(), (Quota.AVAILABILITY_OK, 1))
+        self.assertEqual(self.item1.check_quotas(count_waitinglist=False), (Quota.AVAILABILITY_OK, 1))
 
     @classscope(attr='o')
     def test_waitinglist_item_active(self):
@@ -979,9 +1021,8 @@ class VoucherTestCase(BaseQuotaTestCase):
 
     @classscope(attr='o')
     def test_voucher_specify_variation_for_block_quota(self):
-        with self.assertRaises(ValidationError):
-            v = Voucher(item=self.item2, block_quota=True, event=self.event)
-            v.clean()
+        v = Voucher(item=self.item2, block_quota=True, event=self.event)
+        v.clean()
 
     @classscope(attr='o')
     def test_voucher_no_item_but_variation(self):
@@ -1108,7 +1149,7 @@ class OrderTestCase(BaseQuotaTestCase):
         self.op2.subevent = se2
         self.op2.save()
         self.event.settings.set('payment_term_last', RelativeDateWrapper(
-            RelativeDate(days_before=2, time=None, base_date_name='date_from', minutes_before=None)
+            RelativeDate(days=2, time=None, base_date_name='date_from', minutes=None)
         ))
 
         self.order.status = Order.STATUS_EXPIRED
@@ -1251,7 +1292,7 @@ class OrderTestCase(BaseQuotaTestCase):
         self.op2.subevent = se2
         self.op2.save()
         self.event.settings.set('last_order_modification_date', RelativeDateWrapper(
-            RelativeDate(days_before=2, time=None, base_date_name='date_from', minutes_before=None)
+            RelativeDate(days=2, time=None, base_date_name='date_from', minutes=None)
         ))
         assert self.order.can_modify_answers
         self.op2.subevent = se3
@@ -1267,7 +1308,7 @@ class OrderTestCase(BaseQuotaTestCase):
         self.event.date_from = datetime.datetime(2017, 5, 3, 12, 0, 0, tzinfo=datetime.timezone.utc)
         self.event.save()
         self.event.settings.set('payment_term_last', RelativeDateWrapper(
-            RelativeDate(days_before=2, time=None, base_date_name='date_from', minutes_before=None)
+            RelativeDate(days=2, time=None, base_date_name='date_from', minutes=None)
         ))
         assert self.order.payment_term_last == datetime.datetime(2017, 5, 1, 23, 59, 59, tzinfo=datetime.timezone.utc)
 
@@ -1283,7 +1324,7 @@ class OrderTestCase(BaseQuotaTestCase):
         self.op2.subevent = se2
         self.op2.save()
         self.event.settings.set('payment_term_last', RelativeDateWrapper(
-            RelativeDate(days_before=2, time=None, base_date_name='date_from', minutes_before=None)
+            RelativeDate(days=2, time=None, base_date_name='date_from', minutes=None)
         ))
         assert self.order.payment_term_last > now()
         self.op2.subevent = se3
@@ -1299,7 +1340,7 @@ class OrderTestCase(BaseQuotaTestCase):
         self.event.date_from = datetime.datetime(2017, 5, 3, 12, 0, 0, tzinfo=datetime.timezone.utc)
         self.event.save()
         self.event.settings.set('ticket_download_date', RelativeDateWrapper(
-            RelativeDate(days_before=2, time=None, base_date_name='date_from', minutes_before=None)
+            RelativeDate(days=2, time=None, base_date_name='date_from', minutes=None)
         ))
         assert self.order.ticket_download_date == datetime.datetime(2017, 5, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
 
@@ -1315,7 +1356,7 @@ class OrderTestCase(BaseQuotaTestCase):
         self.op2.subevent = se2
         self.op2.save()
         self.event.settings.set('ticket_download_date', RelativeDateWrapper(
-            RelativeDate(days_before=2, time=None, base_date_name='date_from', minutes_before=None)
+            RelativeDate(days=2, time=None, base_date_name='date_from', minutes=None)
         ))
         assert self.order.ticket_download_date > now()
         self.op2.subevent = se3
@@ -1486,13 +1527,13 @@ class OrderTestCase(BaseQuotaTestCase):
 
         assert self.order.user_cancel_deadline is None
         self.event.settings.set('cancel_allow_user_until', RelativeDateWrapper(
-            RelativeDate(days_before=2, time=datetime.time(14, 0, 0), base_date_name='date_from', minutes_before=None)
+            RelativeDate(days=2, time=datetime.time(14, 0, 0), base_date_name='date_from', minutes=None)
         ))
         self.order = Order.objects.get(pk=self.order.pk)
         assert self.order.user_cancel_deadline > now()
         assert self.order.user_cancel_allowed
         self.event.settings.set('cancel_allow_user_until', RelativeDateWrapper(
-            RelativeDate(days_before=4, time=datetime.time(14, 0, 0), base_date_name='date_from', minutes_before=None)
+            RelativeDate(days=4, time=datetime.time(14, 0, 0), base_date_name='date_from', minutes=None)
         ))
         self.order = Order.objects.get(pk=self.order.pk)
         assert self.order.user_cancel_deadline < now()
@@ -1511,7 +1552,7 @@ class OrderTestCase(BaseQuotaTestCase):
         self.op2.save()
 
         self.event.settings.set('cancel_allow_user_until', RelativeDateWrapper(
-            RelativeDate(days_before=2, time=datetime.time(14, 0, 0), base_date_name='date_from', minutes_before=None)
+            RelativeDate(days=2, time=datetime.time(14, 0, 0), base_date_name='date_from', minutes=None)
         ))
         self.order = Order.objects.get(pk=self.order.pk)
         assert self.order.user_cancel_deadline < now()
@@ -1922,13 +1963,13 @@ class OrderTestCase(BaseQuotaTestCase):
 
         assert self.order.user_change_deadline is None
         self.event.settings.set('change_allow_user_until', RelativeDateWrapper(
-            RelativeDate(days_before=2, time=datetime.time(14, 0, 0), base_date_name='date_from', minutes_before=None)
+            RelativeDate(days=2, time=datetime.time(14, 0, 0), base_date_name='date_from', minutes=None)
         ))
         self.order = Order.objects.get(pk=self.order.pk)
         assert self.order.user_change_deadline > now()
         assert self.order.user_change_allowed
         self.event.settings.set('change_allow_user_until', RelativeDateWrapper(
-            RelativeDate(days_before=4, time=datetime.time(14, 0, 0), base_date_name='date_from', minutes_before=None)
+            RelativeDate(days=4, time=datetime.time(14, 0, 0), base_date_name='date_from', minutes=None)
         ))
         self.order = Order.objects.get(pk=self.order.pk)
         assert self.order.user_change_deadline < now()
@@ -1950,7 +1991,7 @@ class OrderTestCase(BaseQuotaTestCase):
         self.op2.save()
 
         self.event.settings.set('change_allow_user_until', RelativeDateWrapper(
-            RelativeDate(days_before=2, time=datetime.time(14, 0, 0), base_date_name='date_from', minutes_before=None)
+            RelativeDate(days=2, time=datetime.time(14, 0, 0), base_date_name='date_from', minutes=None)
         ))
         self.order = Order.objects.get(pk=self.order.pk)
         assert self.order.user_change_deadline < now()
@@ -2133,12 +2174,14 @@ class EventTest(TestCase):
 
     @classscope(attr='organizer')
     def test_copy(self):
+        prop = self.organizer.meta_properties.create(name="Language")
         event1 = Event.objects.create(
             organizer=self.organizer, name='Download', slug='ab1234',
             date_from=datetime.datetime(2013, 12, 26, 9, 0, 0, tzinfo=datetime.timezone.utc),
             date_admission=datetime.datetime(2013, 12, 26, 8, 0, 0, tzinfo=datetime.timezone.utc),
             is_public=True,
         )
+        event1.meta_values.create(property=prop, value="DE")
         tr7 = event1.tax_rules.create(rate=Decimal('7.00'))
         c1 = event1.categories.create(name='Tickets')
         c2 = event1.categories.create(name='Workshops')
@@ -2176,6 +2219,7 @@ class EventTest(TestCase):
             assert a.event == event1
 
         assert event2.date_admission == datetime.datetime(2013, 12, 27, 8, 0, 0, tzinfo=datetime.timezone.utc)
+        assert event2.meta_data["Language"] == "DE"
 
         trnew = event2.tax_rules.first()
         assert trnew.rate == tr7.rate
@@ -2537,7 +2581,7 @@ class CheckinListTestCase(TestCase):
             )
             self.cl_tickets.limit_products.add(self.item1)
             o = Order.objects.create(
-                code='FOO', event=self.event, email='dummy@dummy.test',
+                code='FOO1', event=self.event, email='dummy@dummy.test',
                 status=Order.STATUS_PAID,
                 datetime=now(), expires=now() + timedelta(days=10),
                 total=Decimal("30"), locale='en'
@@ -2564,7 +2608,7 @@ class CheckinListTestCase(TestCase):
             op3.checkins.create(list=self.cl_both)
 
             o = Order.objects.create(
-                code='FOO', event=self.event, email='dummy@dummy.test',
+                code='FOO2', event=self.event, email='dummy@dummy.test',
                 status=Order.STATUS_PENDING,
                 datetime=now(), expires=now() + timedelta(days=10),
                 total=Decimal("30"), locale='en'

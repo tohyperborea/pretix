@@ -20,7 +20,6 @@
 # <https://www.gnu.org/licenses/>.
 #
 
-import logging
 # This file is based on an earlier version of pretix which was released under the Apache License 2.0. The full text of
 # the Apache License 2.0 can be obtained at <http://www.apache.org/licenses/LICENSE-2.0>.
 #
@@ -33,6 +32,7 @@ import logging
 # Unless required by applicable law or agreed to in writing, software distributed under the Apache License 2.0 is
 # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations under the License.
+import logging
 import os
 import string
 import uuid
@@ -71,7 +71,7 @@ from pretix.base.validators import EventSlugBanlistValidator
 from pretix.helpers.database import GroupConcat
 from pretix.helpers.daterange import daterange
 from pretix.helpers.hierarkey import clean_filename
-from pretix.helpers.json import safe_string
+from pretix.helpers.json import CustomJSONEncoder, safe_string
 from pretix.helpers.thumb import get_thumbnail
 
 from ..settings import settings_hierarkey
@@ -230,6 +230,14 @@ class EventMixin:
             return self.presale_end
 
     @property
+    def waiting_list_active(self):
+        if not self.settings.waiting_list_enabled:
+            return False
+        if self.settings.waiting_list_auto_disable:
+            return self.settings.waiting_list_auto_disable.datetime(self) > now()
+        return True
+
+    @property
     def presale_has_ended(self):
         """
         Is true, when ``presale_end`` is set and in the past.
@@ -265,6 +273,9 @@ class EventMixin:
 
     @property
     def event_microdata(self):
+        if self.settings.event_microdata:
+            return self.settings.event_microdata
+
         import json
 
         eventdict = {
@@ -775,7 +786,7 @@ class Event(EventMixin, LoggedModel):
             time(hour=23, minute=59, second=59)
         ), tz)
 
-    def copy_data_from(self, other):
+    def copy_data_from(self, other, skip_meta_data=False):
         from pretix.presale.style import regenerate_css
 
         from ..signals import event_copy_data
@@ -797,6 +808,12 @@ class Event(EventMixin, LoggedModel):
         self.sales_channels = other.sales_channels
         self.save()
         self.log_action('pretix.object.cloned', data={'source': other.slug, 'source_id': other.pk})
+
+        if not skip_meta_data:
+            for emv in EventMetaValue.objects.filter(event=other):
+                emv.pk = None
+                emv.event = self
+                emv.save(force_insert=True)
 
         for fl in EventFooterLink.objects.filter(event=other):
             fl.pk = None
@@ -856,6 +873,10 @@ class Event(EventMixin, LoggedModel):
                 v.pk = None
                 v.item = i
                 v.save(force_insert=True)
+
+        for i in self.items.filter(hidden_if_item_available__isnull=False):
+            i.hidden_if_item_available = item_map[i.hidden_if_item_available_id]
+            i.save()
 
         for imv in ItemMetaValue.objects.filter(item__event=other):
             imv.pk = None
@@ -997,6 +1018,7 @@ class Event(EventMixin, LoggedModel):
             'presale_widget_css_file',
             'presale_widget_css_checksum',
         )
+        settings_to_save = []
         for s in other.settings._objects.all():
             if s.key in skip_settings:
                 continue
@@ -1014,16 +1036,17 @@ class Event(EventMixin, LoggedModel):
                 )
                 newname = default_storage.save(fname, fi)
                 s.value = 'file://' + newname
-                s.save()
+                settings_to_save.append(s)
             elif s.key == 'tax_rate_default':
                 try:
                     if int(s.value) in tax_map:
                         s.value = tax_map.get(int(s.value)).pk
-                        s.save()
+                        settings_to_save.append(s)
                 except ValueError:
                     pass
             else:
-                s.save()
+                settings_to_save.append(s)
+        other.settings._objects.bulk_create(settings_to_save)
 
         self.settings.flush()
         event_copy_data.send(
@@ -1052,7 +1075,7 @@ class Event(EventMixin, LoggedModel):
                     providers[pp.identifier] = pp
 
             self._cached_payment_providers = OrderedDict(sorted(
-                providers.items(), key=lambda v: (-v[1].priority, str(v[1].verbose_name))
+                providers.items(), key=lambda v: (-v[1].priority, str(v[1].verbose_name).title())
             ))
         return self._cached_payment_providers
 
@@ -1213,6 +1236,9 @@ class Event(EventMixin, LoggedModel):
 
         if self.has_paid_things and not self.has_payment_provider:
             issues.append(_('You have configured at least one paid product but have not enabled any payment methods.'))
+
+        if self.has_paid_things and self.currency == "XXX":
+            issues.append(_('You have configured at least one paid product but have not configured a currency.'))
 
         if not self.quotas.exists():
             issues.append(_('You need to configure at least one quota to sell anything.'))
@@ -1435,13 +1461,17 @@ class SubEvent(EventMixin, LoggedModel):
     )
     frontpage_text = I18nTextField(
         null=True, blank=True,
-        verbose_name=_("Frontpage text")
+        verbose_name=_("Frontpage text"),
     )
     seating_plan = models.ForeignKey('SeatingPlan', on_delete=models.PROTECT, null=True, blank=True,
                                      related_name='subevents', verbose_name=_('Seating plan'))
 
     items = models.ManyToManyField('Item', through='SubEventItem')
     variations = models.ManyToManyField('ItemVariation', through='SubEventItemVariation')
+    comment = models.TextField(
+        verbose_name=_("Internal comment"),
+        null=True, blank=True
+    )
 
     last_modified = models.DateTimeField(
         auto_now=True, db_index=True
@@ -1641,26 +1671,40 @@ class EventMetaProperty(LoggedModel):
         help_text=_("If checked, an event can only be taken live if the property is set. In event series, its always "
                     "optional to set a value for individual dates")
     )
-    allowed_values = models.TextField(
+    choices = models.JSONField(
         null=True, blank=True,
+        encoder=CustomJSONEncoder,
         verbose_name=_("Valid values"),
-        help_text=_("If you keep this empty, any value is allowed. Otherwise, enter one possible value per line.")
+    )
+    filter_public = models.BooleanField(
+        default=False, verbose_name=_("Show filter option to customers"),
+        help_text=_("This field will be shown to filter events in the public event list and calendar.")
+    )
+    public_label = I18nCharField(
+        verbose_name=_("Public name"),
+        null=True, blank=True,
     )
     filter_allowed = models.BooleanField(
         default=True, verbose_name=_("Can be used for filtering"),
         help_text=_("This field will be shown to filter events or reports in the backend, and it can also be used "
                     "for hidden filter parameters in the frontend (e.g. using the widget).")
     )
+    position = models.IntegerField(
+        default=0
+    )
 
     def full_clean(self, exclude=None, validate_unique=True):
         super().full_clean(exclude, validate_unique)
         if self.default and self.required:
             raise ValidationError(_("A property can either be required or have a default value, not both."))
-        if self.default and self.allowed_values and self.default not in self.allowed_values.splitlines():
-            raise ValidationError(_("You cannot set a default value that is not a valid value."))
 
     class Meta:
-        ordering = ("name",)
+        ordering = ("position", "name",)
+
+    @property
+    def choice_keys(self):
+        if self.choices:
+            return [v["key"] for v in self.choices]
 
 
 class EventMetaValue(LoggedModel):

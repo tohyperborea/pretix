@@ -22,7 +22,7 @@
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
-from django.core.validators import EmailValidator, MinLengthValidator
+from django.core.validators import MinLengthValidator
 from django.utils.functional import cached_property
 from django.utils.translation import gettext as _, gettext_lazy, pgettext_lazy
 
@@ -44,6 +44,8 @@ class CodeColumn(ImportColumn):
         super().__init__(*args)
 
     def clean(self, value, previous_values):
+        if not value:
+            raise ValidationError(_('A voucher cannot be created without a code.'))
         if value:
             MinLengthValidator(5)(value)
         if value and (value in self._cached or Voucher.objects.filter(event=self.event, code=value).exists()):
@@ -66,12 +68,18 @@ class SubeventColumn(ImportColumn):
 class MaxUsagesColumn(IntegerColumnMixin, ImportColumn):
     identifier = 'max_usages'
     verbose_name = gettext_lazy('Maximum usages')
+    default_value = None
     initial = "static:1"
 
     def static_choices(self):
         return [
             ("1", "1")
         ]
+
+    def clean(self, value, previous_values):
+        if value is None:
+            raise ValidationError(_('The maximum number of usages must be set.'))
+        return super().clean(value, previous_values)
 
     def assign(self, value, obj: Voucher, **kwargs):
         obj.max_usages = value if value is not None else 1
@@ -80,6 +88,7 @@ class MaxUsagesColumn(IntegerColumnMixin, ImportColumn):
 class MinUsagesColumn(IntegerColumnMixin, ImportColumn):
     identifier = 'min_usages'
     verbose_name = gettext_lazy('Minimum usages')
+    default_value = None
     initial = "static:1"
 
     def static_choices(self):
@@ -246,7 +255,7 @@ class QuotaColumn(ImportColumn):
                 raise ValidationError(_("You cannot specify a quota if you specified a product."))
             matches = [
                 q for q in self.quotas
-                if str(q.pk) == value or any((v and v == value) for v in i18n_flat(q.name))
+                if str(q.pk) == value or q.name == value
             ]
             if len(matches) == 0:
                 raise ValidationError(_("No matching variation was found."))
@@ -322,24 +331,6 @@ class CommentColumn(ImportColumn):
         voucher.comment = value or ''
 
 
-class RecipientEmailColumn(ImportColumn):
-    identifier = 'email'
-    verbose_name = gettext_lazy('Recipient email')
-
-    def clean(self, value, previous_values):
-        settings = getattr(self, 'import_settings', {})
-        if settings.get('send') and not value:
-            raise ValidationError(_('This field is required if you enable email sending.'))
-        if value:
-            EmailValidator()(value)
-        return value
-
-
-class RecipientNameColumn(ImportColumn):
-    identifier = 'name'
-    verbose_name = gettext_lazy('Recipient name')
-
-
 class ShowHiddenItemsColumn(BooleanColumnMixin, ImportColumn):
     identifier = 'show_hidden_items'
     verbose_name = gettext_lazy('Shows hidden products that match this voucher')
@@ -385,8 +376,6 @@ def get_voucher_import_columns(event):
         SeatColumn(event),
         TagColumn(event),
         CommentColumn(event),
-        RecipientEmailColumn(event),
-        RecipientNameColumn(event),
         ShowHiddenItemsColumn(event),
         AllAddonsIncludedColumn(event),
         AllBundlesIncludedColumn(event),

@@ -56,6 +56,11 @@
         <lookup-select2 required v-if="vartype === 'gate' && operator === 'inList'" :multiple="true"
                         :value="rightoperand" v-on:input="setRightOperandGateList"
                         :url="gateSelectURL"></lookup-select2>
+        <select required v-if="vartype === 'enum_entry_status' && operator === '=='"
+                :value="rightoperand" v-on:input="setRightOperandEnum" class="form-control">
+          <option value="absent">{{ texts.status_absent }}</option>
+          <option value="present">{{ texts.status_present }}</option>
+        </select>
         <div class="checkin-rule-childrules" v-if="operator === 'or' || operator === 'and'">
             <div v-for="(op, opi) in operands">
                 <checkin-rule :rule="op" :index="opi" :level="level + 1" v-if="typeof op === 'object'"></checkin-rule>
@@ -92,6 +97,12 @@
           }
           if (this.rule[op][0]["entries_before"]) {
             return "entries_before";
+          }
+          if (this.rule[op][0]["entries_days_since"]) {
+            return "entries_days_since";
+          }
+          if (this.rule[op][0]["entries_days_before"]) {
+            return "entries_days_before";
           }
           return this.rule[op][0]["var"];
         } else {
@@ -304,6 +315,13 @@
           this.rule[this.operator].push(products);
         } else {
           this.$set(this.rule[this.operator], 1, products);
+        }
+      },
+      setRightOperandEnum: function (event) {
+        if (this.rule[this.operator].length === 1) {
+          this.rule[this.operator].push(event.target.value);
+        } else {
+          this.$set(this.rule[this.operator], 1, event.target.value);
         }
       },
       addOperand: function () {

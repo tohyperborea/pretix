@@ -35,6 +35,7 @@ from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils.functional import cached_property
 from django.utils.timezone import now
+from django.utils.translation import gettext
 from django_filters.rest_framework import DjangoFilterBackend, FilterSet
 from django_scopes import scopes_disabled
 from packaging.version import parse
@@ -285,6 +286,8 @@ with scopes_disabled():
             return queryset.filter(last_checked_in__isnull=not value)
 
         def check_rules_qs(self, queryset, name, value):
+            if not value:
+                return queryset
             if not self.checkinlist.rules:
                 return queryset
             return queryset.filter(
@@ -536,6 +539,7 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
                                 'reason': Checkin.REASON_ALREADY_REDEEMED,
                                 'reason_explanation': None,
                                 'require_attention': False,
+                                'checkin_texts': [],
                                 '__warning': 'Compatibility hack active due to detected old pretixSCAN version',
                             }, status=400)
                     except:  # we don't care e.g. about invalid version numbers
@@ -547,6 +551,7 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
                     'reason': Checkin.REASON_INVALID,
                     'reason_explanation': None,
                     'require_attention': False,
+                    'checkin_texts': [],
                     'list': MiniCheckinListSerializer(checkinlists[0]).data,
                 }, status=404)
             elif revoked_matches and force:
@@ -576,11 +581,38 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
                     'reason': Checkin.REASON_REVOKED,
                     'reason_explanation': None,
                     'require_attention': False,
+                    'checkin_texts': [],
                     'position': CheckinListOrderPositionSerializer(op, context=_make_context(context, revoked_matches[
                         0].event)).data,
                     'list': MiniCheckinListSerializer(list_by_event[revoked_matches[0].event_id]).data,
                 }, status=400)
         else:
+            if media.linked_orderposition.order.event_id not in list_by_event:
+                # Medium exists but connected ticket is for the wrong event
+                if not simulate:
+                    checkinlists[0].event.log_action('pretix.event.checkin.unknown', data={
+                        'datetime': datetime,
+                        'type': checkin_type,
+                        'list': checkinlists[0].pk,
+                        'barcode': raw_barcode,
+                        'searched_lists': [cl.pk for cl in checkinlists]
+                    }, user=user, auth=auth)
+                    Checkin.objects.create(
+                        position=None,
+                        successful=False,
+                        error_reason=Checkin.REASON_INVALID,
+                        error_explanation=gettext('Medium connected to other event'),
+                        **common_checkin_args,
+                    )
+                return Response({
+                    'detail': 'Not found.',  # for backwards compatibility
+                    'status': 'error',
+                    'reason': Checkin.REASON_INVALID,
+                    'reason_explanation': gettext('Medium connected to other event'),
+                    'require_attention': False,
+                    'checkin_texts': [],
+                    'list': MiniCheckinListSerializer(checkinlists[0]).data,
+                }, status=404)
             op_candidates = [media.linked_orderposition]
             if list_by_event[media.linked_orderposition.order.event_id].addon_match:
                 op_candidates += list(media.linked_orderposition.addons.all())
@@ -631,6 +663,7 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
                 'reason': Checkin.REASON_AMBIGUOUS,
                 'reason_explanation': None,
                 'require_attention': op.require_checkin_attention,
+                'checkin_texts': op.checkin_texts,
                 'position': CheckinListOrderPositionSerializer(op, context=_make_context(context, op.order.event)).data,
                 'list': MiniCheckinListSerializer(list_by_event[op.order.event_id]).data,
             }, status=400)
@@ -679,6 +712,7 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
             return Response({
                 'status': 'incomplete',
                 'require_attention': op.require_checkin_attention,
+                'checkin_texts': op.checkin_texts,
                 'position': CheckinListOrderPositionSerializer(op, context=_make_context(context, op.order.event)).data,
                 'questions': [
                     QuestionSerializer(q).data for q in e.questions
@@ -709,6 +743,7 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
                 'reason': e.code,
                 'reason_explanation': e.reason,
                 'require_attention': op.require_checkin_attention,
+                'checkin_texts': op.checkin_texts,
                 'position': CheckinListOrderPositionSerializer(op, context=_make_context(context, op.order.event)).data,
                 'list': MiniCheckinListSerializer(list_by_event[op.order.event_id]).data,
             }, status=400)
@@ -716,6 +751,7 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
             return Response({
                 'status': 'ok',
                 'require_attention': op.require_checkin_attention,
+                'checkin_texts': op.checkin_texts,
                 'position': CheckinListOrderPositionSerializer(op, context=_make_context(context, op.order.event)).data,
                 'list': MiniCheckinListSerializer(list_by_event[op.order.event_id]).data,
             }, status=201)

@@ -33,7 +33,6 @@
                                     {% trans "Contact information" %}
                                 {% endif %}
                             </strong>
-                            <i class="fa fa-angle-down collapse-indicator" aria-hidden="true"></i>
                         </h4>
                     </summary>
                     <div id="invoice" class="panel-collapse">
@@ -55,7 +54,6 @@
                             <strong>{{ pos.item.name }}{% if pos.variation %}
                                 – {{ pos.variation }}
                             {% endif %}</strong>
-                            <i class="fa fa-angle-down collapse-indicator" aria-hidden="true"></i>
                         </h4>
                     </summary>
                     <div id="cp{{ pos.id }}">
@@ -63,7 +61,9 @@
                             {% for form in forms %}
                                 {% if form.pos.item != pos.item %}
                                     {# Add-Ons #}
-                                    <legend>+ {{ form.pos.item.name }}</legend>
+                                    <legend>+ {{ form.pos.item.name }}{% if form.pos.variation %}
+                                    – {{ form.pos.variation.value }}
+                                    {% endif %}</legend>
                                 {% endif %}
                                 {% bootstrap_form form layout="checkout" %}
                             {% endfor %}

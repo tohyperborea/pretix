@@ -182,7 +182,7 @@ class BaseReportlabInvoiceRenderer(BaseInvoiceRenderer):
         pdfmetrics.registerFontFamily('OpenSans', normal='OpenSans', bold='OpenSansBd',
                                       italic='OpenSansIt', boldItalic='OpenSansBI')
 
-        for family, styles in get_fonts().items():
+        for family, styles in get_fonts(event=self.event, pdf_support_required=True).items():
             if family == self.event.settings.invoice_renderer_font:
                 pdfmetrics.registerFont(TTFont(family, finders.find(styles['regular']['truetype'])))
                 self.font_regular = family
@@ -625,7 +625,7 @@ class ClassicInvoiceRenderer(BaseReportlabInvoiceRenderer):
             )]
         else:
             tdata = [(
-                Paragraph(self._normalize(pgettext('invoice', 'Description')), self.stylesheet['BoldRight']),
+                Paragraph(self._normalize(pgettext('invoice', 'Description')), self.stylesheet['Bold']),
                 Paragraph(self._normalize(pgettext('invoice', 'Qty')), self.stylesheet['BoldRightNoSplit']),
                 Paragraph(self._normalize(pgettext('invoice', 'Amount')), self.stylesheet['BoldRightNoSplit']),
             )]
@@ -855,7 +855,7 @@ class ClassicInvoiceRenderer(BaseReportlabInvoiceRenderer):
 
 class Modern1Renderer(ClassicInvoiceRenderer):
     identifier = 'modern1'
-    verbose_name = gettext_lazy('Modern Invoice Renderer (pretix 2.7)')
+    verbose_name = gettext_lazy('Default invoice renderer (European-style letter)')
     bottom_margin = 16.9 * mm
     top_margin = 16.9 * mm
     right_margin = 20 * mm
@@ -989,6 +989,37 @@ class Modern1Renderer(ClassicInvoiceRenderer):
         canvas.drawText(textobject)
 
 
+class Modern1SimplifiedRenderer(Modern1Renderer):
+    identifier = 'modern1simplified'
+    verbose_name = gettext_lazy('Simplified invoice renderer')
+
+    logo_left = Modern1Renderer.left_margin
+    logo_width = pagesizes.A4[0] - Modern1Renderer.right_margin - logo_left
+    logo_height = 25 * mm
+    logo_top = 13 * mm
+    logo_anchor = 'nw'
+
+    def _draw_invoice_from(self, canvas):
+        super(Modern1Renderer, self)._draw_invoice_from(canvas)
+
+    def _draw_event(self, canvas):
+        pass
+
+    def _get_intro(self):
+        i = []
+
+        if not self.invoice.event.has_subevents and self.invoice.event.settings.show_dates_on_frontpage:
+            i.append(Paragraph(
+                pgettext('invoice', 'Event date: {date_range}').format(
+                    date_range=self.invoice.event.get_date_range_display(),
+                ),
+                self.stylesheet['Normal'],
+            ))
+            i.append(Spacer(2 * mm, 2 * mm))
+
+        return i + super()._get_intro()
+
+
 @receiver(register_invoice_renderers, dispatch_uid="invoice_renderer_classic")
 def recv_classic(sender, **kwargs):
-    return [ClassicInvoiceRenderer, Modern1Renderer]
+    return [ClassicInvoiceRenderer, Modern1Renderer, Modern1SimplifiedRenderer]

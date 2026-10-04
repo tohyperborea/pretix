@@ -59,9 +59,10 @@ class InlineItemVariationSerializer(I18nAwareModelSerializer):
     class Meta:
         model = ItemVariation
         fields = ('id', 'value', 'active', 'description',
-                  'position', 'default_price', 'price', 'original_price', 'require_approval',
+                  'position', 'default_price', 'price', 'original_price', 'free_price_suggestion', 'require_approval',
                   'require_membership', 'require_membership_types', 'require_membership_hidden',
-                  'checkin_attention', 'available_from', 'available_until',
+                  'checkin_attention', 'checkin_text',
+                  'available_from', 'available_from_mode', 'available_until', 'available_until_mode',
                   'sales_channels', 'hide_without_voucher', 'meta_data')
 
     def __init__(self, *args, **kwargs):
@@ -83,9 +84,10 @@ class ItemVariationSerializer(I18nAwareModelSerializer):
     class Meta:
         model = ItemVariation
         fields = ('id', 'value', 'active', 'description',
-                  'position', 'default_price', 'price', 'original_price', 'require_approval',
+                  'position', 'default_price', 'price', 'original_price', 'free_price_suggestion', 'require_approval',
                   'require_membership', 'require_membership_types', 'require_membership_hidden',
-                  'checkin_attention', 'available_from', 'available_until',
+                  'checkin_attention', 'checkin_text',
+                  'available_from', 'available_from_mode', 'available_until', 'available_until_mode',
                   'sales_channels', 'hide_without_voucher', 'meta_data')
 
     def __init__(self, *args, **kwargs):
@@ -234,12 +236,14 @@ class ItemSerializer(I18nAwareModelSerializer):
     class Meta:
         model = Item
         fields = ('id', 'category', 'name', 'internal_name', 'active', 'sales_channels', 'description',
-                  'default_price', 'free_price', 'tax_rate', 'tax_rule', 'admission', 'personalized',
-                  'position', 'picture', 'available_from', 'available_until',
+                  'default_price', 'free_price', 'free_price_suggestion', 'tax_rate', 'tax_rule', 'admission',
+                  'personalized', 'position', 'picture',
+                  'available_from', 'available_from_mode', 'available_until', 'available_until_mode',
                   'require_voucher', 'hide_without_voucher', 'allow_cancel', 'require_bundling',
-                  'min_per_order', 'max_per_order', 'checkin_attention', 'has_variations', 'variations',
+                  'min_per_order', 'max_per_order', 'checkin_attention', 'checkin_text', 'has_variations', 'variations',
                   'addons', 'bundles', 'original_price', 'require_approval', 'generate_tickets',
-                  'show_quota_left', 'hidden_if_available', 'allow_waitinglist', 'issue_giftcard', 'meta_data',
+                  'show_quota_left', 'hidden_if_available', 'hidden_if_item_available', 'allow_waitinglist',
+                  'issue_giftcard', 'meta_data',
                   'require_membership', 'require_membership_types', 'require_membership_hidden', 'grant_membership_type',
                   'grant_membership_duration_like_event', 'grant_membership_duration_days',
                   'grant_membership_duration_months', 'validity_mode', 'validity_fixed_from', 'validity_fixed_until',
@@ -439,7 +443,7 @@ class QuestionSerializer(I18nAwareModelSerializer):
     class Meta:
         model = Question
         fields = ('id', 'question', 'type', 'required', 'items', 'options', 'position',
-                  'ask_during_checkin', 'identifier', 'dependency_question', 'dependency_values',
+                  'ask_during_checkin', 'show_during_checkin', 'identifier', 'dependency_question', 'dependency_values',
                   'hidden', 'dependency_value', 'print_on_invoice', 'help_text', 'valid_number_min',
                   'valid_number_max', 'valid_date_min', 'valid_date_max', 'valid_datetime_min', 'valid_datetime_max',
                   'valid_string_length_max', 'valid_file_portrait')
@@ -484,6 +488,9 @@ class QuestionSerializer(I18nAwareModelSerializer):
 
         if full_data.get('ask_during_checkin') and full_data.get('type') in Question.ASK_DURING_CHECKIN_UNSUPPORTED:
             raise ValidationError(_('This type of question cannot be asked during check-in.'))
+
+        if full_data.get('show_during_checkin') and full_data.get('type') in Question.SHOW_DURING_CHECKIN_UNSUPPORTED:
+            raise ValidationError(_('This type of question cannot be shown during check-in.'))
 
         Question.clean_items(event, full_data.get('items'))
         return data

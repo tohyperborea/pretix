@@ -41,6 +41,7 @@ from json import loads
 from urllib.parse import urlparse
 
 import importlib_metadata as metadata
+from django.core.exceptions import ImproperlyConfigured
 from django.utils.crypto import get_random_string
 from kombu import Queue
 
@@ -64,10 +65,10 @@ config = EnvOrParserConfig(_config)
 
 CONFIG_FILE = config
 DATA_DIR = config.get('pretix', 'datadir', fallback=os.environ.get('DATA_DIR', 'data'))
-LOG_DIR = os.path.join(DATA_DIR, 'logs')
+LOG_DIR = config.get('pretix', 'logdir', fallback=os.path.join(DATA_DIR, 'logs'))
 MEDIA_ROOT = os.path.join(DATA_DIR, 'media')
 PROFILE_DIR = os.path.join(DATA_DIR, 'profiles')
-CACHE_DIR = os.path.join(DATA_DIR, 'cache')
+CACHE_DIR = config.get('pretix', 'cachedir', fallback=os.path.join(DATA_DIR, 'cache'))
 
 if not os.path.exists(DATA_DIR):
     os.mkdir(DATA_DIR)
@@ -141,6 +142,8 @@ if USE_DATABASE_TLS or USE_DATABASE_MTLS:
 
     db_options.update(tls_config)
 
+db_disable_server_side_cursors = db_backend == 'postgresql' and config.getboolean('database', 'disable_server_side_cursors', fallback=False)
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.' + db_backend,
@@ -151,6 +154,7 @@ DATABASES = {
         'PORT': config.get('database', 'port', fallback=''),
         'CONN_MAX_AGE': 0 if db_backend == 'sqlite3' else 120,
         'CONN_HEALTH_CHECKS': db_backend != 'sqlite3',  # Will only be used from Django 4.1 onwards
+        'DISABLE_SERVER_SIDE_CURSORS': db_disable_server_side_cursors,
         'OPTIONS': db_options,
         'TEST': {}
     }
@@ -176,11 +180,19 @@ STATIC_URL = config.get('urls', 'static', fallback='/static/')
 MEDIA_URL = config.get('urls', 'media', fallback='/media/')
 
 PRETIX_INSTANCE_NAME = config.get('pretix', 'instance_name', fallback='pretix.de')
-PRETIX_REGISTRATION = config.getboolean('pretix', 'registration', fallback=True)
+PRETIX_REGISTRATION = config.getboolean('pretix', 'registration', fallback=False)
 PRETIX_PASSWORD_RESET = config.getboolean('pretix', 'password_reset', fallback=True)
 PRETIX_LONG_SESSIONS = config.getboolean('pretix', 'long_sessions', fallback=True)
 PRETIX_ADMIN_AUDIT_COMMENTS = config.getboolean('pretix', 'audit_comments', fallback=False)
-PRETIX_OBLIGATORY_2FA = config.getboolean('pretix', 'obligatory_2fa', fallback=False)
+
+_obligatory_2fa = config.get('pretix', 'obligatory_2fa', fallback="False")
+_mapping = {'1': True, 'yes': True, 'true': True, 'on': True, '0': False, 'no': False, 'false': False, 'off': False, 'staff': 'staff'}
+if _obligatory_2fa.lower() not in _mapping:
+    raise ImproperlyConfigured(
+        f"Value '{_obligatory_2fa}' not allowed for configuration key pretix.obligatory_2fa."
+    )
+PRETIX_OBLIGATORY_2FA = _mapping[_obligatory_2fa.lower()]
+
 PRETIX_SESSION_TIMEOUT_RELATIVE = 3600 * 3
 PRETIX_SESSION_TIMEOUT_ABSOLUTE = 3600 * 12
 
@@ -334,8 +346,6 @@ if HAS_CELERY:
 else:
     CELERY_TASK_ALWAYS_EAGER = True
 
-SESSION_COOKIE_DOMAIN = config.get('pretix', 'cookie_domain', fallback=None)
-
 CACHE_TICKETS_HOURS = config.getint('cache', 'tickets', fallback=24 * 3)
 
 ENTROPY = {
@@ -399,7 +409,7 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'pretix.api.auth.token.TeamTokenAuthentication',
         'pretix.api.auth.device.DeviceTokenAuthentication',
-        'rest_framework.authentication.SessionAuthentication',
+        'pretix.api.auth.session.SessionAuthentication',
         'oauth2_provider.contrib.rest_framework.OAuth2Authentication',
     ),
     'DEFAULT_RENDERER_CLASSES': (
@@ -494,6 +504,11 @@ for k, v in ALL_LANGUAGES: # noqa
     if LANGUAGES_ENABLED and k not in LANGUAGES_ENABLED:
         continue
     LANGUAGES.append((k, v))
+
+if LANGUAGE_CODE not in {l[0] for l in LANGUAGES}:
+    raise ImproperlyConfigured(
+        f"Default language {LANGUAGE_CODE} is not one of the available and enabled languages."
+    )
 
 
 AUTH_USER_MODEL = 'pretixbase.User'
@@ -679,9 +694,10 @@ CELERY_TASK_ROUTES = ([
 BOOTSTRAP3 = {
     'success_css_class': '',
     'field_renderers': {
-        'default': 'pretix.base.forms.renderers.FieldRenderer',
-        'inline': 'pretix.base.forms.renderers.InlineFieldRenderer',
+        'default': 'bootstrap3.renderers.FieldRenderer',
+        'inline': 'bootstrap3.renderers.InlineFieldRenderer',
         'control': 'pretix.control.forms.renderers.ControlFieldRenderer',
+        'control_with_visibility': 'pretix.control.forms.renderers.ControlFieldWithVisibilityRenderer',
         'bulkedit': 'pretix.control.forms.renderers.BulkEditFieldRenderer',
         'bulkedit_inline': 'pretix.control.forms.renderers.InlineBulkEditFieldRenderer',
         'checkout': 'pretix.presale.forms.renderers.CheckoutFieldRenderer',
@@ -735,5 +751,4 @@ FILE_UPLOAD_MAX_SIZE_EMAIL_ATTACHMENT = 1024 * 1024 * config.getint("pretix_file
 FILE_UPLOAD_MAX_SIZE_EMAIL_AUTO_ATTACHMENT = 1024 * 1024 * config.getint("pretix_file_upload", "max_size_email_auto_attachment", fallback=1)
 FILE_UPLOAD_MAX_SIZE_OTHER = 1024 * 1024 * config.getint("pretix_file_upload", "max_size_other", fallback=10)
 
-
-DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'  # sadly. we would prefer BigInt, and should use it for all new models but the migration will be hard
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

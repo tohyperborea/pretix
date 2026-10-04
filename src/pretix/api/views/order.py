@@ -20,6 +20,7 @@
 # <https://www.gnu.org/licenses/>.
 #
 import datetime
+import logging
 import mimetypes
 import os
 from decimal import Decimal
@@ -27,7 +28,7 @@ from zoneinfo import ZoneInfo
 
 import django_filters
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import (
     Exists, F, OuterRef, Prefetch, Q, Subquery, prefetch_related_objects,
 )
@@ -97,6 +98,8 @@ from pretix.base.signals import (
 from pretix.base.templatetags.money import money_filter
 from pretix.control.signals import order_search_filter_q
 
+logger = logging.getLogger(__name__)
+
 with scopes_disabled():
     class OrderFilter(FilterSet):
         email = django_filters.CharFilter(field_name='email', lookup_expr='iexact')
@@ -110,10 +113,11 @@ with scopes_disabled():
         item = django_filters.CharFilter(field_name='all_positions', lookup_expr='item_id', distinct=True)
         variation = django_filters.CharFilter(field_name='all_positions', lookup_expr='variation_id', distinct=True)
         subevent = django_filters.CharFilter(field_name='all_positions', lookup_expr='subevent_id', distinct=True)
+        customer = django_filters.CharFilter(field_name='customer__identifier')
 
         class Meta:
             model = Order
-            fields = ['code', 'status', 'email', 'locale', 'testmode', 'require_approval']
+            fields = ['code', 'status', 'email', 'locale', 'testmode', 'require_approval', 'customer']
 
         @scopes_disabled()
         def subevent_after_qs(self, qs, name, value):
@@ -221,6 +225,8 @@ class OrderViewSetMixin:
             qs = qs.prefetch_related('refunds', 'refunds__payment')
         if 'invoice_address' not in self.request.GET.getlist('exclude'):
             qs = qs.select_related('invoice_address')
+        if 'customer' not in self.request.GET.getlist('exclude'):
+            qs = qs.select_related('customer')
 
         qs = qs.prefetch_related(self._positions_prefetch(self.request))
         return qs
@@ -826,6 +832,16 @@ class EventOrderViewSet(OrderViewSetMixin, viewsets.ModelViewSet):
                     }
                 )
 
+            if 'checkin_text' in self.request.data and serializer.instance.checkin_text != self.request.data.get('checkin_text'):
+                serializer.instance.log_action(
+                    'pretix.event.order.checkin_text',
+                    user=self.request.user,
+                    auth=self.request.auth,
+                    data={
+                        'new_value': self.request.data.get('checkin_text')
+                    }
+                )
+
             if 'valid_if_pending' in self.request.data and serializer.instance.valid_if_pending != self.request.data.get('valid_if_pending'):
                 serializer.instance.log_action(
                     'pretix.event.order.valid_if_pending',
@@ -887,7 +903,11 @@ class EventOrderViewSet(OrderViewSetMixin, viewsets.ModelViewSet):
             order_modified.send(sender=serializer.instance.event, order=serializer.instance)
 
     def perform_create(self, serializer):
-        serializer.save()
+        try:
+            serializer.save()
+        except IntegrityError:
+            logger.exception("Integrity error while saving order")
+            raise ValidationError("Integrity error, possibly duplicate submission of same order.")
 
     def perform_destroy(self, instance):
         if not instance.testmode:

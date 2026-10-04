@@ -74,6 +74,7 @@ from i18nfield.strings import LazyI18nString
 from pretix.base.channels import get_all_sales_channels
 from pretix.base.decimal import round_decimal
 from pretix.base.email import get_email_context
+from pretix.base.exporter import MultiSheetListExporter
 from pretix.base.i18n import language
 from pretix.base.models import (
     CachedCombinedTicket, CachedFile, CachedTicket, Checkin, Invoice,
@@ -118,9 +119,9 @@ from pretix.control.forms.filter import (
     RefundFilterForm,
 )
 from pretix.control.forms.orders import (
-    CancelForm, CommentForm, ConfirmPaymentForm, DenyForm, EventCancelForm,
-    ExporterForm, ExtendForm, MarkPaidForm, OrderContactForm,
-    OrderFeeChangeForm, OrderLocaleForm, OrderMailForm, OrderPositionAddForm,
+    CancelForm, CommentForm, DenyForm, EventCancelForm, ExporterForm,
+    ExtendForm, MarkPaidForm, OrderContactForm, OrderFeeChangeForm,
+    OrderLocaleForm, OrderMailForm, OrderPositionAddForm,
     OrderPositionAddFormset, OrderPositionChangeForm, OrderPositionMailForm,
     OrderRefundForm, OtherOperationsForm, ReactivateOrderForm,
 )
@@ -212,10 +213,14 @@ class BaseOrderBulkActionView(OrderSearchMixin, EventPermissionRequiredMixin, As
     def execute_bulk(self, queryset: QuerySet, form: forms.Form):
         qs = self.allowed_for(self.allowed_for(self.get_queryset()))
         total = qs.count()
+        orders_with_successful_action = 0
         for i, o in enumerate(qs):
-            self.execute_single(o, form)
+            res = self.execute_single(o, form)
+            if res:
+                orders_with_successful_action += 1
             if i % 100 == 0:
                 self.async_set_progress(i / total * 100)
+        return orders_with_successful_action, total
 
     def get_error_url(self):
         return self.get_success_url(None)
@@ -230,6 +235,9 @@ class BaseOrderBulkActionView(OrderSearchMixin, EventPermissionRequiredMixin, As
             'event': self.request.event.slug,
             'organizer': self.request.event.organizer.slug,
         })
+
+    def get_success_message(self, value):
+        return _("Successfully executed the action \"{label}\" on {success} of {total} orders.").format(success=value[0], label=self.label, total=value[1])
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -270,7 +278,7 @@ class BaseOrderBulkActionView(OrderSearchMixin, EventPermissionRequiredMixin, As
 
     @transaction.atomic()
     def async_form_valid(self, task, form):
-        self.execute_bulk(self.allowed_for(self.get_queryset()), form)
+        return self.execute_bulk(self.allowed_for(self.get_queryset()), form)
 
 
 class OrderApproveBulkActionView(BaseOrderBulkActionView):
@@ -284,6 +292,7 @@ class OrderApproveBulkActionView(BaseOrderBulkActionView):
 
     def execute_single(self, instance, form: forms.Form):
         approve_order(instance, user=self.request.user)
+        return True
 
 
 class OrderDenyBulkActionView(BaseOrderBulkActionView):
@@ -300,6 +309,7 @@ class OrderDenyBulkActionView(BaseOrderBulkActionView):
         deny_order(instance, user=self.request.user,
                    comment=form.cleaned_data.get('comment') or None,
                    send_mail=form.cleaned_data['send_email'])
+        return True
 
 
 class OrderExpireBulkActionView(BaseOrderBulkActionView):
@@ -314,6 +324,33 @@ class OrderExpireBulkActionView(BaseOrderBulkActionView):
 
     def execute_single(self, instance, form: forms.Form):
         mark_order_expired(instance, user=self.request.user)
+        return True
+
+
+class OrderOverpaidRefundBulkActionView(BaseOrderBulkActionView):
+    label = _("Refund overpaid amount")
+
+    def allowed_for(self, queryset):
+        return Order.annotate_overpayments(queryset).filter(is_overpaid=True)
+
+    def execute_single(self, instance: Order, form: forms.Form):
+        if instance.pending_sum < 0:
+            try:
+                proposals = instance.propose_auto_refunds(instance.pending_sum * -1)
+                for payment, amount in proposals.items():
+                    refund = OrderRefund.objects.create(
+                        order=instance,
+                        payment=payment,
+                        source=OrderRefund.REFUND_SOURCE_ADMIN,
+                        state=OrderRefund.REFUND_STATE_CREATED,
+                        amount=amount,
+                        comment=_("Refund for overpayment"),
+                        provider=payment.provider
+                    )
+                    payment.payment_provider.execute_refund(refund)
+                    return True
+            except (ValueError, PaymentException):
+                return False
 
 
 class OrderDeleteBulkActionView(BaseOrderBulkActionView):
@@ -441,12 +478,9 @@ class OrderView(EventPermissionRequiredMixin, DetailView):
         ctx = super().get_context_data(**kwargs)
         ctx['can_generate_invoice'] = invoice_qualified(self.order) and (
             self.request.event.settings.invoice_generate in ('admin', 'user', 'paid', 'True')
-        ) and (
+        ) and self.order.status in (Order.STATUS_PAID, Order.STATUS_PENDING) and (
             not self.order.invoices.exists()
-            or (
-                self.order.status in (Order.STATUS_PAID, Order.STATUS_PENDING)
-                and self.order.invoices.filter(is_cancellation=True).count() >= self.order.invoices.filter(is_cancellation=False).count()
-            )
+            or self.order.invoices.filter(is_cancellation=True).count() >= self.order.invoices.filter(is_cancellation=False).count()
         )
         return ctx
 
@@ -479,7 +513,8 @@ class OrderDetail(OrderView):
         ctx['comment_form'] = CommentForm(initial={
             'comment': self.order.comment,
             'custom_followup_at': self.order.custom_followup_at,
-            'checkin_attention': self.order.checkin_attention
+            'checkin_attention': self.order.checkin_attention,
+            'checkin_text': self.order.checkin_text,
         })
         ctx['display_locale'] = dict(settings.LANGUAGES)[self.object.locale or self.request.event.settings.locale]
 
@@ -713,7 +748,13 @@ class OrderComment(OrderView):
                 self.order.log_action('pretix.event.order.checkin_attention', user=self.request.user, data={
                     'new_value': form.cleaned_data.get('checkin_attention')
                 })
-            self.order.save(update_fields=['checkin_attention', 'comment', 'custom_followup_at'])
+
+            if form.cleaned_data.get('checkin_text') != self.order.checkin_text:
+                self.order.checkin_text = form.cleaned_data.get('checkin_text')
+                self.order.log_action('pretix.event.order.checkin_text', user=self.request.user, data={
+                    'new_value': form.cleaned_data.get('checkin_text')
+                })
+            self.order.save(update_fields=['checkin_attention', 'checkin_text', 'comment', 'custom_followup_at'])
             self.order.refresh_from_db()
             messages.success(self.request, _('The comment has been updated.'))
         else:
@@ -973,9 +1014,10 @@ class OrderPaymentConfirm(OrderView):
 
     @cached_property
     def mark_paid_form(self):
-        return ConfirmPaymentForm(
+        return MarkPaidForm(
             instance=self.order,
             data=self.request.POST if self.request.method == "POST" else None,
+            payment=self.payment,
         )
 
     def post(self, *args, **kwargs):
@@ -986,8 +1028,19 @@ class OrderPaymentConfirm(OrderView):
                     'order': self.order,
                 })
             try:
+                payment_date = None
+                if self.mark_paid_form.cleaned_data['payment_date'] != now().date():
+                    payment_date = make_aware(datetime.combine(
+                        self.mark_paid_form.cleaned_data['payment_date'],
+                        time(hour=0, minute=0, second=0)
+                    ), self.order.event.timezone)
+
+                self.payment.amount = self.mark_paid_form.cleaned_data['amount']
+                self.payment.save(update_fields=['amount'])
                 self.payment.confirm(user=self.request.user,
+                                     send_mail=self.mark_paid_form.cleaned_data['send_email'],
                                      count_waitinglist=False,
+                                     payment_date=payment_date,
                                      force=self.mark_paid_form.cleaned_data.get('force', False))
             except Quota.QuotaExceededException as e:
                 messages.error(self.request, str(e))
@@ -1144,6 +1197,9 @@ class OrderRefundView(OrderView):
                         messages.error(self.request, _('You entered an order that could not be found.'))
                         is_valid = False
                     else:
+                        if order.event.currency != self.request.event.currency:
+                            messages.error(self.request, _('You entered an order in an event with a different currency.'))
+                            is_valid = False
                         refunds.append(OrderRefund(
                             order=self.order,
                             payment=None,
@@ -1612,7 +1668,7 @@ class OrderInvoiceReissue(OrderView):
                 messages.error(self.request, _('The invoice has been cleaned of personal data.'))
             else:
                 c = generate_cancellation(inv)
-                if self.order.status != Order.STATUS_CANCELED:
+                if self.order.status not in (Order.STATUS_CANCELED, Order.STATUS_EXPIRED):
                     inv = generate_invoice(self.order)
                 else:
                     inv = c
@@ -1894,7 +1950,7 @@ class OrderChange(OrderView):
                     ocm.cancel_fee(f)
                     continue
 
-                if f.form.cleaned_data['value'] != f.value:
+                if f.form.cleaned_data['value'] is not None and f.form.cleaned_data['value'] != f.value:
                     ocm.change_fee(f, f.form.cleaned_data['value'])
 
                 if f.form.cleaned_data['tax_rule'] and f.form.cleaned_data['tax_rule'] != f.tax_rule:
@@ -2479,6 +2535,7 @@ class ExportMixin:
                 prefix=ex.identifier,
                 initial=initial
             )
+            ex.multisheet_warning = isinstance(ex, MultiSheetListExporter) and len(ex.sheets) > 1
             ex.form.fields = ex.export_form_fields
             return ex
 
@@ -2506,7 +2563,7 @@ class ExportMixin:
 
 class ExportDoView(EventPermissionRequiredMixin, ExportMixin, AsyncAction, TemplateView):
     permission = 'can_view_orders'
-    known_errortypes = ['ExportError']
+    known_errortypes = ['ExportError', 'ExportEmptyError']
     task = export
     template_name = 'pretixcontrol/orders/export_form.html'
 

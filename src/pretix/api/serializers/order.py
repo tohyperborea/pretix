@@ -44,7 +44,7 @@ from pretix.api.serializers import CompatibleJSONField
 from pretix.api.serializers.event import SubEventSerializer
 from pretix.api.serializers.i18n import I18nAwareModelSerializer
 from pretix.api.serializers.item import (
-    InlineItemVariationSerializer, ItemSerializer,
+    InlineItemVariationSerializer, ItemSerializer, QuestionSerializer,
 )
 from pretix.base.channels import get_all_sales_channels
 from pretix.base.decimal import round_decimal
@@ -486,11 +486,11 @@ class OrderPositionSerializer(I18nAwareModelSerializer):
                   'company', 'street', 'zipcode', 'city', 'country', 'state', 'discount',
                   'attendee_email', 'voucher', 'tax_rate', 'tax_value', 'secret', 'addon_to', 'subevent', 'checkins',
                   'downloads', 'answers', 'tax_rule', 'pseudonymization_id', 'pdf_data', 'seat', 'canceled',
-                  'valid_from', 'valid_until', 'blocked')
+                  'valid_from', 'valid_until', 'blocked', 'voucher_budget_use')
         read_only_fields = (
             'id', 'order', 'positionid', 'item', 'variation', 'price', 'voucher', 'tax_rate', 'tax_value', 'secret',
             'addon_to', 'subevent', 'checkins', 'downloads', 'answers', 'tax_rule', 'pseudonymization_id', 'pdf_data',
-            'seat', 'canceled', 'discount', 'valid_from', 'valid_until', 'blocked'
+            'seat', 'canceled', 'discount', 'valid_from', 'valid_until', 'blocked', 'voucher_budget_use'
         )
 
     def __init__(self, *args, **kwargs):
@@ -501,7 +501,7 @@ class OrderPositionSerializer(I18nAwareModelSerializer):
             # /events/…/checkinlists/…/positions/
             # We're unable to check this on this level if we're on /checkinrpc/, in which case we rely on the view
             # layer to not set pdf_data=true in the first place.
-            request and hasattr(request, 'event') and 'can_view_orders' not in request.eventpermset
+            request and hasattr(request, 'eventpermset') and 'can_view_orders' not in request.eventpermset
         )
         if ('pdf_data' in self.context and not self.context['pdf_data']) or pdf_data_forbidden:
             self.fields.pop('pdf_data', None)
@@ -584,6 +584,9 @@ class CheckinListOrderPositionSerializer(OrderPositionSerializer):
 
         if 'variation' in self.context['expand']:
             self.fields['variation'] = InlineItemVariationSerializer(read_only=True)
+
+        if 'answers.question' in self.context['expand']:
+            self.fields['answers'].child.fields['question'] = QuestionSerializer(read_only=True)
 
 
 class OrderPaymentTypeField(serializers.Field):
@@ -715,7 +718,7 @@ class OrderSerializer(I18nAwareModelSerializer):
         fields = (
             'code', 'event', 'status', 'testmode', 'secret', 'email', 'phone', 'locale', 'datetime', 'expires', 'payment_date',
             'payment_provider', 'fees', 'total', 'comment', 'custom_followup_at', 'invoice_address', 'positions', 'downloads',
-            'checkin_attention', 'last_modified', 'payments', 'refunds', 'require_approval', 'sales_channel',
+            'checkin_attention', 'checkin_text', 'last_modified', 'payments', 'refunds', 'require_approval', 'sales_channel',
             'url', 'customer', 'valid_if_pending'
         )
         read_only_fields = (
@@ -771,8 +774,8 @@ class OrderSerializer(I18nAwareModelSerializer):
     def update(self, instance, validated_data):
         # Even though all fields that shouldn't be edited are marked as read_only in the serializer
         # (hopefully), we'll be extra careful here and be explicit about the model fields we update.
-        update_fields = ['comment', 'custom_followup_at', 'checkin_attention', 'email', 'locale', 'phone',
-                         'valid_if_pending']
+        update_fields = ['comment', 'custom_followup_at', 'checkin_attention', 'checkin_text', 'email', 'locale',
+                         'phone', 'valid_if_pending']
 
         if 'invoice_address' in validated_data:
             iadata = validated_data.pop('invoice_address')
@@ -1032,13 +1035,14 @@ class OrderCreateSerializer(I18nAwareModelSerializer):
         super().__init__(*args, **kwargs)
         self.fields['positions'].child.fields['voucher'].queryset = self.context['event'].vouchers.all()
         self.fields['customer'].queryset = self.context['event'].organizer.customers.all()
+        self.fields['expires'].required = False
 
     class Meta:
         model = Order
         fields = ('code', 'status', 'testmode', 'email', 'phone', 'locale', 'payment_provider', 'fees', 'comment', 'sales_channel',
-                  'invoice_address', 'positions', 'checkin_attention', 'payment_info', 'payment_date', 'consume_carts',
-                  'force', 'send_email', 'simulate', 'customer', 'custom_followup_at', 'require_approval',
-                  'valid_if_pending')
+                  'invoice_address', 'positions', 'checkin_attention', 'checkin_text', 'payment_info', 'payment_date',
+                  'consume_carts', 'force', 'send_email', 'simulate', 'customer', 'custom_followup_at',
+                  'require_approval', 'valid_if_pending', 'expires')
 
     def validate_payment_provider(self, pp):
         if pp is None:
@@ -1046,6 +1050,11 @@ class OrderCreateSerializer(I18nAwareModelSerializer):
         if pp not in self.context['event'].get_payment_providers():
             raise ValidationError('The given payment provider is not known.')
         return pp
+
+    def validate_expires(self, expires):
+        if expires < now():
+            raise ValidationError('Expiration date must be in the future.')
+        return expires
 
     def validate_sales_channel(self, channel):
         if channel not in get_all_sales_channels():
@@ -1067,6 +1076,10 @@ class OrderCreateSerializer(I18nAwareModelSerializer):
         if not data:
             raise ValidationError(
                 'An order cannot be empty.'
+            )
+        if len(data) > settings.PRETIX_MAX_ORDER_SIZE:
+            raise ValidationError(
+                'Orders cannot have more than %(max)s positions.' % {'max': settings.PRETIX_MAX_ORDER_SIZE}
             )
         errs = [{} for p in data]
         if any([p.get('positionid') for p in data]):
@@ -1304,7 +1317,7 @@ class OrderCreateSerializer(I18nAwareModelSerializer):
             if 'valid_from' not in pos_data and 'valid_until' not in pos_data:
                 valid_from, valid_until = pos_data['item'].compute_validity(
                     requested_start=(
-                        max(requested_valid_from, now())
+                        requested_valid_from
                         if requested_valid_from and pos_data['item'].validity_dynamic_start_choice
                         else now()
                     ),
@@ -1355,7 +1368,8 @@ class OrderCreateSerializer(I18nAwareModelSerializer):
         if validated_data.get('locale', None) is None:
             validated_data['locale'] = self.context['event'].settings.locale
         order = Order(event=self.context['event'], **validated_data)
-        order.set_expires(subevents=[p.get('subevent') for p in positions_data])
+        if not validated_data.get('expires'):
+            order.set_expires(subevents=[p.get('subevent') for p in positions_data])
         order.meta_info = "{}"
         order.total = Decimal('0.00')
         if validated_data.get('require_approval') is not None:
@@ -1427,6 +1441,7 @@ class OrderCreateSerializer(I18nAwareModelSerializer):
                     if not pos.item.tax_rule or pos.item.tax_rule.price_includes_tax:
                         price_after_voucher = max(pos.price, pos.voucher.calculate_price(listed_price))
                     else:
+                        pos._calculate_tax(invoice_address=ia)
                         price_after_voucher = max(pos.price - pos.tax_value, pos.voucher.calculate_price(listed_price))
                 else:
                     price_after_voucher = listed_price
@@ -1454,7 +1469,7 @@ class OrderCreateSerializer(I18nAwareModelSerializer):
             answers_data = pos_data.pop('answers', [])
             use_reusable_medium = pos_data.pop('use_reusable_medium', None)
             pos = pos_data['__instance']
-            pos._calculate_tax()
+            pos._calculate_tax(invoice_address=ia)
 
             if simulate:
                 pos = WrappedModel(pos)
@@ -1573,7 +1588,10 @@ class OrderCreateSerializer(I18nAwareModelSerializer):
         if order.total == Decimal('0.00') and validated_data.get('status') == Order.STATUS_PAID and not payment_provider:
             payment_provider = 'free'
 
-        if order.total == Decimal('0.00') and validated_data.get('status') != Order.STATUS_PAID:
+        if order.total != Decimal('0.00') and order.event.currency == "XXX":
+            raise ValidationError('Paid products not supported without a valid currency.')
+
+        if order.total == Decimal('0.00') and validated_data.get('status') != Order.STATUS_PAID and not validated_data.get('require_approval'):
             order.status = Order.STATUS_PAID
             order.save()
             order.payments.create(
@@ -1585,6 +1603,8 @@ class OrderCreateSerializer(I18nAwareModelSerializer):
         elif validated_data.get('status') == Order.STATUS_PAID:
             if not payment_provider:
                 raise ValidationError('You cannot create a paid order without a payment provider.')
+            if validated_data.get('require_approval'):
+                raise ValidationError('You cannot create a paid order that requires approval.')
             order.payments.create(
                 amount=order.total,
                 provider=payment_provider,

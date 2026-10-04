@@ -30,6 +30,7 @@ from pretix.base.models import LogEntry, NotificationSetting, User
 from pretix.base.notifications import Notification, get_all_notification_types
 from pretix.base.services.mail import mail_send_task
 from pretix.base.services.tasks import ProfiledTask, TransactionAwareTask
+from pretix.base.signals import notification
 from pretix.celery_app import app
 from pretix.helpers.urls import build_absolute_uri
 
@@ -90,6 +91,8 @@ def notify(logentry_ids: list):
             if enabled and um not in notify_specific:
                 send_notification.apply_async(args=(logentry.id, notification_type.action_type, user.pk, method))
 
+        notification.send(logentry.event, logentry_id=logentry.id, notification_type=notification_type.action_type)
+
 
 @app.task(base=ProfiledTask, acks_late=True, max_retries=9, default_retry_delay=900)
 def send_notification(logentry_id: int, action_type: str, user_id: int, method: str):
@@ -133,7 +136,7 @@ def send_notification_mail(notification: Notification, user: User):
     tpl_html = get_template('pretixbase/email/notification.html')
 
     body_html = tpl_html.render(ctx)
-    inliner = css_inline.CSSInliner(remove_style_tags=True)
+    inliner = css_inline.CSSInliner(keep_style_tags=False)
     body_html = inliner.inline(body_html)
 
     tpl_plain = get_template('pretixbase/email/notification.txt')

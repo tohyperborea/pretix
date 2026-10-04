@@ -6,6 +6,8 @@ var pretixstripe = {
     elements: null,
     card: null,
     sepa: null,
+    affirm: null,
+    klarna: null,
     paymentRequest: null,
     paymentRequestButton: null,
 
@@ -163,6 +165,29 @@ var pretixstripe = {
                             $('.stripe-container').closest("form").find(".checkout-button-row .btn-primary").prop("disabled", false);
                         });
                     }
+                    if ($("#stripe-affirm").length) {
+                        pretixstripe.affirm = pretixstripe.elements.create('affirmMessage', {
+                            'amount': parseInt($("#stripe_affirm_total").val()),
+                            'currency': $("#stripe_affirm_currency").val(),
+                        });
+
+                        pretixstripe.affirm.mount('#stripe-affirm');
+                    }
+                    if ($("#stripe-klarna").length) {
+                        try {
+                            pretixstripe.klarna = pretixstripe.elements.create('paymentMethodMessaging', {
+                                'amount': parseInt($("#stripe_klarna_total").val()),
+                                'currency': $("#stripe_klarna_currency").val(),
+                                'countryCode': $("#stripe_klarna_country").val(),
+                                'paymentMethodTypes': ['klarna'],
+                            });
+
+                            pretixstripe.klarna.mount('#stripe-klarna');
+                        } catch (e) {
+                            console.error(e);
+                            $("#stripe-klarna").html("<div class='alert alert-danger'>Technical error, please contact support: " + e + "</div>");
+                        }
+                    }
                     if ($("#stripe-payment-request-button").length && pretixstripe.paymentRequest != null) {
                         pretixstripe.paymentRequestButton = pretixstripe.elements.create('paymentRequestButton', {
                             paymentRequest: pretixstripe.paymentRequest,
@@ -183,7 +208,7 @@ var pretixstripe = {
             }
         );
     },
-    'handleCardAction': function (payment_intent_client_secret) {
+    'withStripe': function (callback) {
         $.ajax({
             url: 'https://js.stripe.com/v3/',
             dataType: 'script',
@@ -198,33 +223,114 @@ var pretixstripe = {
                         locale: $.trim($("body").attr("data-locale"))
                     });
                 }
-                pretixstripe.stripe.handleCardAction(
-                    payment_intent_client_secret
-                ).then(function (result) {
-                    waitingDialog.show(gettext("Confirming your payment …"));
-                    location.reload();
-                });
+                callback();
             }
         });
     },
-    'handleCardActioniFrame': function (payment_intent_next_action_redirect_url) {
-        waitingDialog.show(gettext("Contacting your bank …"));
-        let iframe = document.createElement('iframe');
-        iframe.src = payment_intent_next_action_redirect_url;
-        iframe.className = 'embed-responsive-item';
-        $('#scacontainer').append(iframe);
-        $('#scacontainer iframe').on("load", function () {
-            waitingDialog.hide();
+    'handleAlipayAction': function (payment_intent_client_secret) {
+        pretixstripe.withStripe(function () {
+            pretixstripe.stripe.confirmAlipayPayment(
+                payment_intent_client_secret,
+                {
+                    return_url: window.location.href
+                }
+            ).then(function (result) {
+                if (result.error) {
+                    waitingDialog.hide();
+                    $(".stripe-errors").stop().hide().removeClass("sr-only");
+                    $(".stripe-errors").html("<div class='alert alert-danger'>Technical error, please contact support: " + result.error.message + "</div>");
+                    $(".stripe-errors").slideDown();
+                } else {
+                    waitingDialog.show(gettext("Confirming your payment …"));
+                }
+            });
         });
+    },
+    'handleWechatAction': function (payment_intent_client_secret) {
+        pretixstripe.withStripe(function () {
+            pretixstripe.stripe.confirmWechatPayPayment(
+                payment_intent_client_secret,
+                {
+                    payment_method_options: {
+                        wechat_pay: {
+                            client: 'web',
+                        },
+                    },
+                }
+            ).then(function (result) {
+                if (result.error) {
+                    waitingDialog.hide();
+                    $(".stripe-errors").stop().hide().removeClass("sr-only");
+                    $(".stripe-errors").html("<div class='alert alert-danger'>Technical error, please contact support: " + result.error.message + "</div>");
+                    $(".stripe-errors").slideDown();
+                } else {
+                    waitingDialog.show(gettext("Confirming your payment …"));
+                    location.reload();
+                }
+            });
+        });
+    },
+    'handleCardAction': function (payment_intent_client_secret) {
+        pretixstripe.withStripe(function () {
+            pretixstripe.stripe.handleCardAction(
+                payment_intent_client_secret
+            ).then(function (result) {
+                if (result.error) {
+                    waitingDialog.hide();
+                    $(".stripe-errors").stop().hide().removeClass("sr-only");
+                    $(".stripe-errors").html("<div class='alert alert-danger'>Technical error, please contact support: " + result.error.message + "</div>");
+                    $(".stripe-errors").slideDown();
+                } else {
+                    waitingDialog.show(gettext("Confirming your payment …"));
+                    location.reload();
+                }
+            });
+        });
+    },
+    'handlePaymentRedirectAction': function (payment_intent_next_action_redirect_url) {
+        waitingDialog.show(gettext("Contacting your bank …"));
+
+        let payment_intent_redirect_action_handling = $.trim($("#stripe_payment_intent_redirect_action_handling").html());
+        if (payment_intent_redirect_action_handling === 'iframe') {
+            let iframe = document.createElement('iframe');
+            iframe.src = payment_intent_next_action_redirect_url;
+            iframe.className = 'embed-responsive-item';
+            $('#scacontainer').append(iframe);
+            $('#scacontainer iframe').on("load", function () {
+                waitingDialog.hide();
+            });
+        } else if (payment_intent_redirect_action_handling === 'redirect') {
+            window.location.href = payment_intent_next_action_redirect_url;
+        }
     }
 };
 $(function () {
     if ($("#stripe_payment_intent_SCA_status").length) {
-        window.parent.postMessage('3DS-authentication-complete.' + $.trim($("#order_status").html()), '*');
-        return;
+        let payment_intent_redirect_action_handling = $.trim($("#stripe_payment_intent_redirect_action_handling").html());
+        let order_status = $.trim($("#order_status").html());
+        let order_url = $.trim($("#order_url").html())
+
+        if (payment_intent_redirect_action_handling === 'iframe') {
+            window.parent.postMessage('3DS-authentication-complete.' + order_status, '*');
+            return;
+        } else if (payment_intent_redirect_action_handling === 'redirect') {
+            waitingDialog.show(gettext("Confirming your payment …"));
+
+            if (order_status === 'p') {
+                window.location.href = order_url + '?paid=yes';
+            } else {
+                window.location.href = order_url;
+            }
+        }
     } else if ($("#stripe_payment_intent_next_action_redirect_url").length) {
         let payment_intent_next_action_redirect_url = $.trim($("#stripe_payment_intent_next_action_redirect_url").html());
-        pretixstripe.handleCardActioniFrame(payment_intent_next_action_redirect_url);
+        pretixstripe.handlePaymentRedirectAction(payment_intent_next_action_redirect_url);
+    } else if ($.trim($("#stripe_payment_intent_action_type").html()) === "wechat_pay_display_qr_code") {
+        let payment_intent_client_secret = $.trim($("#stripe_payment_intent_client_secret").html());
+        pretixstripe.handleWechatAction(payment_intent_client_secret);
+    } else if ($.trim($("#stripe_payment_intent_action_type").html()) === "alipay_handle_redirect") {
+        let payment_intent_client_secret = $.trim($("#stripe_payment_intent_client_secret").html());
+        pretixstripe.handleAlipayAction(payment_intent_client_secret);
     } else if ($("#stripe_payment_intent_client_secret").length) {
         let payment_intent_client_secret = $.trim($("#stripe_payment_intent_client_secret").html());
         pretixstripe.handleCardAction(payment_intent_client_secret);
@@ -247,11 +353,16 @@ $(function () {
     if (!$(".stripe-container").length)
         return;
 
-    if ($("input[name=payment][value=stripe]").is(':checked') || $("input[name=payment][value=stripe_sepa_debit]").is(':checked') || $(".payment-redo-form").length) {
+    if (
+        $("input[name=payment][value=stripe]").is(':checked')
+        || $("input[name=payment][value=stripe_sepa_debit]").is(':checked')
+        || $("input[name=payment][value=stripe_affirm]").is(':checked')
+        || $("input[name=payment][value=stripe_klarna]").is(':checked')
+        || $(".payment-redo-form").length) {
         pretixstripe.load();
     } else {
         $("input[name=payment]").change(function () {
-            if (['stripe', 'stripe_sepa_debit'].indexOf($(this).val()) > -1) {
+            if (['stripe', 'stripe_sepa_debit', 'stripe_affirm', 'stripe_klarna'].indexOf($(this).val()) > -1) {
                 pretixstripe.load();
             }
         })

@@ -29,8 +29,8 @@ from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
 
 from pretix.base.models import (
-    AbstractPosition, Customer, Event, Item, Membership, Order, OrderPosition,
-    SubEvent,
+    AbstractPosition, CartPosition, Customer, Event, Item, Membership, Order,
+    OrderPosition, SubEvent,
 )
 from pretix.helpers import OF_SELF
 
@@ -82,7 +82,8 @@ def create_membership(customer: Customer, position: OrderPosition):
     )
 
 
-def validate_memberships_in_order(customer: Customer, positions: List[AbstractPosition], event: Event, lock=False, ignored_order: Order = None, testmode=False):
+def validate_memberships_in_order(customer: Customer, positions: List[AbstractPosition], event: Event, lock=False, ignored_order: Order = None, testmode=False,
+                                  valid_from_not_chosen=False):
     """
     Validate that a set of cart or order positions. This currently does not validate
 
@@ -92,6 +93,8 @@ def validate_memberships_in_order(customer: Customer, positions: List[AbstractPo
     :param lock: Whether to place a SELECT FOR UPDATE lock on the selected memberships
     :param ignored_order: An order that should be ignored for usage counting
     :param testmode: If ``True``, only test mode memberships are allowed. If ``False``, test mode memberships are not allowed.
+    :param valid_from_not_chosen: Set to ``True`` to indicate that the customer is in an early step of the checkout flow
+                                  where the valid_from date is not selected yet. In this case, the valid_from date is not checked.
     """
     tz = event.timezone
     applicable_positions = [
@@ -132,7 +135,11 @@ def validate_memberships_in_order(customer: Customer, positions: List[AbstractPo
             qs = qs.exclude(order_id=ignored_order.pk)
         m._used_at_dates = [
             (op.subevent or op.order.event).date_from
-            for op in qs
+            for op in qs if not op.valid_from or not op.valid_until
+        ]
+        m._used_for_ranges = [
+            (op.valid_from, op.valid_until)
+            for op in qs if op.valid_from or op.valid_until
         ]
 
     for p in applicable_positions:
@@ -147,22 +154,44 @@ def validate_memberships_in_order(customer: Customer, positions: List[AbstractPo
                 _('You selected membership that has been canceled.')
             )
 
-        if m.testmode != testmode:
+        if m.testmode and not testmode:
             raise ValidationError(
-                _('You can only use a test mode membership for test mode tickets.')
+                _('You can not use a test mode membership for tickets that are not in test mode.')
+            )
+        elif not m.testmode and testmode:
+            raise ValidationError(
+                _('You need to add a test mode membership to the customer account to use it in test mode.')
             )
 
         ev = p.subevent or event
 
-        if not m.is_valid(ev):
-            raise ValidationError(
-                _('You selected a membership that is valid from {start} to {end}, but selected an event '
-                  'taking place at {date}.').format(
-                    start=date_format(m.date_start.astimezone(tz), 'SHORT_DATETIME_FORMAT'),
-                    end=date_format(m.date_end.astimezone(tz), 'SHORT_DATETIME_FORMAT'),
-                    date=date_format(ev.date_from.astimezone(tz), 'SHORT_DATETIME_FORMAT'),
+        if isinstance(p, (OrderPosition, CartPosition)):
+            # override_ variants are for usage of fake cart in OrderChangeManager
+            valid_from = getattr(p, 'override_valid_from', p.valid_from)
+            valid_until = getattr(p, 'override_valid_until', p.valid_until)
+        else:  # future safety, not technically defined on AbstractPosition
+            valid_from = None
+            valid_until = None
+
+        if not m.is_valid(ev, valid_from, valid_from_not_chosen=p.item.validity_dynamic_start_choice and valid_from_not_chosen):
+            if valid_from:
+                raise ValidationError(
+                    _('You selected a membership that is valid from {start} to {end}, but selected a ticket that '
+                      'starts to be valid on {date}.').format(
+                        start=date_format(m.date_start.astimezone(tz), 'SHORT_DATETIME_FORMAT'),
+                        end=date_format(m.date_end.astimezone(tz), 'SHORT_DATETIME_FORMAT'),
+                        date=date_format(valid_from.astimezone(tz), 'SHORT_DATETIME_FORMAT'),
+                    )
                 )
-            )
+            else:
+                raise ValidationError(
+                    _('You selected a membership that is valid from {start} to {end}, but selected an event '
+                      'taking place at {date}.').format(
+                        start=date_format(m.date_start.astimezone(tz), 'SHORT_DATETIME_FORMAT'),
+                        end=date_format(m.date_end.astimezone(tz), 'SHORT_DATETIME_FORMAT'),
+                        date=date_format(ev.date_from.astimezone(tz), 'SHORT_DATETIME_FORMAT'),
+                    )
+                )
 
         if p.variation and p.variation.require_membership:
             types = p.variation.require_membership_types.all()
@@ -188,13 +217,34 @@ def validate_memberships_in_order(customer: Customer, positions: List[AbstractPo
             m.usages += 1
 
         if not m.membership_type.allow_parallel_usage:
-            df = ev.date_from
-            if any(abs(df - d) < timedelta(minutes=1) for d in m._used_at_dates):
-                raise ValidationError(
-                    _('You are trying to use a membership of type "{type}" for an event taking place at {date}, '
-                      'however you already used the same membership for a different ticket at the same time.').format(
-                        type=m.membership_type.name,
-                        date=date_format(ev.date_from.astimezone(tz), 'SHORT_DATETIME_FORMAT'),
+            if (valid_from or valid_until) and not (p.item.validity_dynamic_start_choice and valid_from_not_chosen):
+                for used_range in m._used_for_ranges:
+                    if valid_from and valid_from > used_range[1]:
+                        continue
+                    if valid_until and valid_until < used_range[0]:
+                        continue
+                    raise ValidationError(
+                        _('You are trying to use a membership of type "{type}" for a ticket valid from {valid_from} '
+                          'until {valid_until}, however you already used the same membership for a different ticket '
+                          'that overlaps with this time frame ({conflict_from} – {conflict_until}).').format(
+                            type=m.membership_type.name,
+                            valid_from=date_format(valid_from.astimezone(tz), 'SHORT_DATETIME_FORMAT') if valid_from else _('start'),
+                            valid_until=date_format(valid_until.astimezone(tz), 'SHORT_DATETIME_FORMAT') if valid_until else _('open end'),
+                            conflict_from=date_format(used_range[0].astimezone(tz), 'SHORT_DATETIME_FORMAT') if used_range[0] else _('start'),
+                            conflict_until=date_format(used_range[1].astimezone(tz), 'SHORT_DATETIME_FORMAT') if used_range[1] else _('open end'),
+                        )
                     )
-                )
-            m._used_at_dates.append(ev.date_from)
+
+                m._used_for_ranges.append((p.valid_from, p.valid_until))
+
+            if not valid_from or not valid_until:
+                df = ev.date_from
+                if any(abs(df - d) < timedelta(minutes=1) for d in m._used_at_dates):
+                    raise ValidationError(
+                        _('You are trying to use a membership of type "{type}" for an event taking place at {date}, '
+                          'however you already used the same membership for a different ticket at the same time.').format(
+                            type=m.membership_type.name,
+                            date=date_format(ev.date_from.astimezone(tz), 'SHORT_DATETIME_FORMAT'),
+                        )
+                    )
+                m._used_at_dates.append(ev.date_from)

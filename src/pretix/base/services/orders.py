@@ -98,10 +98,9 @@ from pretix.base.services.pricing import (
 from pretix.base.services.quotas import QuotaAvailability
 from pretix.base.services.tasks import ProfiledEventTask, ProfiledTask
 from pretix.base.signals import (
-    allow_ticket_download, order_approved, order_canceled, order_changed,
-    order_denied, order_expired, order_fee_calculation, order_paid,
-    order_placed, order_split, order_valid_if_pending, periodic_task,
-    validate_order,
+    order_approved, order_canceled, order_changed, order_denied, order_expired,
+    order_fee_calculation, order_paid, order_placed, order_split,
+    order_valid_if_pending, periodic_task, validate_order,
 )
 from pretix.celery_app import app
 from pretix.helpers import OF_SELF
@@ -139,6 +138,8 @@ error_messages = {
         'meantime. Please see below for details.'
     ),
     'internal': gettext_lazy("An internal error occurred, please try again."),
+    'race_condition': gettext_lazy("This order was changed by someone else simultaneously. Please check if your "
+                                   "changes are still accurate and try again."),
     'empty': gettext_lazy("Your cart is empty."),
     'max_items_per_product': ngettext_lazy(
         "You cannot select more than %(max)s item of the product %(product)s. We removed the surplus items from your cart.",
@@ -196,8 +197,9 @@ error_messages = {
         'You need to select at least %(min)s add-ons from the category %(cat)s for the product %(base)s.',
         'min'
     ),
-    'addon_no_multi': gettext_lazy('You can select every add-ons from the category %(cat)s for the product %(base)s at most once.'),
+    'addon_no_multi': gettext_lazy('You can select every add-on from the category %(cat)s for the product %(base)s at most once.'),
     'addon_already_checked_in': gettext_lazy('You cannot remove the position %(addon)s since it has already been checked in.'),
+    'currency_XXX': gettext_lazy('Paid products not supported without a valid currency.'),
 }
 
 logger = logging.getLogger(__name__)
@@ -219,7 +221,7 @@ def reactivate_order(order: Order, force: bool=False, user: User=None, auth=None
         is_available = order._is_still_available(now(), count_waitinglist=False, check_voucher_usage=True,
                                                  check_memberships=True, lock=True, force=force)
         if is_available is True:
-            if order.payment_refund_sum >= order.total:
+            if order.payment_refund_sum >= order.total and not order.require_approval:
                 order.status = Order.STATUS_PAID
             else:
                 order.status = Order.STATUS_PENDING
@@ -296,6 +298,7 @@ def extend_order(order: Order, new_date: datetime, force: bool=False, valid_if_p
                 auth=auth,
                 data={
                     'expires': order.expires,
+                    'force': force,
                     'state_change': was_expired
                 }
             )
@@ -411,6 +414,11 @@ def approve_order(order, user=None, send_mail: bool=True, auth=None, force=False
                     email_subject, email_template, email_context,
                     'pretix.event.order.email.order_approved', user,
                     attach_tickets=True,
+                    attach_ical=order.event.settings.mail_attach_ical and (
+                        not order.event.settings.mail_attach_ical_paid_only or
+                        order.total == Decimal('0.00') or
+                        order.valid_if_pending
+                    ),
                     invoices=[invoice] if invoice and order.event.settings.invoice_email_attachment else []
                 )
             except SendMailException:
@@ -664,7 +672,7 @@ def _check_positions(event: Event, now_dt: datetime, positions: List[CartPositio
             deleted_positions.add(cp.pk)
             cp.delete()
 
-    sorted_positions = sorted(positions, key=lambda s: -int(s.is_bundled))
+    sorted_positions = sorted(positions, key=lambda c: (-int(c.is_bundled), c.pk))
 
     for cp in sorted_positions:
         cp._cached_quotas = list(cp.quotas)
@@ -875,6 +883,13 @@ def _check_positions(event: Event, now_dt: datetime, positions: List[CartPositio
             cp.discount = discount
             cp.save(update_fields=['price', 'discount'])
 
+    # After applying discounts, add-on positions might still have a reference to the *old* version of the
+    # parent position, which can screw up ordering later since the system sees inconsistent data.
+    by_id = {cp.pk: cp for cp in sorted_positions}
+    for cp in sorted_positions:
+        if cp.addon_to_id:
+            cp.addon_to = by_id[cp.addon_to_id]
+
     new_total = sum(cp.price for cp in sorted_positions)
     if old_total != new_total:
         err = err or error_messages['price_changed']
@@ -883,7 +898,7 @@ def _check_positions(event: Event, now_dt: datetime, positions: List[CartPositio
     for cp in sorted_positions:
         cp.expires = now_dt + timedelta(
             minutes=event.settings.get('reservation_time', as_type=int))
-        cp.save()
+        cp.save(update_fields=['expires'])
 
     if err:
         raise OrderError(err)
@@ -1044,7 +1059,11 @@ def _order_placed_email(event: Event, order: Order, email_template, subject_temp
             log_entry,
             invoices=[invoice] if invoice and event.settings.invoice_email_attachment else [],
             attach_tickets=True,
-            attach_ical=event.settings.mail_attach_ical and (not event.settings.mail_attach_ical_paid_only or is_free),
+            attach_ical=event.settings.mail_attach_ical and (
+                not event.settings.mail_attach_ical_paid_only or
+                is_free or
+                order.valid_if_pending
+            ),
             attach_other_files=[a for a in [
                 event.settings.get('mail_attachment_new_order', as_type=str, default='')[len('file://'):]
             ] if a],
@@ -1063,7 +1082,11 @@ def _order_placed_email_attendee(event: Event, order: Order, position: OrderPosi
             log_entry,
             invoices=[],
             attach_tickets=True,
-            attach_ical=event.settings.mail_attach_ical and (not event.settings.mail_attach_ical_paid_only or is_free),
+            attach_ical=event.settings.mail_attach_ical and (
+                not event.settings.mail_attach_ical_paid_only or
+                is_free or
+                order.valid_if_pending
+            ),
             attach_other_files=[a for a in [
                 event.settings.get('mail_attachment_new_order', as_type=str, default='')[len('file://'):]
             ] if a],
@@ -1108,6 +1131,9 @@ def _perform_order(event: Event, payment_requests: List[dict], position_ids: Lis
         id__in=position_ids, event=event
     )
 
+    if shown_total is not None and Decimal(shown_total) > Decimal("0.00") and event.currency == "XXX":
+        raise OrderError(error_messages['currency_XXX'])
+
     validate_order.send(
         event,
         payment_provider=payment_requests[0]['provider'] if payment_requests else None,  # only for backwards compatibility
@@ -1143,7 +1169,7 @@ def _perform_order(event: Event, payment_requests: List[dict], position_ids: Lis
         positions = list(
             positions.select_related('item', 'variation', 'subevent', 'seat', 'addon_to').prefetch_related('addons')
         )
-        positions.sort(key=lambda k: position_ids.index(k.pk))
+        positions.sort(key=lambda c: c.sort_key)
         if len(positions) == 0:
             raise OrderError(error_messages['empty'])
         if len(position_ids) != len(positions):
@@ -1381,7 +1407,9 @@ def send_download_reminders(sender, **kwargs):
         download_reminder_sent=False,
         datetime__lte=now() - timedelta(hours=2),
         first_date__gte=today,
-    ).only('pk', 'event_id', 'sales_channel').order_by('event_id')
+    ).only(
+        'pk', 'event_id', 'sales_channel', 'datetime',
+    ).order_by('event_id')
     event_id = None
     days = None
     event = None
@@ -1407,23 +1435,16 @@ def send_download_reminders(sender, **kwargs):
             if o.download_reminder_sent:
                 # Race condition
                 continue
-            if not all([r for rr, r in allow_ticket_download.send(event, order=o)]):
+            positions = list(o.positions_with_tickets)
+            if not positions:
                 continue
 
             if not o.ticket_download_available:
                 continue
-            positions = o.positions.select_related('item')
 
             if o.status != Order.STATUS_PAID:
                 if o.status != Order.STATUS_PENDING or o.require_approval or (not o.valid_if_pending and not o.event.settings.ticket_download_pending):
                     continue
-            send = False
-            for p in positions:
-                if p.generate_ticket:
-                    send = True
-                    break
-            if not send:
-                continue
 
             with language(o.locale, o.event.settings.region):
                 o.download_reminder_sent = True
@@ -1441,10 +1462,7 @@ def send_download_reminders(sender, **kwargs):
                     logger.exception('Reminder email could not be sent')
 
                 if event.settings.mail_send_download_reminder_attendee:
-                    for p in o.positions.all():
-                        if not p.generate_ticket:
-                            continue
-
+                    for p in positions:
                         if p.subevent_id:
                             reminder_date = (p.subevent.date_from - timedelta(days=days)).replace(
                                 hour=0, minute=0, second=0, microsecond=0
@@ -1511,6 +1529,7 @@ class OrderChangeManager:
             "You need to select at least %(min)s items of the product %(product)s.",
             "min"
         ),
+        'max_order_size': gettext_lazy('Orders cannot have more than %(max)s positions.'),
     }
     ItemOperation = namedtuple('ItemOperation', ('position', 'item', 'variation'))
     SubeventOperation = namedtuple('SubeventOperation', ('position', 'subevent'))
@@ -1997,7 +2016,7 @@ class OrderChangeManager:
                     for a in current_addons[cp][k][:current_num - input_num]:
                         if a.canceled:
                             continue
-                        if a.checkins.exists():
+                        if a.checkins.filter(list__consider_tickets_used=True).exists():
                             raise OrderError(
                                 error_messages['addon_already_checked_in'] % {
                                     'addon': str(a.item.name),
@@ -2114,6 +2133,9 @@ class OrderChangeManager:
                     )
 
     def _check_paid_to_free(self):
+        if self.event.currency == 'XXX' and self.order.total + self._totaldiff > Decimal("0.00"):
+            raise OrderError(error_messages['currency_XXX'])
+
         if self.order.total == 0 and (self._totaldiff < 0 or (self.split_order and self.split_order.total > 0)) and not self.order.require_approval:
             if not self.order.fees.exists() and not self.order.positions.exists():
                 # The order is completely empty now, so we cancel it.
@@ -2509,7 +2531,7 @@ class OrderChangeManager:
 
         remaining_total = sum([p.price for p in self.order.positions.all()]) + sum([f.value for f in self.order.fees.all()])
         offset_amount = min(max(0, self.completed_payment_sum - remaining_total), split_order.total)
-        if offset_amount >= split_order.total:
+        if offset_amount >= split_order.total and not split_order.require_approval:
             split_order.status = Order.STATUS_PAID
         else:
             split_order.status = Order.STATUS_PENDING
@@ -2598,6 +2620,14 @@ class OrderChangeManager:
         self.order.total = total + payment_fee
         self.order.save()
 
+    def _check_order_size(self):
+        if (len(self.order.positions.all()) + len([op for op in self._operations if isinstance(op, self.AddOperation)])) > settings.PRETIX_MAX_ORDER_SIZE:
+            raise OrderError(
+                self.error_messages['max_order_size'] % {
+                    'max': settings.PRETIX_MAX_ORDER_SIZE,
+                }
+            )
+
     def _payment_fee_diff(self):
         total = self.order.total + self._totaldiff
         if self.open_payment:
@@ -2618,14 +2648,37 @@ class OrderChangeManager:
     def _reissue_invoice(self):
         i = self.order.invoices.filter(is_cancellation=False).last()
         if self.reissue_invoice and self._invoice_dirty:
-            if i and not i.refered.exists():
-                self._invoices.append(generate_cancellation(i))
-            if invoice_qualified(self.order) and \
-                (i or
-                 self.event.settings.invoice_generate == 'True' or (
-                     self.open_payment is not None and self.event.settings.invoice_generate == 'paid' and
-                     self.open_payment.payment_provider.requires_invoice_immediately)):
-                self._invoices.append(generate_invoice(self.order))
+            order_now_qualified = invoice_qualified(self.order)
+            invoice_should_be_generated_now = (
+                self.event.settings.invoice_generate == "True" or (
+                    self.event.settings.invoice_generate == "paid" and
+                    self.open_payment is not None and
+                    self.open_payment.payment_provider.requires_invoice_immediately
+                ) or (
+                    self.event.settings.invoice_generate == "paid" and
+                    self.order.status == Order.STATUS_PAID
+                ) or (
+                    # Backwards-compatible behaviour
+                    self.event.settings.invoice_generate not in ("True", "paid") and
+                    i and
+                    not i.canceled
+                )
+            )
+            invoice_should_be_generated_later = not invoice_should_be_generated_now and (
+                self.event.settings.invoice_generate in ("True", "paid")
+            )
+
+            if order_now_qualified:
+                if invoice_should_be_generated_now:
+                    if i and not i.canceled:
+                        self._invoices.append(generate_cancellation(i))
+                    self._invoices.append(generate_invoice(self.order))
+                elif invoice_should_be_generated_later:
+                    self.order.invoice_dirty = True
+                    self.order.save(update_fields=["invoice_dirty"])
+            else:
+                if i and not i.canceled:
+                    self._invoices.append(generate_cancellation(i))
 
     def _check_complete_cancel(self):
         current = self.order.positions.count()
@@ -2649,6 +2702,7 @@ class OrderChangeManager:
 
         for p in self.order.positions.all():
             cp = CartPosition(
+                event=self.event,
                 item=p.item,
                 variation=p.variation,
                 attendee_name_parts=p.attendee_name_parts,
@@ -2669,16 +2723,23 @@ class OrderChangeManager:
                 positions_to_fake_cart[op.position].seat = op.seat
             elif isinstance(op, self.MembershipOperation):
                 positions_to_fake_cart[op.position].used_membership = op.membership
+            elif isinstance(op, self.ChangeValidFromOperation):
+                positions_to_fake_cart[op.position].override_valid_from = op.valid_from
+            elif isinstance(op, self.ChangeValidUntilOperation):
+                positions_to_fake_cart[op.position].override_valid_until = op.valid_until
             elif isinstance(op, self.CancelOperation) and op.position in positions_to_fake_cart:
                 fake_cart.remove(positions_to_fake_cart[op.position])
             elif isinstance(op, self.AddOperation):
                 cp = CartPosition(
+                    event=self.event,
                     item=op.item,
                     variation=op.variation,
                     used_membership=op.membership,
                     subevent=op.subevent,
                     seat=op.seat,
                 )
+                cp.override_valid_from = op.valid_from
+                cp.override_valid_until = op.valid_until
                 fake_cart.append(cp)
         try:
             validate_memberships_in_order(self.order.customer, fake_cart, self.event, lock=True, ignored_order=self.order, testmode=self.order.testmode)
@@ -2715,8 +2776,13 @@ class OrderChangeManager:
 
         # finally, incorporate difference in payment fees
         self._payment_fee_diff()
+        self._check_order_size()
 
         with transaction.atomic():
+            locked_instance = Order.objects.select_for_update(of=OF_SELF).get(pk=self.order.pk)
+            if locked_instance.last_modified != self.order.last_modified:
+                raise OrderError(error_messages['race_condition'])
+
             if self.order.status in (Order.STATUS_PENDING, Order.STATUS_PAID):
                 if check_quotas:
                     self._check_quotas()

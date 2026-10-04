@@ -147,8 +147,27 @@ div[data-formset-body], div[data-formset-form], div[data-nested-formset-form], d
   padding: 5px 0;
 }
 
+.i18n-form-group .i18n-field-markdown-note {
+  border: 1px solid $input-border;
+  color: $text-muted;
+  font-size: 0.8em;
+  padding: 0.2em;
+  &::before {
+    display: inline-block;
+    height: 0.6em;
+    width: 1.5em;
+    position: relative;
+    top: 0.1em;
+    left: 0.1em;
+    opacity: 50%;
+    margin-right: 0.5em;
+    content: url(static('pretixcontrol/img/icons/markdown-mark-solid.svg'));
+  }
+}
+
 .i18n-form-group input,
-.i18n-form-group textarea {
+.i18n-form-group textarea,
+.i18n-form-group .i18n-field-markdown-note {
   @include border-top-radius(0px);
   @include border-bottom-radius(0px);
   border-top-width: 0;
@@ -409,7 +428,9 @@ label .optional {
 .select2-hidden-accessible {
     top: 50px;
 }
-
+.select2-selection__placeholder {
+  font-style: italic;
+}
 .large-select2-field-container .select2-container--bootstrap .select2-selection--multiple {
   height: 150px;
   overflow-y: auto;
@@ -902,7 +923,8 @@ details {
   }
 }
 
-.select2-container [aria-multiselectable] .select2-results__option span span::before {
+.select2-container [aria-multiselectable] .select2-results__option > span > strike:first-child::before,
+.select2-container [aria-multiselectable] .select2-results__option > span > span:first-child::before {
   content: "";
   font-family: FontAwesome;
   display: inline-block;
@@ -910,7 +932,8 @@ details {
   width: 1.28571em;
   text-align: center;
 }
-.select2-container [aria-multiselectable] .select2-results__option[aria-selected=true] span span::before {
+.select2-container [aria-multiselectable] .select2-results__option[aria-selected=true] > span > strike:first-child::before,
+.select2-container [aria-multiselectable] .select2-results__option[aria-selected=true] > span > span:first-child::before {
   content: ""
 }
 

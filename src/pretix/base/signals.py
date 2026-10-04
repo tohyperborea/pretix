@@ -220,12 +220,18 @@ subclass of pretix.base.payment.BasePaymentProvider or a list of these
 As with all event-plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
-register_mail_placeholders = EventPluginSignal()
+register_text_placeholders = EventPluginSignal()
 """
-This signal is sent out to get all known email text placeholders. Receivers should return
-an instance of a subclass of pretix.base.email.BaseMailTextPlaceholder or a list of these.
+This signal is sent out to get all known text placeholders. Receivers should return
+an instance of a subclass of pretix.base.services.placeholders.BaseTextPlaceholder or a
+list of these.
 
 As with all event-plugin signals, the ``sender`` keyword argument will contain the event.
+"""
+
+register_mail_placeholders = EventPluginSignal()
+"""
+**DEPRECATED**: This signal has a new name, please use ``register_text_placeholders`` instead.
 """
 
 register_html_mail_renderers = EventPluginSignal()
@@ -277,6 +283,15 @@ instances.
 As with all event-plugin signals, the ``sender`` keyword argument will contain the event,
 however for this signal, the ``sender`` **may also be None** to allow creating the general
 notification settings!
+"""
+
+notification = EventPluginSignal()
+"""
+Arguments: ``logentry_id``, ``notification_type``
+
+This signal is sent out when a notification is sent.
+
+As with all event-plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
 register_sales_channels = django.dispatch.Signal()
@@ -684,7 +699,7 @@ allow_ticket_download = EventPluginSignal()
 Arguments: ``order``
 
 This signal is sent out to check if tickets for an order can be downloaded. If any receiver returns false,
-a download will not be offered.
+a download will not be offered. If a receiver returns a list of OrderPositions, only those will be downloadable.
 
 As with all event-plugin signals, the ``sender`` keyword argument will contain the event.
 """

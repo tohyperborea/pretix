@@ -35,6 +35,7 @@
 import copy
 import tempfile
 from collections import OrderedDict, defaultdict
+from datetime import timedelta
 from decimal import Decimal
 
 from dateutil.parser import parse
@@ -296,6 +297,17 @@ class OverviewReport(Report):
                 subevent = self.form_data.get('subevent')
             story.append(Paragraph(pgettext('subevent', 'Date: {}').format(subevent), self.get_style()))
             story.append(Spacer(1, 5 * mm))
+
+        if form_data.get('subevent_date_range'):
+            d_start, d_end = resolve_timeframe_to_datetime_start_inclusive_end_exclusive(now(), form_data['subevent_date_range'], self.timezone)
+            story += [
+                Paragraph(_('{axis} between {start} and {end}').format(
+                    axis=_('Event date'),
+                    start=date_format(d_start, 'SHORT_DATE_FORMAT') if d_start else '–',
+                    end=date_format(d_end - timedelta(hours=1), 'SHORT_DATE_FORMAT') if d_end else '–',
+                ), self.get_style()),
+                Spacer(1, 5 * mm)
+            ]
         return story
 
     def _get_data(self, form_data):
@@ -303,12 +315,18 @@ class OverviewReport(Report):
             d_start, d_end = resolve_timeframe_to_dates_inclusive(now(), form_data['date_range'], self.timezone)
         else:
             d_start, d_end = None, None
+        if form_data.get('subevent_date_range'):
+            sd_start, sd_end = resolve_timeframe_to_datetime_start_inclusive_end_exclusive(now(), form_data['subevent_date_range'], self.timezone)
+        else:
+            sd_start, sd_end = None, None
         return order_overview(
             self.event,
             subevent=form_data.get('subevent'),
             date_filter=form_data.get('date_axis'),
             date_from=d_start,
             date_until=d_end,
+            subevent_date_from=sd_start,
+            subevent_date_until=sd_end,
             fees=True
         )
 
@@ -334,7 +352,7 @@ class OverviewReport(Report):
             ('SPAN', (11, 1), (12, 1)),
             ('ALIGN', (0, 0), (-1, 1), 'CENTER'),
             ('ALIGN', (1, 2), (-1, -1), 'RIGHT'),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('FONTNAME', (0, 0), (-1, 1), 'OpenSansBd'),
             ('FONTNAME', (0, -1), (-1, -1), 'OpenSansBd'),
             ('FONTSIZE', (0, 0), (-1, -1), 8),
@@ -392,14 +410,14 @@ class OverviewReport(Report):
         for tup in items_by_category:
             if tup[0]:
                 tdata.append([
-                    Paragraph(str(tup[0].name), tstyle_bold)
+                    Paragraph(str(tup[0]), tstyle_bold)
                 ])
                 for l, s in states:
                     tdata[-1].append(str(tup[0].num[l][0]))
                     tdata[-1].append(floatformat(tup[0].num[l][2 if net else 1], places))
             for item in tup[1]:
                 tdata.append([
-                    str(item)
+                    Paragraph(str(item), tstyle)
                 ])
                 for l, s in states:
                     tdata[-1].append(str(item.num[l][0]))
@@ -427,9 +445,18 @@ class OverviewReport(Report):
     @property
     def export_form_fields(self) -> dict:
         f = OverviewFilterForm(event=self.event)
+        f.fields = OrderedDict(f.fields.items())
         del f.fields['ordering']
         del f.fields['date_from']
         del f.fields['date_until']
+        if self.event.has_subevents:
+            f.fields['subevent_date_range'] = DateFrameField(
+                label=_('Event date'),
+                include_future_frames=True,
+                required=False,
+            )
+            f.fields.move_to_end("subevent_date_range", last=False)
+            f.fields.move_to_end("subevent", last=False)
         f.fields['date_range'] = DateFrameField(
             label=_('Date range'),
             include_future_frames=False,

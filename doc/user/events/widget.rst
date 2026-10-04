@@ -17,8 +17,8 @@ and then click "Generate widget code".
 You will obtain two code snippets that look *roughly* like the following. The first should be embedded into the
 ``<head>`` part of your website, if possible. If this inconvenient, you can put it in the ``<body>`` part as well::
 
-    <link rel="stylesheet" type="text/css" href="https://pretix.eu/demo/democon/widget/v1.css">
-    <script type="text/javascript" src="https://pretix.eu/widget/v1.en.js" async></script>
+    <link rel="stylesheet" type="text/css" href="https://pretix.eu/demo/democon/widget/v1.css" crossorigin>
+    <script type="text/javascript" src="https://pretix.eu/widget/v1.en.js" async crossorigin></script>
 
 The second snippet should be embedded at the position where the widget should show up::
 
@@ -124,6 +124,24 @@ If you want to disable voucher input in the widget, you can pass the ``disable-v
 
    <pretix-widget event="https://pretix.eu/demo/democon/" disable-vouchers></pretix-widget>
 
+Enabling the button-style single item select
+--------------------------------------------
+
+By default, the widget uses a checkbox to select items, that can only be bought in quantities of one. If you want to match
+the button-style of that checkbox with the one in the pretix shop, you can use the ``single-item-select`` attribute::
+
+   <pretix-widget event="https://pretix.eu/demo/democon/" single-item-select="button"></pretix-widget>
+
+.. image:: img/widget_checkbox_button.png
+   :align: center
+   :class: screenshot
+
+.. note::
+
+        Due to compatibility with existing widget installations, the default value for ``single-item-select``
+        is ``checkbox``. This might change in the future, so make sure, to set the attribute to 
+        ``single-item-select="checkbox"`` if you need it.
+
 Filtering products
 ------------------
 
@@ -177,6 +195,10 @@ You can filter events by meta data attributes. You can create those attributes i
 settings. For example, if you set up a meta data property called "Promoted" that you set to "Yes" on some events, you can pass a filter like this::
 
    <pretix-widget event="https://pretix.eu/demo/series/" list-type="list" filter="attr[Promoted]=Yes"></pretix-widget>
+
+If you have enabled public filters in your meta data attribute configuration, a filter-form shows up. To disable, use::
+
+   <pretix-widget event="https://pretix.eu/demo/democon/" disable-filters></pretix-widget>
 
 pretix Button
 -------------
@@ -407,4 +429,34 @@ Hosted or pretix Enterprise are active, you can pass the following fields:
             });
         </script>  
 
+
+Offering wallet payments (Apple Pay, Google Pay) within the widget
+------------------------------------------------------------------
+
+Some payment providers (such as Stripe) also offer Apple or Google Pay. But in order to use them, the domain of the
+payment needs to be approved first. As of right now, pretix will take care of the domain verification process for you
+automatically, when using Stripe. However, pretix can only validate the domain that is being used for your default,
+"stand-alone" shop (such as https://pretix.eu/demo/democon/ ).
+
+When embedding the widget on your website, the domain of the embedding page will also need to be validated in order to
+be able to use it for wallet payments.
+
+The details might vary from payment provider to payment provider, but generally speaking, it will either involve just
+telling your payment provider the domain name and (for Apple Pay) placing an
+``apple-developer-merchantid-domain-association``-file into the ``.well-known``-directory of your domain.
+
+Further reading:
+
+* `Stripe Payment Method Domain registration`_
+
+Working with Cross-Origin-Embedder-Policy
+-----------------------------------------
+
+The pretix widget is unfortunately not compatible with ``Cross-Origin-Embedder-Policy: require-corp``. If you include
+the ``crossorigin`` attributes on the ``<script>`` and ``<link>`` tag as shown above, the widget can show a calendar
+or product list, but will not be able to open the checkout process in an iframe. If you also set
+``Cross-Origin-Opener-Policy: same-origin``, the widget can auto-detect that it is running in an isolated enviroment
+and will instead open the checkout process in a new tab.
+
 .. _Let's Encrypt: https://letsencrypt.org/
+.. _Stripe Payment Method Domain registration: https://stripe.com/docs/payments/payment-methods/pmd-registration

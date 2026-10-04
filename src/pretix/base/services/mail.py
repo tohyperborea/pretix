@@ -39,7 +39,6 @@ import mimetypes
 import os
 import re
 import smtplib
-import ssl
 import warnings
 from email.mime.image import MIMEImage
 from email.utils import formataddr
@@ -99,6 +98,9 @@ def clean_sender_name(sender_name: str) -> str:
     # Emails with @ in their sender name are rejected by some mailservers (e.g. Microsoft) because it looks like
     # a phishing attempt.
     sender_name = sender_name.replace("@", " ")
+    # Emails with : in their sender name are treated by Microsoft like emails with no From header at all, leading
+    # to a higher spam likelihood.
+    sender_name = sender_name.replace(":", " ")
 
     # Emails with excessively long sender names are rejected by some mailservers
     if len(sender_name) > 75:
@@ -181,12 +183,9 @@ def mail(email: Union[str, Sequence[str]], subject: str, template: Union[str, La
     if auto_email:
         headers['X-Auto-Response-Suppress'] = 'OOF, NRN, AutoReply, RN'
         headers['Auto-Submitted'] = 'auto-generated'
+    headers.setdefault('X-Mailer', 'pretix')
 
     with language(locale):
-        if isinstance(context, dict) and event:
-            for k, v in event.meta_data.items():
-                context['meta_' + k] = v
-
         if isinstance(context, dict) and order:
             try:
                 context.update({
@@ -384,6 +383,7 @@ def mail_send_task(self, *args, to: List[str], subject: str, body: str, html: st
     if event:
         with scopes_disabled():
             event = Event.objects.get(id=event)
+            organizer = event.organizer
         backend = event.get_mail_backend()
         cm = lambda: scope(organizer=event.organizer)  # noqa
     elif organizer:
@@ -470,7 +470,8 @@ def mail_send_task(self, *args, to: List[str], subject: str, body: str, html: st
                         # just "ABC-123.pdf", but we only do so if our currently selected language allows to do this
                         # as ASCII text. For example, we would not want a "فاتورة_" prefix for our filename since this
                         # has shown to cause deliverability problems of the email and deliverability wins.
-                        filename = pgettext('invoice', 'Invoice {num}').format(num=inv.number).replace(' ', '_') + '.pdf'
+                        with language(order.locale if order else inv.locale, event.settings.region if event else None):
+                            filename = pgettext('invoice', 'Invoice {num}').format(num=inv.number).replace(' ', '_') + '.pdf'
                         if not re.match("^[a-zA-Z0-9-_%./,&:# ]+$", filename):
                             filename = inv.number.replace(' ', '_') + '.pdf'
                         filename = re.sub("[^a-zA-Z0-9-_.]+", "_", filename)
@@ -571,8 +572,11 @@ def mail_send_task(self, *args, to: List[str], subject: str, body: str, html: st
         except smtplib.SMTPRecipientsRefused as e:
             smtp_codes = [a[0] for a in e.recipients.values()]
 
-            if not any(c >= 500 for c in smtp_codes):
-                # Not a permanent failure (mailbox full, service unavailable), retry later, but with large intervals
+            if not any(c >= 500 for c in smtp_codes) or any(b'Message is too large' in a[1] for a in e.recipients.values()):
+                # This is not a permanent failure (mailbox full, service unavailable), retry later, but with large
+                # intervals. One would think that "Message is too lage" is a permanent failure, but apparently it is not.
+                # We have documented cases of emails to Microsoft returning the error occasionally and then later
+                # allowing the very same email.
                 try:
                     self.retry(max_retries=5, countdown=[60, 300, 600, 1200, 1800, 1800][self.request.retries])
                 except MaxRetriesExceededError:
@@ -597,7 +601,7 @@ def mail_send_task(self, *args, to: List[str], subject: str, body: str, html: st
 
             raise SendMailException('Failed to send an email to {}.'.format(to))
         except Exception as e:
-            if isinstance(e, (smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError, ssl.SSLError, OSError)):
+            if isinstance(e, OSError) and not isinstance(e, smtplib.SMTPNotSupportedError):
                 try:
                     self.retry(max_retries=5, countdown=[10, 30, 60, 300, 900, 900][self.request.retries])
                 except MaxRetriesExceededError:
@@ -606,7 +610,7 @@ def mail_send_task(self, *args, to: List[str], subject: str, body: str, html: st
                             'pretix.email.error',
                             data={
                                 'subject': 'Internal error',
-                                'message': 'Max retries exceeded',
+                                'message': f'Max retries exceeded after error "{str(e)}"',
                                 'recipient': '',
                                 'invoices': [],
                             }

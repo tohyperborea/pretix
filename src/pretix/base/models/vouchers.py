@@ -251,7 +251,8 @@ class Voucher(LoggedModel):
         null=True, blank=True,
         on_delete=models.PROTECT,  # We use a fake version of SET_NULL in Item.delete()
         help_text=_(
-            "This product is added to the user's cart if the voucher is redeemed."
+            "This product is added to the user's cart if the voucher is redeemed. Instead of a specific product, you "
+            "can also select a quota. In this case, all products assigned to this quota can be selected."
         )
     )
     variation = models.ForeignKey(
@@ -350,9 +351,6 @@ class Voucher(LoggedModel):
                                         'variations.'))
             if variation and not item.variations.filter(pk=variation.pk).exists():
                 raise ValidationError(_('This variation does not belong to this product.'))
-            if item.has_variations and not variation and data.get('block_quota'):
-                raise ValidationError(_('You can only block quota if you specify a specific product variation. '
-                                        'Otherwise it might be unclear which quotas to block.'))
             if item.category and item.category.is_addon:
                 raise ValidationError(_('It is currently not possible to create vouchers for add-on products.'))
         elif block_quota:
@@ -430,7 +428,15 @@ class Voucher(LoggedModel):
             elif old_instance.variation:
                 quotas |= set(old_instance.variation.quotas.filter(subevent=old_instance.subevent))
             elif old_instance.item:
-                quotas |= set(old_instance.item.quotas.filter(subevent=old_instance.subevent))
+                if old_instance.item.has_variations:
+                    quotas |= set(
+                        Quota.objects.filter(pk__in=Quota.variations.through.objects.filter(
+                            itemvariation__item=old_instance.item,
+                            quota__subevent=old_instance.subevent,
+                        ).values('quota_id'))
+                    )
+                else:
+                    quotas |= set(old_instance.item.quotas.filter(subevent=old_instance.subevent))
         return quotas
 
     @staticmethod
@@ -445,13 +451,19 @@ class Voucher(LoggedModel):
 
         if quota:
             new_quotas = {quota}
-        elif item and item.has_variations and not variation:
-            raise ValidationError(_('You can only block quota if you specify a specific product variation. '
-                                    'Otherwise it might be unclear which quotas to block.'))
         elif item and variation:
             new_quotas = set(variation.quotas.filter(subevent=data.get('subevent')))
         elif item and not item.has_variations:
             new_quotas = set(item.quotas.filter(subevent=data.get('subevent')))
+        elif item and item.has_variations:
+            new_quotas = set(
+                Quota.objects.filter(
+                    pk__in=Quota.variations.through.objects.filter(
+                        itemvariation__item=old_instance.item,
+                        quota__subevent=data.get('subevent'),
+                    ).values('quota_id')
+                )
+            )
         else:
             raise ValidationError(_('You need to select a specific product or quota if this voucher should reserve '
                                     'tickets.'))

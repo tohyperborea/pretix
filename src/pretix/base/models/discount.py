@@ -344,7 +344,7 @@ class Discount(LoggedModel):
 
         elif self.subevent_mode == self.SUBEVENT_MODE_SAME:
             def key(idx):
-                return positions[idx][1]  # subevent_id
+                return positions[idx][1] or 0  # subevent_id
 
             # Build groups of candidates with the same subevent, then apply our regular algorithm
             # to each group
@@ -424,5 +424,10 @@ class Discount(LoggedModel):
                                 break
 
             for g in candidate_groups:
-                self._apply_min_count(positions, g, g, result)
+                self._apply_min_count(
+                    positions,
+                    [idx for idx in g if idx in condition_candidates],
+                    [idx for idx in g if idx in benefit_candidates],
+                    result
+                )
         return result

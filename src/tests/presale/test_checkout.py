@@ -50,6 +50,7 @@ from pretix.base.models.customers import CustomerSSOProvider
 from pretix.base.models.items import (
     ItemAddOn, ItemBundle, ItemVariation, SubEventItem, SubEventItemVariation,
 )
+from pretix.base.services.cart import CartManager
 from pretix.base.services.orders import OrderError, _perform_order
 from pretix.base.services.tax import VATIDFinalError, VATIDTemporaryError
 from pretix.testutils.scope import classscope
@@ -3336,6 +3337,33 @@ class CheckoutTestCase(BaseCheckoutTestCase, TestCase):
         assert 'Workshop 1' in response.content.decode()
         assert 'Workshop 2' in response.content.decode()
 
+    def test_set_addons_hidden_if_item_available(self):
+        with scopes_disabled():
+            self.workshopquota2 = Quota.objects.create(event=self.event, name='Workshop 1', size=5)
+            self.workshopquota2.items.add(self.workshop2)
+            self.workshopquota2.variations.add(self.workshop2a)
+            self.workshop2.hidden_if_item_available = self.workshop1
+            self.workshop2.save()
+
+            ItemAddOn.objects.create(base_item=self.ticket, addon_category=self.workshopcat, min_count=1)
+            CartPosition.objects.create(
+                event=self.event, cart_id=self.session_key, item=self.ticket,
+                price=23, expires=now() - timedelta(minutes=10)
+            )
+
+        response = self.client.get('/%s/%s/checkout/questions/' % (self.orga.slug, self.event.slug), follow=True)
+        self.assertRedirects(response, '/%s/%s/checkout/addons/' % (self.orga.slug, self.event.slug),
+                             target_status_code=200)
+        assert 'Workshop 1' in response.content.decode()
+        assert 'Workshop 2' not in response.content.decode()
+
+        self.workshopquota.size = 0
+        self.workshopquota.save()
+
+        response = self.client.get('/%s/%s/checkout/addons/' % (self.orga.slug, self.event.slug), follow=True)
+        assert 'Workshop 1' in response.content.decode()
+        assert 'Workshop 2' in response.content.decode()
+
     def test_set_addons_subevent(self):
         with scopes_disabled():
             self.event.has_subevents = True
@@ -4307,6 +4335,55 @@ class CheckoutBundleTest(BaseCheckoutTestCase, TestCase):
         response = self.client.post('/%s/%s/checkout/confirm/' % (self.orga.slug, self.event.slug), follow=True)
         doc = BeautifulSoup(response.content.decode(), "lxml")
         self.assertEqual(len(doc.select(".thank-you")), 1)
+
+    @classscope(attr='orga')
+    def test_bundle_and_discount_with_inverted_cart_order(self):
+        """
+        This test tells the story of a beautiful bug.
+
+        Cart positions have no natural order. They have a display order (CartPosition.sort_key), which however is
+        dependant on mutable values like the price. Therefore, e.g. applying a discount can change the cart order.
+        However, all order logic must be independent of the order in which the cart positions are in the database.
+        Therefore this test artificially creates a card where the `pk` values of the positions are *inverse* of what
+        they should be and checks that the order still goes through fine.
+
+        More details about the bug in the commit message that introduces this test.
+        """
+        self.event.discounts.create(
+            condition_min_count=4,
+            benefit_discount_matching_percent=50,
+            benefit_only_apply_to_cheapest_n_matches=1,
+        )
+        CartPosition.objects.filter(addon_to__isnull=False).delete()
+        CartPosition.objects.all().delete()
+        cm = CartManager(event=self.event, cart_id="temp")
+        cm.add_new_items([{
+            'item': self.ticket.pk,
+            'variation': None,
+            'count': 4
+        }])
+        cm.commit()
+
+        map = {}
+        for cp in reversed(CartPosition.objects.filter(addon_to__isnull=True, cart_id="temp")):
+            map[cp.pk] = cp
+            cp.pk = None
+            cp.cart_id = self.session_key
+            cp.save()
+        for cp in reversed(CartPosition.objects.filter(addon_to__isnull=False, cart_id="temp")):
+            cp.pk = None
+            cp.cart_id = self.session_key
+            cp.addon_to = map[cp.addon_to_id]
+            cp.save()
+        cm = CartManager(event=self.event, cart_id=self.session_key)
+        cm.commit()  # execute discounts on resorted cart
+
+        self._set_payment()
+        response = self.client.post('/%s/%s/checkout/confirm/' % (self.orga.slug, self.event.slug), follow=True)
+        doc = BeautifulSoup(response.content.decode(), "lxml")
+        self.assertEqual(len(doc.select(".thank-you")), 1)
+        o = Order.objects.get()
+        assert o.positions.count() == 8
 
 
 class CheckoutSeatingTest(BaseCheckoutTestCase, TestCase):

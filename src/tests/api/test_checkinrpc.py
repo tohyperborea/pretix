@@ -309,6 +309,25 @@ def test_by_medium_not_connected(token_client, organizer, clist, event, order):
 
 
 @pytest.mark.django_db
+def test_by_medium_wrong_event(token_client, organizer, clist, event, order2):
+    with scopes_disabled():
+        ReusableMedium.objects.create(
+            type="barcode",
+            identifier="abcdef",
+            organizer=organizer,
+            linked_orderposition=order2.positions.first(),
+        )
+    resp = _redeem(token_client, organizer, clist, "abcdef", {"source_type": "barcode"})
+    assert resp.status_code == 404
+    assert resp.data['status'] == 'error'
+    assert resp.data['reason'] == 'invalid'
+    with scopes_disabled():
+        ci = clist.checkins.get()
+    assert ci.raw_barcode == "abcdef"
+    assert ci.raw_source_type == "barcode"
+
+
+@pytest.mark.django_db
 def test_by_medium_wrong_type(token_client, organizer, clist, event, order):
     with scopes_disabled():
         ReusableMedium.objects.create(
@@ -469,6 +488,21 @@ def test_require_product(token_client, organizer, clist, event, order):
     assert resp.status_code == 400
     assert resp.data['status'] == 'error'
     assert resp.data['reason'] == 'product'
+
+
+@pytest.mark.django_db
+def test_checkin_texts(token_client, organizer, clist, event, order):
+    with scopes_disabled():
+        p = order.positions.first()
+        p.item.checkin_text = 'A'
+        p.item.save()
+        order.checkin_text = 'B'
+        order.save()
+
+    resp = _redeem(token_client, organizer, clist, p.secret, {})
+    assert resp.status_code == 201
+    assert resp.data['status'] == 'ok'
+    assert resp.data['checkin_texts'] == ['B', 'A']
 
 
 @pytest.mark.django_db
@@ -681,6 +715,19 @@ def test_question_upload(token_client, organizer, clist, event, order, question)
     with scopes_disabled():
         assert order.positions.first().answers.get(question=question[0]).answer.startswith('file://')
         assert order.positions.first().answers.get(question=question[0]).file
+
+
+@pytest.mark.django_db
+def test_question_expand(token_client, organizer, clist, event, order, question):
+    with scopes_disabled():
+        p = order.positions.first()
+        question[0].save()
+        p.answers.create(question=question[0], answer="3")
+
+    resp = _redeem(token_client, organizer, clist, p.secret, {"answers": {question[0].pk: ""}}, query="?expand=answers.question")
+    assert resp.status_code == 201
+    assert resp.data["status"] == "ok"
+    assert resp.data["position"]["answers"][0]["question"]["question"]["en"] == "Size"
 
 
 @pytest.mark.django_db
