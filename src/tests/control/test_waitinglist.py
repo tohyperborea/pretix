@@ -78,7 +78,7 @@ def env():
     t = Team.objects.create(organizer=o, can_view_orders=True, can_change_orders=True)
     t.members.add(user)
     t.limit_events.add(event)
-    return event, user, o, item1, item2
+    return event, user, o, item1
 
 
 @pytest.mark.django_db
