@@ -50,8 +50,8 @@ from tests.base import SoupTest
 from tests.testdummy.signals import FoobarSalesChannel
 
 from pretix.base.models import (
-    Customer, Event, Item, ItemCategory, ItemVariation, Order, Organizer, Quota, Team,
-    User, Voucher, WaitingListEntry,
+    Event, Item, ItemCategory, ItemVariation, Order, Organizer, Quota, Team,
+    User, WaitingListEntry,
 )
 from pretix.base.models.items import SubEventItem, SubEventItemVariation
 from pretix.base.reldate import RelativeDate, RelativeDateWrapper
@@ -880,6 +880,7 @@ class VoucherRedeemItemDisplayTest(EventTestMixin, SoupTest):
         html = self.client.get('/%s/%s/redeem?voucher=%s' % (self.orga.slug, self.event.slug, self.v.code), follow=True)
         assert "alert-danger" in html.rendered_content
 
+    # Sideburn: a used-up voucher reports "used up" even if it has also expired (SID-95).
     def test_fail_redeemed_and_expired_prefers_redeemed(self):
         self.v.redeemed = 1
         self.v.valid_until = now() - datetime.timedelta(days=1)

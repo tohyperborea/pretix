@@ -1018,6 +1018,7 @@ def test_cartpos_create_with_voucher_redeemed(token_client, organizer, event, it
     assert resp.data == {'voucher': ['The specified voucher has already been used the maximum number of times.']}
 
 
+# Sideburn: a used-up voucher reports "used up" even if it has also expired (SID-95).
 @pytest.mark.django_db
 def test_cartpos_create_with_voucher_redeemed_and_expired_prefers_redeemed(token_client, organizer, event, item, quota):
     with scopes_disabled():

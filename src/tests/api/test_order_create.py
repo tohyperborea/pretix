@@ -2837,6 +2837,7 @@ def test_order_create_voucher_expired(token_client, organizer, event, item, quot
     }
 
 
+# Sideburn: a used-up voucher reports "used up" even if it has also expired (SID-95).
 @pytest.mark.django_db
 def test_order_create_voucher_redeemed_and_expired_prefers_redeemed(token_client, organizer, event, item, quota, question):
     res = copy.deepcopy(ORDER_CREATE_PAYLOAD)
