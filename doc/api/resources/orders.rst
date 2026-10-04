@@ -46,6 +46,8 @@ custom_followup_at                    date                       Internal date f
 checkin_attention                     boolean                    If ``true``, the check-in app should show a warning
                                                                  that this ticket requires special attention if a ticket
                                                                  of this order is scanned.
+checkin_text                          string                     Text that will be shown if a ticket of this order is
+                                                                 scanned (or ``null``).
 invoice_address                       object                     Invoice address information (can be ``null``)
 ├ last_modified                       datetime                   Last modification date of the address
 ├ company                             string                     Customer company name
@@ -135,6 +137,18 @@ last_modified                         datetime                   Last modificati
 
    The ``event`` attribute has been added. The organizer-level endpoint has been added.
 
+.. versionchanged:: 2023.9
+
+   The ``customer`` query parameter has been added.
+
+.. versionchanged:: 2023.10
+
+   The ``checkin_text`` attribute has been added.
+
+.. versionchanged:: 2024.1
+
+   The ``expires`` attribute can now be passed during order creation.
+
 
 .. _order-position-resource:
 
@@ -165,6 +179,11 @@ country                               string                     Attendee countr
 state                                 string                     Attendee state (ISO 3166-2 code). Only supported in
                                                                  AU, BR, CA, CN, MY, MX, and US, otherwise ``null``.
 voucher                               integer                    Internal ID of the voucher used for this position (or ``null``)
+voucher_budget_use                    money (string)             Amount of money discounted by the voucher, corresponding
+                                                                 to how much of the ``budget`` of the voucher is consumed.
+                                                                 **Important:** Do not rely on this amount to be a useful
+                                                                 value if the position's price, product or voucher
+                                                                 are changed *after* the order was created. Can be ``null``.
 tax_rate                              decimal (string)           VAT rate applied for this position
 tax_value                             money (string)             VAT included in this position
 tax_rule                              integer                    The ID of the used tax rule (or ``null``)
@@ -314,6 +333,7 @@ List of all orders
             "comment": "",
             "custom_followup_at": null,
             "checkin_attention": false,
+            "checkin_text": null,
             "require_approval": false,
             "valid_if_pending": false,
             "invoice_address": {
@@ -352,6 +372,7 @@ List of all orders
                 "country": "DE",
                 "state": null,
                 "voucher": null,
+                "voucher_budget_use": null,
                 "tax_rate": "0.00",
                 "tax_value": "0.00",
                 "tax_rule": null,
@@ -420,6 +441,7 @@ List of all orders
    :query string code: Only return orders that match the given order code
    :query string status: Only return orders in the given order status (see above)
    :query string search: Only return orders matching a given search query (matching for names, email addresses, and company names)
+   :query string customer: Only show orders linked to the given customer.
    :query integer item: Only return orders with a position that contains this item ID. *Warning:* Result will also include orders if they contain mixed items, and it will even return orders where the item is only contained in a canceled position.
    :query integer variation: Only return orders with a position that contains this variation ID. *Warning:* Result will also include orders if they contain mixed items and variations, and it will even return orders where the variation is only contained in a canceled position.
    :query boolean testmode: Only return orders with ``testmode`` set to ``true`` or ``false``
@@ -534,6 +556,7 @@ Fetching individual orders
         "comment": "",
         "custom_followup_at": null,
         "checkin_attention": false,
+        "checkin_text": null,
         "require_approval": false,
         "valid_if_pending": false,
         "invoice_address": {
@@ -572,6 +595,7 @@ Fetching individual orders
             "country": "DE",
             "state": null,
             "voucher": null,
+            "voucher_budget_use": null,
             "tax_rate": "0.00",
             "tax_rule": null,
             "tax_value": "0.00",
@@ -704,6 +728,8 @@ Updating order fields
 
    * ``checkin_attention``
 
+   * ``checkin_text``
+
    * ``locale``
 
    * ``comment``
@@ -713,6 +739,8 @@ Updating order fields
    * ``invoice_address`` (you always need to supply the full object, or ``null`` to delete the current address)
 
    * ``valid_if_pending``
+
+   * ``expires``
 
    **Example request**:
 
@@ -919,6 +947,7 @@ Creating orders
    * ``comment`` (optional)
    * ``custom_followup_at`` (optional)
    * ``checkin_attention`` (optional)
+   * ``checkin_text`` (optional)
    * ``require_approval`` (optional)
    * ``valid_if_pending`` (optional)
    * ``invoice_address`` (optional)
@@ -1519,6 +1548,7 @@ List of all order positions
             },
             "attendee_email": null,
             "voucher": null,
+            "voucher_budget_use": null,
             "tax_rate": "0.00",
             "tax_rule": null,
             "tax_value": "0.00",
@@ -1566,6 +1596,7 @@ List of all order positions
                            ``order__datetime,positionid``
    :query string order: Only return positions of the order with the given order code
    :query string search: Fuzzy search matching the attendee name, order code, invoice address name as well as to the beginning of the secret.
+   :query string customer: Only show orders linked to the given customer.
    :query integer item: Only return positions with the purchased item matching the given ID.
    :query integer item__in: Only return positions with the purchased item matching one of the given comma-separated IDs.
    :query integer variation: Only return positions with the purchased item variation matching the given ID.
@@ -1631,6 +1662,7 @@ Fetching individual positions
         },
         "attendee_email": null,
         "voucher": null,
+        "voucher_budget_use": null,
         "tax_rate": "0.00",
         "tax_rule": null,
         "tax_value": "0.00",

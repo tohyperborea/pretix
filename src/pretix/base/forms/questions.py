@@ -125,7 +125,7 @@ class NamePartsWidget(forms.MultiWidget):
             if fname == 'title' and self.titles:
                 widgets.append(Select(attrs=a, choices=[('', '')] + [(d, d) for d in self.titles[1]]))
             elif fname == 'salutation':
-                widgets.append(Select(attrs=a, choices=[('', '---')] + PERSON_NAME_SALUTATIONS))
+                widgets.append(Select(attrs=a, choices=[('', '---'), ('empty', '')] + PERSON_NAME_SALUTATIONS))
             else:
                 widgets.append(self.widget(attrs=a))
         super().__init__(widgets, attrs)
@@ -136,7 +136,10 @@ class NamePartsWidget(forms.MultiWidget):
         data = []
         for i, field in enumerate(self.scheme['fields']):
             fname, label, size = field
-            data.append(value.get(fname, ""))
+            fval = value.get(fname, "")
+            if fname == "salutation" and fname in value and fval == "":
+                fval = "empty"
+            data.append(fval)
         if '_legacy' in value and not data[-1]:
             data[-1] = value.get('_legacy', '')
         elif not any(d for d in data) and '_scheme' in value:
@@ -190,7 +193,8 @@ class NamePartsFormField(forms.MultiValueField):
         data = {}
         data['_scheme'] = self.scheme_name
         for i, value in enumerate(data_list):
-            data[self.scheme['fields'][i][0]] = value or ''
+            key = self.scheme['fields'][i][0]
+            data[key] = value or ''
         return data
 
     def __init__(self, *args, **kwargs):
@@ -239,7 +243,7 @@ class NamePartsFormField(forms.MultiValueField):
                 d.pop('validators', None)
                 field = forms.ChoiceField(
                     **d,
-                    choices=[('', '---')] + PERSON_NAME_SALUTATIONS
+                    choices=[('', '---'), ('empty', '')] + PERSON_NAME_SALUTATIONS
                 )
             else:
                 field = forms.CharField(**defaults)
@@ -264,6 +268,9 @@ class NamePartsFormField(forms.MultiValueField):
 
         if sum(len(v) for v in value.values() if v) > 250:
             raise forms.ValidationError(_('Please enter a shorter name.'), code='max_length')
+
+        if value.get("salutation") == "empty":
+            value["salutation"] = ""
 
         return value
 
@@ -602,27 +609,38 @@ class BaseQuestionsForm(forms.Form):
                 max_date = now().astimezone(event.timezone) + timedelta(days=item.validity_dynamic_start_choice_day_limit)
             else:
                 max_date = None
+            min_date = now()
+            initial = None
+            if (item.require_membership or (pos.variation and pos.variation.require_membership)) and pos.used_membership:
+                if pos.used_membership.date_start >= now():
+                    initial = min_date = pos.used_membership.date_start
+                max_date = min(max_date, pos.used_membership.date_end) if max_date else pos.used_membership.date_end
             if item.validity_dynamic_duration_months or item.validity_dynamic_duration_days:
                 attrs = {}
                 if max_date:
                     attrs['data-max'] = max_date.date().isoformat()
+                if min_date:
+                    attrs['data-min'] = min_date.date().isoformat()
                 self.fields['requested_valid_from'] = forms.DateField(
                     label=_('Start date'),
-                    help_text=_('If you keep this empty, the ticket will be valid starting at the time of purchase.'),
-                    required=False,
+                    help_text='' if initial else _('If you keep this empty, the ticket will be valid starting at the time of purchase.'),
+                    required=bool(initial),
+                    initial=pos.requested_valid_from or initial,
                     widget=DatePickerWidget(attrs),
-                    validators=[MaxDateValidator(max_date.date())] if max_date else []
+                    validators=([MaxDateValidator(max_date.date())] if max_date else []) + [MinDateValidator(min_date.date())]
                 )
             else:
                 self.fields['requested_valid_from'] = forms.SplitDateTimeField(
                     label=_('Start date'),
-                    help_text=_('If you keep this empty, the ticket will be valid starting at the time of purchase.'),
-                    required=False,
+                    help_text='' if initial else _('If you keep this empty, the ticket will be valid starting at the time of purchase.'),
+                    required=bool(initial),
+                    initial=pos.requested_valid_from or initial,
                     widget=SplitDateTimePickerWidget(
                         time_format=get_format_without_seconds('TIME_INPUT_FORMATS'),
+                        min_date=min_date,
                         max_date=max_date
                     ),
-                    validators=[MaxDateTimeValidator(max_date)] if max_date else []
+                    validators=([MaxDateTimeValidator(max_date)] if max_date else []) + [MinDateTimeValidator(min_date)]
                 )
 
         add_fields = {}

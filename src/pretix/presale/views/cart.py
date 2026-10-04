@@ -44,7 +44,7 @@ from django.contrib import messages
 from django.core.cache import caches
 from django.db.models import Q
 from django.http import FileResponse, Http404, JsonResponse
-from django.shortcuts import get_object_or_404, redirect, render
+from django.shortcuts import get_object_or_404, render
 from django.utils import translation
 from django.utils.crypto import get_random_string
 from django.utils.decorators import method_decorator
@@ -97,7 +97,10 @@ class CartActionMixin:
         if 'locale' in self.request.GET:
             query['locale'] = self.request.GET['locale']
         disclose_cart_id = (
-            'iframe' in self.request.GET or settings.SESSION_COOKIE_NAME not in self.request.COOKIES
+            'iframe' in self.request.GET or (
+                settings.SESSION_COOKIE_NAME not in self.request.COOKIES and
+                '__Host-' + settings.SESSION_COOKIE_NAME not in self.request.COOKIES
+            )
         ) and self.kwargs.get('cart_namespace')
         if disclose_cart_id:
             cart_id = get_or_create_cart_id(self.request)
@@ -120,7 +123,10 @@ class CartActionMixin:
             else:
                 u += '?require_cookie=true'
             disclose_cart_id = (
-                'iframe' in self.request.GET or settings.SESSION_COOKIE_NAME not in self.request.COOKIES
+                'iframe' in self.request.GET or (
+                    settings.SESSION_COOKIE_NAME not in self.request.COOKIES and
+                    '__Host-' + settings.SESSION_COOKIE_NAME not in self.request.COOKIES
+                )
             ) and self.kwargs.get('cart_namespace')
             if disclose_cart_id:
                 cart_id = get_or_create_cart_id(self.request)
@@ -430,7 +436,7 @@ class CartApplyVoucher(EventViewMixin, CartActionMixin, AsyncAction, View):
                     'redirect': self.get_error_url()
                 })
             else:
-                return redirect(self.get_error_url())
+                return redirect_to_url(self.get_error_url())
 
 
 @method_decorator(allow_frame_if_namespaced, 'dispatch')
@@ -451,14 +457,14 @@ class CartRemove(EventViewMixin, CartActionMixin, AsyncAction, View):
                 return self.do(self.request.event.id, int(request.POST.get('id')), get_or_create_cart_id(self.request),
                                translation.get_language(), request.sales_channel.identifier)
             except ValueError:
-                return redirect(self.get_error_url())
+                return redirect_to_url(self.get_error_url())
         else:
             if 'ajax' in self.request.GET or 'ajax' in self.request.POST:
                 return JsonResponse({
                     'redirect': self.get_error_url()
                 })
             else:
-                return redirect(self.get_error_url())
+                return redirect_to_url(self.get_error_url())
 
 
 @method_decorator(allow_frame_if_namespaced, 'dispatch')
@@ -537,7 +543,7 @@ class CartAdd(EventViewMixin, CartActionMixin, AsyncAction, View):
                     'message': str(error_messages['empty'])
                 })
             else:
-                return redirect(self.get_error_url())
+                return redirect_to_url(self.get_error_url())
 
 
 @method_decorator(allow_frame_if_namespaced, 'dispatch')
@@ -571,12 +577,13 @@ class RedeemView(NoSearchIndexViewMixin, EventViewMixin, CartMixin, TemplateView
                                   for item in items])
 
         context['allfree'] = all(
-            item.display_price.gross == Decimal('0.00') for item in items if not item.has_variations
+            item.display_price.gross == Decimal('0.00') and not item.mandatory_priced_addons
+            for item in items if not item.has_variations
         ) and all(
             all(
                 var.display_price.gross == Decimal('0.00')
                 for var in item.available_variations
-            )
+            ) and not item.mandatory_priced_addons
             for item in items if item.has_variations
         )
 
@@ -591,7 +598,8 @@ class RedeemView(NoSearchIndexViewMixin, EventViewMixin, CartMixin, TemplateView
 
         context['new_tab'] = (
             'require_cookie' in self.request.GET and
-            settings.SESSION_COOKIE_NAME not in self.request.COOKIES
+            settings.SESSION_COOKIE_NAME not in self.request.COOKIES and
+            '__Host-' + settings.SESSION_COOKIE_NAME not in self.request.COOKIES
             # Cookies are not supported! Lets just make the form open in a new tab
         )
 
@@ -599,8 +607,11 @@ class RedeemView(NoSearchIndexViewMixin, EventViewMixin, CartMixin, TemplateView
             context['cart_redirect'] = eventreverse(self.request.event, 'presale:event.checkout.start',
                                                     kwargs={'cart_namespace': kwargs.get('cart_namespace') or ''})
         else:
-            context['cart_redirect'] = eventreverse(self.request.event, 'presale:event.index',
-                                                    kwargs={'cart_namespace': kwargs.get('cart_namespace') or ''})
+            if 'next' in self.request.GET and url_has_allowed_host_and_scheme(self.request.GET.get("next"), allowed_hosts=None):
+                context['cart_redirect'] = self.request.GET.get('next')
+            else:
+                context['cart_redirect'] = eventreverse(self.request.event, 'presale:event.index',
+                                                        kwargs={'cart_namespace': kwargs.get('cart_namespace') or ''})
         if context['cart_redirect'].startswith('https:'):
             context['cart_redirect'] = '/' + context['cart_redirect'].split('/', 3)[3]
         return context
@@ -634,12 +645,16 @@ class RedeemView(NoSearchIndexViewMixin, EventViewMixin, CartMixin, TemplateView
                 else:
                     err = error_messages['voucher_invalid']
         else:
-            return render(request, 'pretixpresale/event/voucher_form.html')
+            context = {}
+            context['cart'] = self.get_cart()
+            context['show_cart'] = context['cart']['positions']
+            return render(request, 'pretixpresale/event/voucher_form.html', context)
 
-        if request.event.presale_start and now() < request.event.presale_start:
-            err = error_messages['not_started']
-        if request.event.presale_end and now() > request.event.presale_end:
+        if request.event.presale_has_ended or (request.event.presale_end and now() > request.event.presale_end):
             err = error_messages['ended']
+        elif not request.event.presale_is_running or (
+                request.event.presale_start and now() < request.event.presale_start):
+            err = error_messages['not_started']
 
         self.subevent = None
         if request.event.has_subevents:
@@ -654,8 +669,12 @@ class RedeemView(NoSearchIndexViewMixin, EventViewMixin, CartMixin, TemplateView
                 self.subevent = self.voucher.subevent
 
             if not err and not self.subevent:
-                return redirect(eventreverse(self.request.event, 'presale:event.index',
-                                kwargs={'cart_namespace': kwargs.get('cart_namespace') or ''}) + '?voucher=' + quote(self.voucher.code))
+                return redirect_to_url(
+                    eventreverse(
+                        self.request.event, 'presale:event.index',
+                        kwargs={'cart_namespace': kwargs.get('cart_namespace') or ''}
+                    ) + '?voucher=' + quote(self.voucher.code)
+                )
         else:
             pass
 
@@ -672,7 +691,7 @@ class RedeemView(NoSearchIndexViewMixin, EventViewMixin, CartMixin, TemplateView
 
     def get(self, request, *args, **kwargs):
         if 'iframe' in request.GET and 'require_cookie' not in request.GET:
-            return redirect(request.get_full_path() + '&require_cookie=1')
+            return redirect_to_url(request.get_full_path() + '&require_cookie=1')
 
         if len(self.request.GET.get('widget_data', '{}')) > 3:
             # We've been passed data from a widget, we need to create a cart session to store it.

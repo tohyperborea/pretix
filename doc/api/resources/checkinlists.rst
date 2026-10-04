@@ -37,11 +37,17 @@ allow_entry_after_exit                boolean                    If ``true``, su
 rules                                 object                     Custom check-in logic. The contents of this field are currently not considered a stable API and modifications through the API are highly discouraged.
 exit_all_at                           datetime                   Automatically check out (i.e. perform an exit scan) at this point in time. After this happened, this property will automatically be set exactly one day into the future. Note that this field is considered "internal configuration" and if you pull the list with ``If-Modified-Since``, the daily change in this field will not trigger a response.
 addon_match                           boolean                    If ``true``, tickets on this list can be redeemed by scanning their parent ticket if this still leads to an unambiguous match.
+ignore_in_statistics                  boolean                    If ``true``, check-ins on this list will be ignored in most reporting features.
+consider_tickets_used                 boolean                    If ``true`` (default), tickets checked in on this list will be considered "used" by other functionality, i.e. when checking if they can still be canceled.
 ===================================== ========================== =======================================================
 
 .. versionchanged:: 4.12
 
     The ``addon_match`` attribute has been added.
+
+.. versionchanged:: 2023.9
+
+    The ``ignore_in_statistics`` and ``consider_tickets_used`` attributes have been added.
 
 Endpoints
 ---------
@@ -492,7 +498,7 @@ Order position endpoints
                            ``attendee_name,positionid``
    :query string order: Only return positions of the order with the given order code
    :query string search: Fuzzy search matching the attendee name, order code, invoice address name as well as to the beginning of the secret.
-   :query string expand: Expand a field into a full object. Currently only ``subevent``, ``item``, and ``variation`` are supported. Can be passed multiple times.
+   :query string expand: Expand a field into a full object. Currently ``subevent``, ``item``, ``variation``, and ``answers.question`` are supported. Can be passed multiple times.
    :query integer item: Only return positions with the purchased item matching the given ID.
    :query integer item__in: Only return positions with the purchased item matching one of the given comma-separated IDs.
    :query integer variation: Only return positions with the purchased item variation matching the given ID.
@@ -626,7 +632,8 @@ Order position endpoints
                                        set this to ``false``. In that case, questions will just be ignored. Defaults
                                        to ``true``.
    :<json boolean canceled_supported: When this parameter is set to ``true``, the response code ``canceled`` may be
-                                      returned. Otherwise, canceled orders will return ``unpaid``.
+                                      returned. Otherwise, canceled orders will return ``unpaid``. (**Deprecated**, in
+                                      the future, this will be ignored and ``canceled`` may always be returned.)
    :<json datetime datetime: Specifies the datetime of the check-in. If not supplied, the current time will be used.
    :<json boolean force: Specifies that the check-in should succeed regardless of revoked barcode, previous check-ins or required
                          questions that have not been filled. This is usually used to upload offline scans that already happened,
@@ -700,6 +707,7 @@ Order position endpoints
             "position": 1,
             "identifier": "WY3TP9SL",
             "ask_during_checkin": true,
+            "show_during_checkin": true,
             "options": [
               {
                 "id": 1,
@@ -752,6 +760,7 @@ Order position endpoints
    * ``rules`` - Check-in prevented by a user-defined rule.
    * ``ambiguous`` - Multiple tickets match scan, rejected.
    * ``revoked`` - Ticket code has been revoked.
+   * ``unapproved`` - Order has not yet been approved.
 
    In case of reason ``rules`` or ``invalid_time``, there might be an additional response field ``reason_explanation``
    with a human-readable description of the violated rules. However, that field can also be missing or be ``null``.

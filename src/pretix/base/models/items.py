@@ -263,8 +263,8 @@ def filter_available(qs, channel='web', voucher=None, allow_addons=False):
         # IMPORTANT: If this is updated, also update the ItemVariation query
         # in models/event.py: EventMixin.annotated()
         Q(active=True)
-        & Q(Q(available_from__isnull=True) | Q(available_from__lte=now()))
-        & Q(Q(available_until__isnull=True) | Q(available_until__gte=now()))
+        & Q(Q(available_from__isnull=True) | Q(available_from__lte=now()) | Q(available_from_mode='info'))
+        & Q(Q(available_until__isnull=True) | Q(available_until__gte=now()) | Q(available_until_mode='info'))
         & Q(sales_channels__contains=channel) & Q(require_bundling=False)
     )
     if not allow_addons:
@@ -336,6 +336,8 @@ class Item(LoggedModel):
     :type min_per_order: int
     :param checkin_attention: Requires special attention at check-in
     :type checkin_attention: bool
+    :param checkin_text: Additional text to show at check-in
+    :type checkin_text: bool
     :param original_price: The item's "original" price. Will not be used for any calculations, will just be shown.
     :type original_price: decimal.Decimal
     :param require_approval: If set to ``True``, orders containing this product can only be processed and paid after approved by an administrator
@@ -370,6 +372,13 @@ class Item(LoggedModel):
         (None, _('Event validity (default)')),
         (VALIDITY_MODE_FIXED, _('Fixed time frame')),
         (VALIDITY_MODE_DYNAMIC, _('Dynamic validity')),
+    )
+
+    UNAVAIL_MODE_HIDDEN = "hide"
+    UNAVAIL_MODE_INFO = "info"
+    UNAVAIL_MODES = (
+        (UNAVAIL_MODE_HIDDEN, _("Hide product if unavailable")),
+        (UNAVAIL_MODE_INFO, _("Show info text if unavailable")),
     )
 
     MEDIA_POLICY_REUSE = 'reuse'
@@ -421,7 +430,7 @@ class Item(LoggedModel):
         help_text=_("If this product has multiple variations, you can set different prices for each of the "
                     "variations. If a variation does not have a special price or if you do not have variations, "
                     "this price will be used."),
-        max_digits=13, decimal_places=2, null=True
+        max_digits=13, decimal_places=2,
     )
     free_price = models.BooleanField(
         default=False,
@@ -430,6 +439,12 @@ class Item(LoggedModel):
                     "is then interpreted as the minimum price a user has to enter. You could use this e.g. to collect "
                     "additional donations for your event. This is currently not supported for products that are "
                     "bought as an add-on to other products.")
+    )
+    free_price_suggestion = models.DecimalField(
+        verbose_name=_("Suggested price"),
+        help_text=_("This price will be used as the default value of the input field. The user can choose a lower "
+                    "value, but not lower than the price this product would have without the free price option."),
+        max_digits=13, decimal_places=2, null=True, blank=True,
     )
     tax_rule = models.ForeignKey(
         'TaxRule',
@@ -479,21 +494,42 @@ class Item(LoggedModel):
         null=True, blank=True,
         help_text=_('This product will not be sold before the given date.')
     )
+    available_from_mode = models.CharField(
+        choices=UNAVAIL_MODES,
+        default=UNAVAIL_MODE_HIDDEN,
+        max_length=16,
+    )
     available_until = models.DateTimeField(
         verbose_name=_("Available until"),
         null=True, blank=True,
         help_text=_('This product will not be sold after the given date.')
     )
+    available_until_mode = models.CharField(
+        choices=UNAVAIL_MODES,
+        default=UNAVAIL_MODE_HIDDEN,
+        max_length=16,
+    )
     hidden_if_available = models.ForeignKey(
         'Quota',
         null=True, blank=True,
         on_delete=models.SET_NULL,
-        verbose_name=_("Only show after sellout of"),
+        verbose_name=pgettext_lazy("hidden_if_available_legacy", "Only show after sellout of"),
         help_text=_("If you select a quota here, this product will only be shown when that quota is "
                     "unavailable. If combined with the option to hide sold-out products, this allows you to "
                     "swap out products for more expensive ones once they are sold out. There might be a short period "
                     "in which both products are visible while all tickets in the referenced quota are reserved, "
                     "but not yet sold.")
+    )
+    hidden_if_item_available = models.ForeignKey(
+        'Item',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        verbose_name=_("Only show after sellout of"),
+        help_text=_("If you select a product here, this product will only be shown when that product is "
+                    "sold out. If combined with the option to hide sold-out products, this allows you to "
+                    "swap out products for more expensive ones once the cheaper option is sold out. There might "
+                    "be a short period in which both products are visible while all tickets of the referenced "
+                    "product are reserved, but not yet sold.")
     )
     require_voucher = models.BooleanField(
         verbose_name=_('This product can only be bought using a voucher.'),
@@ -548,6 +584,11 @@ class Item(LoggedModel):
         help_text=_('If you set this, the check-in app will show a visible warning that this ticket requires special '
                     'attention. You can use this for example for student tickets to indicate to the person at '
                     'check-in that the student ID card still needs to be checked.')
+    )
+    checkin_text = models.TextField(
+        verbose_name=_('Check-in text'),
+        null=True, blank=True,
+        help_text=_('This text will be shown by the check-in app if a ticket of this type is scanned.')
     )
     original_price = models.DecimalField(
         verbose_name=_('Original price'),
@@ -607,7 +648,7 @@ class Item(LoggedModel):
         null=True, blank=True, max_length=16,
         verbose_name=_('Validity'),
         help_text=_(
-            'When setting up a regular event, or an event series with time slots, you typically to NOT need to change '
+            'When setting up a regular event, or an event series with time slots, you typically do NOT need to change '
             'this value. The default setting means that the validity time of tickets will not be decided by the '
             'product, but by the event and check-in configuration. Only use the other options if you need them to '
             'realize e.g. a booking of a year-long ticket with a dynamic start date. Note that the validity will be '
@@ -679,6 +720,8 @@ class Item(LoggedModel):
         return str(self.internal_name or self.name)
 
     def save(self, *args, **kwargs):
+        if self.hide_without_voucher:
+            self.require_voucher = True
         super().save(*args, **kwargs)
         if self.event:
             self.event.cache.clear()
@@ -755,6 +798,24 @@ class Item(LoggedModel):
         if not self.active or not self.is_available_by_time(now_dt):
             return False
         return True
+
+    def unavailability_reason(self, now_dt: datetime=None, has_voucher=False, subevent=None) -> Optional[str]:
+        now_dt = now_dt or now()
+        subevent_item = subevent and subevent.item_overrides.get(self.pk)
+        if not self.active:
+            return 'active'
+        elif self.available_from and self.available_from > now_dt:
+            return 'available_from'
+        elif self.available_until and self.available_until < now_dt:
+            return 'available_until'
+        elif (self.require_voucher or self.hide_without_voucher) and not has_voucher:
+            return 'require_voucher'
+        elif subevent_item and subevent_item.available_from and subevent_item.available_from > now_dt:
+            return 'available_from'
+        elif subevent_item and subevent_item.available_until and subevent_item.available_until < now_dt:
+            return 'available_until'
+        else:
+            return None
 
     def _get_quotas(self, ignored_quotas=None, subevent=None):
         check_quotas = set(getattr(
@@ -1021,6 +1082,12 @@ class ItemVariation(models.Model):
         help_text=_('If set, this will be displayed next to the current price to show that the current price is a '
                     'discounted one. This is just a cosmetic setting and will not actually impact pricing.')
     )
+    free_price_suggestion = models.DecimalField(
+        verbose_name=_("Suggested price"),
+        help_text=_("This price will be used as the default value of the input field. The user can choose a lower "
+                    "value, but not lower than the price this product would have without the free price option."),
+        max_digits=13, decimal_places=2, null=True, blank=True,
+    )
     require_approval = models.BooleanField(
         verbose_name=_('Require approval'),
         default=False,
@@ -1048,10 +1115,20 @@ class ItemVariation(models.Model):
         null=True, blank=True,
         help_text=_('This variation will not be sold before the given date.')
     )
+    available_from_mode = models.CharField(
+        choices=Item.UNAVAIL_MODES,
+        default=Item.UNAVAIL_MODE_HIDDEN,
+        max_length=16,
+    )
     available_until = models.DateTimeField(
         verbose_name=_("Available until"),
         null=True, blank=True,
         help_text=_('This variation will not be sold after the given date.')
+    )
+    available_until_mode = models.CharField(
+        choices=Item.UNAVAIL_MODES,
+        default=Item.UNAVAIL_MODE_HIDDEN,
+        max_length=16,
     )
     sales_channels = fields.MultiStringField(
         verbose_name=_('Sales channels'),
@@ -1072,6 +1149,11 @@ class ItemVariation(models.Model):
         help_text=_('If you set this, the check-in app will show a visible warning that this ticket requires special '
                     'attention. You can use this for example for student tickets to indicate to the person at '
                     'check-in that the student ID card still needs to be checked.')
+    )
+    checkin_text = models.TextField(
+        verbose_name=_('Check-in text'),
+        null=True, blank=True,
+        help_text=_('This text will be shown by the check-in app if a ticket of this type is scanned.')
     )
 
     objects = ScopedManager(organizer='item__event__organizer')
@@ -1224,6 +1306,22 @@ class ItemVariation(models.Model):
         if not self.active or not self.is_available_by_time(now_dt):
             return False
         return True
+
+    def unavailability_reason(self, now_dt: datetime=None, has_voucher=False, subevent=None) -> Optional[str]:
+        now_dt = now_dt or now()
+        subevent_var = subevent and subevent.var_overrides.get(self.pk)
+        if not self.active:
+            return 'active'
+        elif self.available_from and self.available_from > now_dt:
+            return 'available_from'
+        elif self.available_until and self.available_until < now_dt:
+            return 'available_until'
+        elif subevent_var and subevent_var.available_from and subevent_var.available_from > now_dt:
+            return 'available_from'
+        elif subevent_var and subevent_var.available_until and subevent_var.available_until < now_dt:
+            return 'available_until'
+        else:
+            return None
 
     @property
     def meta_data(self):
@@ -1427,6 +1525,8 @@ class Question(LoggedModel):
     :param items: A set of ``Items`` objects that this question should be applied to
     :param ask_during_checkin: Whether to ask this question during check-in instead of during check-out.
     :type ask_during_checkin: bool
+    :param show_during_checkin: Whether to show the answer to this question during check-in.
+    :type show_during_checkin: bool
     :param hidden: Whether to only show the question in the backend
     :type hidden: bool
     :param identifier: An arbitrary, internal identifier
@@ -1464,6 +1564,7 @@ class Question(LoggedModel):
     )
     UNLOCALIZED_TYPES = [TYPE_DATE, TYPE_TIME, TYPE_DATETIME]
     ASK_DURING_CHECKIN_UNSUPPORTED = []
+    SHOW_DURING_CHECKIN_UNSUPPORTED = [TYPE_FILE]
 
     event = models.ForeignKey(
         Event,
@@ -1512,6 +1613,11 @@ class Question(LoggedModel):
     )
     ask_during_checkin = models.BooleanField(
         verbose_name=_('Ask during check-in instead of in the ticket buying process'),
+        help_text=_('Not supported by all check-in apps for all question types.'),
+        default=False
+    )
+    show_during_checkin = models.BooleanField(
+        verbose_name=_('Show answer during check-in'),
         help_text=_('Not supported by all check-in apps for all question types.'),
         default=False
     )

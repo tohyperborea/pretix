@@ -39,18 +39,16 @@ from django import forms
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db.models import Q
-from django.forms import inlineformset_factory
+from django.forms import formset_factory, inlineformset_factory
 from django.forms.utils import ErrorDict
 from django.urls import reverse
 from django.utils.crypto import get_random_string
 from django.utils.html import conditional_escape
 from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _, pgettext_lazy
-from django_scopes.forms import (
-    SafeModelChoiceField, SafeModelMultipleChoiceField,
-)
+from django_scopes.forms import SafeModelChoiceField
 from i18nfield.forms import (
-    I18nFormField, I18nFormSetMixin, I18nTextarea, I18nTextInput,
+    I18nForm, I18nFormField, I18nFormSetMixin, I18nTextInput,
 )
 from phonenumber_field.formfields import PhoneNumberField
 from pytz import common_timezones
@@ -58,7 +56,9 @@ from pytz import common_timezones
 from pretix.api.models import WebHook
 from pretix.api.webhooks import get_all_webhook_events
 from pretix.base.customersso.oidc import oidc_validate_and_complete_config
-from pretix.base.forms import I18nModelForm, PlaceholderValidator, SettingsForm
+from pretix.base.forms import (
+    I18nMarkdownTextarea, I18nModelForm, PlaceholderValidator, SettingsForm,
+)
 from pretix.base.forms.questions import (
     NamePartsFormField, WrappedPhoneNumberPrefixWidget, get_country_by_locale,
     get_phone_prefix,
@@ -197,13 +197,49 @@ class SafeOrderPositionChoiceField(forms.ModelChoiceField):
         return f'{op.order.code}-{op.positionid} ({str(op.item) + ((" - " + str(op.variation)) if op.variation else "")})'
 
 
-class EventMetaPropertyForm(forms.ModelForm):
+class EventMetaPropertyForm(I18nModelForm):
     class Meta:
         model = EventMetaProperty
-        fields = ['name', 'default', 'required', 'protected', 'allowed_values', 'filter_allowed']
+        fields = ['name', 'default', 'required', 'protected', 'filter_public', 'public_label', 'filter_allowed']
         widgets = {
-            'default': forms.TextInput()
+            'default': forms.TextInput(),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['public_label'].widget.attrs['data-display-dependency'] = '#id_filter_public'
+
+
+class EventMetaPropertyAllowedValueForm(I18nForm):
+    key = forms.CharField(
+        label=_('Internal name'),
+        max_length=250,
+        required=True
+    )
+    label = I18nFormField(
+        label=_('Public name'),
+        required=False,
+        widget=I18nTextInput,
+        widget_kwargs=dict(attrs={
+            'placeholder': _('Public name'),
+        })
+    )
+
+
+class I18nBaseFormSet(I18nFormSetMixin, forms.BaseFormSet):
+    # compatibility shim for django-i18nfield library
+
+    def __init__(self, *args, **kwargs):
+        self.organizer = kwargs.pop('organizer', None)
+        if self.organizer:
+            kwargs['locales'] = self.organizer.settings.get('locales')
+        super().__init__(*args, **kwargs)
+
+
+EventMetaPropertyAllowedValueFormSet = formset_factory(
+    EventMetaPropertyAllowedValueForm, formset=I18nBaseFormSet,
+    can_order=True, can_delete=True, extra=0
+)
 
 
 class MembershipTypeForm(I18nModelForm):
@@ -223,7 +259,7 @@ class TeamForm(forms.ModelForm):
 
     class Meta:
         model = Team
-        fields = ['name', 'all_events', 'limit_events', 'can_create_events',
+        fields = ['name', 'require_2fa', 'all_events', 'limit_events', 'can_create_events',
                   'can_change_teams', 'can_change_organizer_settings',
                   'can_manage_gift_cards', 'can_manage_customers',
                   'can_manage_reusable_media',
@@ -389,6 +425,7 @@ class OrganizerSettingsForm(SettingsForm):
         'organizer_link_back',
         'organizer_logo_image_large',
         'organizer_logo_image_inherit',
+        'favicon',
         'giftcard_length',
         'giftcard_expiry_years',
         'locales',
@@ -429,14 +466,6 @@ class OrganizerSettingsForm(SettingsForm):
                     'in the page header. By default, we show your logo with a size of up to 1140x120 pixels. You '
                     'can increase the size with the setting below. We recommend not using small details on the picture '
                     'as it will be resized on smaller screens.')
-    )
-    favicon = ExtFileField(
-        label=_('Favicon'),
-        ext_whitelist=settings.FILE_UPLOAD_EXTENSIONS_FAVICON,
-        required=False,
-        max_size=settings.FILE_UPLOAD_MAX_SIZE_FAVICON,
-        help_text=_('If you provide a favicon, we will show it instead of the default pretix icon. '
-                    'We recommend a size of at least 200x200px to accommodate most devices.')
     )
 
     def __init__(self, *args, **kwargs):
@@ -497,7 +526,7 @@ class MailSettingsForm(SettingsForm):
     mail_text_signature = I18nFormField(
         label=_("Signature"),
         required=False,
-        widget=I18nTextarea,
+        widget=I18nMarkdownTextarea,
         help_text=_("This will be attached to every email."),
         validators=[PlaceholderValidator([])],
         widget_kwargs={'attrs': {
@@ -516,7 +545,7 @@ class MailSettingsForm(SettingsForm):
     mail_text_customer_registration = I18nFormField(
         label=_("Text"),
         required=False,
-        widget=I18nTextarea,
+        widget=I18nMarkdownTextarea,
     )
     mail_subject_customer_email_change = I18nFormField(
         label=_("Subject"),
@@ -526,7 +555,7 @@ class MailSettingsForm(SettingsForm):
     mail_text_customer_email_change = I18nFormField(
         label=_("Text"),
         required=False,
-        widget=I18nTextarea,
+        widget=I18nMarkdownTextarea,
     )
     mail_subject_customer_reset = I18nFormField(
         label=_("Subject"),
@@ -536,7 +565,7 @@ class MailSettingsForm(SettingsForm):
     mail_text_customer_reset = I18nFormField(
         label=_("Text"),
         required=False,
-        widget=I18nTextarea,
+        widget=I18nMarkdownTextarea,
     )
 
     base_context = {
@@ -611,11 +640,12 @@ class WebHookForm(forms.ModelForm):
         fields = ['target_url', 'enabled', 'all_events', 'limit_events', 'comment']
         widgets = {
             'limit_events': forms.CheckboxSelectMultiple(attrs={
-                'data-inverse-dependency': '#id_all_events'
+                'data-inverse-dependency': '#id_all_events',
+                'class': 'scrolling-multiple-choice scrolling-multiple-choice-large',
             }),
         }
         field_classes = {
-            'limit_events': SafeModelMultipleChoiceField
+            'limit_events': SafeEventMultipleChoiceField
         }
 
 

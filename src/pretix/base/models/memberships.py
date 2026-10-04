@@ -49,7 +49,8 @@ class MembershipType(LoggedModel):
     allow_parallel_usage = models.BooleanField(
         verbose_name=_('Parallel usage is allowed'),
         help_text=_('If this is selected, the membership can be used to purchase tickets for events happening at the same time. Note '
-                    'that this will only check for an identical start time of the events, not for any overlap between events.'),
+                    'that this will only check for an identical start time of the events, not for any overlap between events. An overlap '
+                    'check will be performed if there is a product-level validity of the ticket.'),
         default=False
     )
     max_usages = models.PositiveIntegerField(
@@ -162,8 +163,12 @@ class Membership(models.Model):
     def attendee_name(self):
         return build_name(self.attendee_name_parts, fallback_scheme=lambda: self.customer.organizer.settings.name_scheme)
 
-    def is_valid(self, ev=None):
-        if ev:
+    def is_valid(self, ev=None, ticket_valid_from=None, valid_from_not_chosen=False):
+        if valid_from_not_chosen:
+            return not self.canceled and self.date_end >= now()
+        elif ticket_valid_from:
+            dt = ticket_valid_from
+        elif ev:
             dt = ev.date_from
         else:
             dt = now()

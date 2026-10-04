@@ -6,14 +6,17 @@ Absenderinformation
 Absendername
 Admin
 Adminbereich
+Affirm
 AGPL
 AGPLv
 Alipay
 and
 App
+ApplePay
 Apps
 APM
 as
+Aufbuchungen
 Aufteilungsliste
 aufzubuchen
 auschecken
@@ -57,8 +60,10 @@ Branding
 Browsereinstellungen
 BSD
 bspw
+Bokmål
 Boleto
 Bundles
+Butterfly
 bzw
 ca
 Cc
@@ -162,6 +167,7 @@ JavaScript
 JSON
 Kategoriebeschreibung
 Key
+Klarna
 Kombitickets
 Kompatibilitätsmodus
 Konfigurations
@@ -170,6 +176,7 @@ landesspezifische
 Lead
 Leaflet
 Linktext
+Logindaten
 Lösch
 loszulegen
 Ltd
@@ -198,6 +205,7 @@ number
 NXP
 OK
 On
+Onlinebanking
 Open
 OpenCage
 OpenID
@@ -336,6 +344,7 @@ URIs
 Ursprüngl
 USt
 Überweisungs
+Überzahlten
 Validierung
 Venmo
 Veranstaltereinstellungen

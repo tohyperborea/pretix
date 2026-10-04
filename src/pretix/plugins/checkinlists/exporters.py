@@ -63,6 +63,7 @@ from pretix.base.timeframes import (
 )
 from pretix.control.forms.widgets import Select2
 from pretix.helpers.filenames import safe_for_filename
+from pretix.helpers.iter import chunked_iterable
 from pretix.helpers.templatetags.jsonfield import JSONExtract
 from pretix.plugins.reports.exporters import ReportlabExportMixin
 
@@ -156,7 +157,7 @@ class CheckInListMixin(BaseExporter):
 
         return d
 
-    def _get_queryset(self, cl, form_data):
+    def _get_queryset(self, cl, form_data, prefetch=True):
         cqs = Checkin.objects.filter(
             position_id=OuterRef('pk'),
             list_id=cl.pk
@@ -179,9 +180,11 @@ class CheckInListMixin(BaseExporter):
             auto_checked_in=Exists(
                 Checkin.objects.filter(position_id=OuterRef('pk'), list_id=cl.pk, auto_checked_in=True)
             )
-        ).prefetch_related(
-            'answers', 'answers__question', 'addon_to__answers', 'addon_to__answers__question'
         ).select_related('order', 'item', 'variation', 'addon_to', 'order__invoice_address', 'voucher', 'seat')
+        if prefetch:
+            qs = qs.prefetch_related(
+                'answers', 'answers__question', 'addon_to__answers', 'addon_to__answers__question'
+            )
 
         if form_data.get('status'):
             s = form_data.get('status')
@@ -379,8 +382,11 @@ class PDFCheckinList(ReportlabExportMixin, CheckInListMixin, BaseExporter):
                 iac = ""
 
             name = op.attendee_name or (op.addon_to.attendee_name if op.addon_to else '') or ian
-            if iac:
-                name += "<br/>" + iac
+            company = op.company or (op.addon_to.company if op.addon_to else '') or iac
+            if company:
+                if name:
+                    name += "<br/>"
+                name += company
 
             item = "{} ({})".format(
                 str(op.item) + (" – " + str(op.variation.value) if op.variation else ""),
@@ -465,7 +471,7 @@ class CSVCheckinList(CheckInListMixin, ListExporter):
 
         questions = list(Question.objects.filter(event=self.event, id__in=form_data['questions']))
 
-        qs = self._get_queryset(cl, form_data)
+        base_qs = self._get_queryset(cl, form_data, prefetch=False)
 
         name_scheme = PERSON_NAME_SCHEMES[self.event.settings.name_scheme]
         headers = [
@@ -478,13 +484,7 @@ class CSVCheckinList(CheckInListMixin, ListExporter):
         headers += [
             _('Product'), _('Price'), _('Checked in'), _('Checked out'), _('Automatically checked in')
         ]
-        if not cl.include_pending:
-            qs = qs.filter(
-                Q(order__status=Order.STATUS_PAID) |
-                Q(order__status=Order.STATUS_PENDING, order__valid_if_pending=True)
-            )
-        else:
-            qs = qs.filter(order__status__in=(Order.STATUS_PAID, Order.STATUS_PENDING))
+        if cl.include_pending:
             headers.append(_('Paid'))
 
         if form_data['secrets']:
@@ -524,60 +524,185 @@ class CSVCheckinList(CheckInListMixin, ListExporter):
         ]
         yield headers
 
+        qs = base_qs.prefetch_related(
+            'answers', 'answers__question', 'addon_to__answers', 'addon_to__answers__question'
+        )
+
+        all_ids = list(base_qs.values_list('pk', flat=True))
+        yield self.ProgressSetTotal(total=len(all_ids))
+
+        for ids in chunked_iterable(all_ids, 1000):
+            ops = sorted(qs.filter(id__in=ids).order_by(), key=lambda k: ids.index(k.pk))
+            for op in ops:
+                try:
+                    ia = op.order.invoice_address
+                except InvoiceAddress.DoesNotExist:
+                    ia = InvoiceAddress()
+
+                last_checked_in = None
+                if isinstance(op.last_checked_in, str):  # SQLite
+                    last_checked_in = dateutil.parser.parse(op.last_checked_in)
+                elif op.last_checked_in:
+                    last_checked_in = op.last_checked_in
+                if last_checked_in and not is_aware(last_checked_in):
+                    last_checked_in = make_aware(last_checked_in, timezone.utc)
+
+                last_checked_out = None
+                if isinstance(op.last_checked_out, str):  # SQLite
+                    last_checked_out = dateutil.parser.parse(op.last_checked_out)
+                elif op.last_checked_out:
+                    last_checked_out = op.last_checked_out
+                if last_checked_out and not is_aware(last_checked_out):
+                    last_checked_out = make_aware(last_checked_out, timezone.utc)
+
+                row = [
+                    op.order.code,
+                    op.attendee_name or (op.addon_to.attendee_name if op.addon_to else '') or ia.name,
+                ]
+                if len(name_scheme['fields']) > 1:
+                    for k, label, w in name_scheme['fields']:
+                        v = (
+                            op.attendee_name_parts or
+                            (op.addon_to.attendee_name_parts if op.addon_to else {}) or
+                            ia.name_parts
+                        ).get(k, '')
+                        if k == "salutation":
+                            v = pgettext("person_name_salutation", v)
+
+                        row.append(v)
+                row += [
+                    str(op.item) + (" – " + str(op.variation.value) if op.variation else ""),
+                    op.price,
+                    date_format(last_checked_in.astimezone(self.event.timezone), 'SHORT_DATETIME_FORMAT')
+                    if last_checked_in else '',
+                    date_format(last_checked_out.astimezone(self.event.timezone), 'SHORT_DATETIME_FORMAT')
+                    if last_checked_out else '',
+                    _('Yes') if op.auto_checked_in else _('No'),
+                ]
+                if cl.include_pending:
+                    row.append(_('Yes') if op.order.status == Order.STATUS_PAID else _('No'))
+                if form_data['secrets']:
+                    row.append(op.secret)
+                row.append(op.attendee_email or (op.addon_to.attendee_email if op.addon_to else '') or op.order.email or '')
+                row.append(str(op.order.phone) if op.order.phone else '')
+                if self.event.has_subevents:
+                    row.append(str(op.subevent.name))
+                    row.append(date_format(op.subevent.date_from.astimezone(self.event.timezone), 'SHORT_DATETIME_FORMAT'))
+                    if op.subevent.date_to:
+                        row.append(
+                            date_format(op.subevent.date_to.astimezone(self.event.timezone), 'SHORT_DATETIME_FORMAT')
+                        )
+                    else:
+                        row.append('')
+                acache = {}
+                if op.addon_to:
+                    for a in op.addon_to.answers.all():
+                        # We do not want to localize Date, Time and Datetime question answers, as those can lead
+                        # to difficulties parsing the data (for example 2019-02-01 may become Février, 2019 01 in French).
+                        if a.question.type in Question.UNLOCALIZED_TYPES:
+                            acache[a.question_id] = a.answer
+                        else:
+                            acache[a.question_id] = str(a)
+                for a in op.answers.all():
+                    # We do not want to localize Date, Time and Datetime question answers, as those can lead
+                    # to difficulties parsing the data (for example 2019-02-01 may become Février, 2019 01 in French).
+                    if a.question.type in Question.UNLOCALIZED_TYPES:
+                        acache[a.question_id] = a.answer
+                    else:
+                        acache[a.question_id] = str(a)
+                for q in questions:
+                    row.append(acache.get(q.pk, ''))
+
+                row.append(op.company or ia.company)
+                row.append(op.voucher.code if op.voucher else "")
+                row.append(op.order.datetime.astimezone(self.event.timezone).strftime('%Y-%m-%d'))
+                row.append(op.order.datetime.astimezone(self.event.timezone).strftime('%H:%M:%S'))
+                row.append(_('Yes') if op.require_checkin_attention else _('No'))
+                row.append(op.order.comment or "")
+
+                if op.seat:
+                    row += [
+                        op.seat.seat_guid,
+                        str(op.seat),
+                        op.seat.zone_name,
+                        op.seat.row_name,
+                        op.seat.seat_number,
+                    ]
+                else:
+                    row += ['', '', '', '', '']
+
+                row += [
+                    _('Yes') if op.blocked else '',
+                    date_format(op.valid_from, 'SHORT_DATETIME_FORMAT') if op.valid_from else '',
+                    date_format(op.valid_until, 'SHORT_DATETIME_FORMAT') if op.valid_until else '',
+                ]
+                if (op.street or op.zipcode or op.city):
+                    address = op
+                else:
+                    address = ia
+                row += [
+                    address.street or '',
+                    address.zipcode or '',
+                    address.city or '',
+                    address.country if address.country else '',
+                    address.state or '',
+                ]
+
+                yield row
+
+    def get_filename(self):
+        return '{}_checkin_{}'.format(self.event.slug, safe_for_filename(self.cl.name))
+
+
+class CSVCheckinCodeList(CheckInListMixin, ListExporter):
+    name = "overview"
+    identifier = 'checkinlistcodes'
+    verbose_name = gettext_lazy('Valid check-in codes')
+    category = pgettext_lazy('export_category', 'Check-in')
+    description = gettext_lazy("Download a spreadsheet with all valid check-in barcodes e.g. for import into a "
+                               "different system. Does not included blocked codes or personal data.")
+
+    @property
+    def additional_form_fields(self):
+        f = self._fields
+        f.pop('secrets')
+        f.pop('attention_only')
+        f.pop('status')
+        f.pop('sort')
+        f.pop('questions')
+        return f
+
+    def iterate_list(self, form_data):
+        self.cl = cl = self.event.checkin_lists.get(pk=form_data['list'])
+
+        qs = self._get_queryset(cl, form_data)
+        qs = qs.filter(blocked__isnull=True)
+
+        headers = [
+            _('Secret'),
+            _('Product'),
+            _('Variation'),
+            _('Paid'),
+        ]
+
+        if self.event.has_subevents:
+            headers.append(pgettext('subevent', 'Date'))
+            headers.append(_('Start date'))
+            headers.append(_('End date'))
+
+        headers.append(_('Valid from'))
+        headers.append(_('Valid until'))
+        yield headers
+
         yield self.ProgressSetTotal(total=qs.count())
 
         for op in qs:
-            try:
-                ia = op.order.invoice_address
-            except InvoiceAddress.DoesNotExist:
-                ia = InvoiceAddress()
-
-            last_checked_in = None
-            if isinstance(op.last_checked_in, str):  # SQLite
-                last_checked_in = dateutil.parser.parse(op.last_checked_in)
-            elif op.last_checked_in:
-                last_checked_in = op.last_checked_in
-            if last_checked_in and not is_aware(last_checked_in):
-                last_checked_in = make_aware(last_checked_in, timezone.utc)
-
-            last_checked_out = None
-            if isinstance(op.last_checked_out, str):  # SQLite
-                last_checked_out = dateutil.parser.parse(op.last_checked_out)
-            elif op.last_checked_out:
-                last_checked_out = op.last_checked_out
-            if last_checked_out and not is_aware(last_checked_out):
-                last_checked_out = make_aware(last_checked_out, timezone.utc)
-
             row = [
-                op.order.code,
-                op.attendee_name or (op.addon_to.attendee_name if op.addon_to else '') or ia.name,
+                op.secret,
+                str(op.item),
+                (str(op.variation.value) if op.variation else ""),
+                _('Yes') if op.order.status == Order.STATUS_PAID else _('No'),
             ]
-            if len(name_scheme['fields']) > 1:
-                for k, label, w in name_scheme['fields']:
-                    v = (
-                        op.attendee_name_parts or
-                        (op.addon_to.attendee_name_parts if op.addon_to else {}) or
-                        ia.name_parts
-                    ).get(k, '')
-                    if k == "salutation":
-                        v = pgettext("person_name_salutation", v)
-
-                    row.append(v)
-            row += [
-                str(op.item) + (" – " + str(op.variation.value) if op.variation else ""),
-                op.price,
-                date_format(last_checked_in.astimezone(self.event.timezone), 'SHORT_DATETIME_FORMAT')
-                if last_checked_in else '',
-                date_format(last_checked_out.astimezone(self.event.timezone), 'SHORT_DATETIME_FORMAT')
-                if last_checked_out else '',
-                _('Yes') if op.auto_checked_in else _('No'),
-            ]
-            if cl.include_pending:
-                row.append(_('Yes') if op.order.status == Order.STATUS_PAID else _('No'))
-            if form_data['secrets']:
-                row.append(op.secret)
-            row.append(op.attendee_email or (op.addon_to.attendee_email if op.addon_to else '') or op.order.email or '')
-            row.append(str(op.order.phone) if op.order.phone else '')
             if self.event.has_subevents:
                 row.append(str(op.subevent.name))
                 row.append(date_format(op.subevent.date_from.astimezone(self.event.timezone), 'SHORT_DATETIME_FORMAT'))
@@ -587,52 +712,10 @@ class CSVCheckinList(CheckInListMixin, ListExporter):
                     )
                 else:
                     row.append('')
-            acache = {}
-            if op.addon_to:
-                for a in op.addon_to.answers.all():
-                    # We do not want to localize Date, Time and Datetime question answers, as those can lead
-                    # to difficulties parsing the data (for example 2019-02-01 may become Février, 2019 01 in French).
-                    if a.question.type in Question.UNLOCALIZED_TYPES:
-                        acache[a.question_id] = a.answer
-                    else:
-                        acache[a.question_id] = str(a)
-            for a in op.answers.all():
-                # We do not want to localize Date, Time and Datetime question answers, as those can lead
-                # to difficulties parsing the data (for example 2019-02-01 may become Février, 2019 01 in French).
-                if a.question.type in Question.UNLOCALIZED_TYPES:
-                    acache[a.question_id] = a.answer
-                else:
-                    acache[a.question_id] = str(a)
-            for q in questions:
-                row.append(acache.get(q.pk, ''))
-
-            row.append(op.company or ia.company)
-            row.append(op.voucher.code if op.voucher else "")
-            row.append(op.order.datetime.astimezone(self.event.timezone).strftime('%Y-%m-%d'))
-            row.append(op.order.datetime.astimezone(self.event.timezone).strftime('%H:%M:%S'))
-            row.append(_('Yes') if op.require_checkin_attention else _('No'))
-            row.append(op.order.comment or "")
-
-            if op.seat:
-                row += [
-                    op.seat.seat_guid,
-                    str(op.seat),
-                    op.seat.zone_name,
-                    op.seat.row_name,
-                    op.seat.seat_number,
-                ]
-            else:
-                row += ['', '', '', '', '']
 
             row += [
-                _('Yes') if op.blocked else '',
                 date_format(op.valid_from, 'SHORT_DATETIME_FORMAT') if op.valid_from else '',
                 date_format(op.valid_until, 'SHORT_DATETIME_FORMAT') if op.valid_until else '',
-                op.street or '',
-                op.zipcode or '',
-                op.city or '',
-                op.country if op.country else '',
-                op.state or '',
             ]
 
             yield row

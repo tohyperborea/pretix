@@ -64,7 +64,7 @@ from pretix.api.serializers.fields import (
     ListMultipleChoiceField, UploadedFileField,
 )
 from pretix.api.serializers.i18n import I18nField, I18nURLField
-from pretix.base.forms import I18nURLFormField
+from pretix.base.forms import I18nMarkdownTextarea, I18nURLFormField
 from pretix.base.models.tax import VAT_ID_COUNTRIES, TaxRule
 from pretix.base.reldate import (
     RelativeDateField, RelativeDateTimeField, RelativeDateWrapper,
@@ -89,7 +89,7 @@ def primary_font_kwargs():
 
     choices = [('Open Sans', 'Open Sans')]
     choices += sorted([
-        (a, {"title": a, "data": v}) for a, v in get_fonts().items() if not v.get('pdf_only', False)
+        (a, {"title": a, "data": v}) for a, v in get_fonts(pdf_support_required=False).items()
     ], key=lambda a: a[0])
     return {
         'choices': choices,
@@ -306,9 +306,11 @@ DEFAULTS = {
         'serializer_class': serializers.IntegerField,
         'serializer_kwargs': dict(
             min_value=1,
+            max_value=settings.PRETIX_MAX_ORDER_SIZE,
         ),
         'form_kwargs': dict(
             min_value=1,
+            max_value=settings.PRETIX_MAX_ORDER_SIZE,
             required=True,
             label=_("Maximum number of items per order"),
             help_text=_("Add-on products will not be counted.")
@@ -600,7 +602,7 @@ DEFAULTS = {
         'serializer_class': I18nField,
         'form_kwargs': dict(
             label=_("Invoice address explanation"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '2'}},
             help_text=_("This text will be shown above the invoice address form during checkout.")
         )
@@ -799,7 +801,7 @@ DEFAULTS = {
         'serializer_class': I18nField,
         'form_kwargs': dict(
             label=_("End of presale text"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '2'}},
             help_text=_("This text will be shown above the ticket shop once the designated sales timeframe for this event "
                         "is over. You can use it to describe other options to get a ticket, such as a box office.")
@@ -811,7 +813,7 @@ DEFAULTS = {
         'form_class': I18nFormField,
         'serializer_class': I18nField,
         'form_kwargs': dict(
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {
                 'rows': 3,
             }},
@@ -1395,6 +1397,19 @@ DEFAULTS = {
             widget=forms.NumberInput(),
         )
     },
+    'waiting_list_auto_disable': {
+        'default': None,
+        'type': RelativeDateWrapper,
+        'form_class': RelativeDateTimeField,
+        'serializer_class': SerializerRelativeDateTimeField,
+        'form_kwargs': dict(
+            label=_("Disable waiting list"),
+            help_text=_("The waiting list will be fully disabled after this date. This means that nobody can add "
+                        "themselves to the waiting list any more, but also that tickets will be available for sale "
+                        "again if quota permits, even if there are still people on the waiting list. Vouchers that "
+                        "have already been sent remain active."),
+        )
+    },
     'waiting_list_names_asked': {
         'default': 'False',
         'type': bool,
@@ -1444,7 +1459,7 @@ DEFAULTS = {
         'serializer_class': I18nField,
         'form_kwargs': dict(
             label=_("Phone number explanation"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '2'}},
             help_text=_("If you ask for a phone number, explain why you do so and what you will use the phone number for.")
         )
@@ -1606,6 +1621,16 @@ DEFAULTS = {
             help_text=_('If your event series has more than 50 dates in the future, only the month or week calendar can be used.')
         ),
     },
+    'event_list_filters': {
+        'default': 'True',
+        'type': bool,
+        'form_class': forms.BooleanField,
+        'serializer_class': serializers.BooleanField,
+        'form_kwargs': dict(
+            label=_("Show filter options for calendar or list view"),
+            help_text=_("You can set up possible filters as meta properties in your organizer settings.")
+        )
+    },
     'event_list_available_only': {
         'default': 'False',
         'type': bool,
@@ -1677,6 +1702,8 @@ DEFAULTS = {
                 ('gte', _('Only allow changes if the resulting price is higher or equal than the previous price.')),
                 ('gt', _('Only allow changes if the resulting price is higher than the previous price.')),
                 ('eq', _('Only allow changes if the resulting price is equal to the previous price.')),
+                ('gte_paid', _('Allow changes regardless of price, as long as no refund is required (i.e. the resulting '
+                               'price is not lower than what has already been paid).')),
                 ('any', _('Allow changes regardless of price, even if this results in a refund.')),
             )
         ),
@@ -1686,6 +1713,8 @@ DEFAULTS = {
                 ('gte', _('Only allow changes if the resulting price is higher or equal than the previous price.')),
                 ('gt', _('Only allow changes if the resulting price is higher than the previous price.')),
                 ('eq', _('Only allow changes if the resulting price is equal to the previous price.')),
+                ('gte_paid', _('Allow changes regardless of price, as long as no refund is required (i.e. the resulting '
+                               'price is not lower than what has already been paid).')),
                 ('any', _('Allow changes regardless of price, even if this results in a refund.')),
             ),
             widget=forms.RadioSelect,
@@ -1847,7 +1876,7 @@ DEFAULTS = {
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_("Voluntary lower refund explanation"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '2'}},
             help_text=_("This text will be shown in between the explanation of how the refunds work and the slider "
                         "which your customers can use to choose the amount they would like to receive. You can use it "
@@ -1920,6 +1949,32 @@ DEFAULTS = {
         'serializer_class': SerializerRelativeDateTimeField,
         'form_kwargs': dict(
             label=_("Do not allow cancellations after"),
+        )
+    },
+    'cancel_terms_paid': {
+        'default': None,
+        'type': LazyI18nString,
+        'serializer_class': I18nField,
+        'form_class': I18nFormField,
+        'form_kwargs': dict(
+            label=_("Terms of cancellation"),
+            widget=I18nMarkdownTextarea,
+            widget_kwargs={'attrs': {'rows': '2'}},
+            help_text=_("This text will be shown when cancellation is allowed for a paid order. Leave empty if you "
+                        "want pretix to automatically generate the terms of cancellation based on your settings.")
+        )
+    },
+    'cancel_terms_unpaid': {
+        'default': None,
+        'type': LazyI18nString,
+        'serializer_class': I18nField,
+        'form_class': I18nFormField,
+        'form_kwargs': dict(
+            label=_("Terms of cancellation"),
+            widget=I18nMarkdownTextarea,
+            widget_kwargs={'attrs': {'rows': '2'}},
+            help_text=_("This text will be shown when cancellation is allowed for an unpaid or free order. Leave empty "
+                        "if you want pretix to automatically generate the terms of cancellation based on your settings.")
         )
     },
     'contact_mail': {
@@ -2005,7 +2060,7 @@ DEFAULTS = {
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_("Event description"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             help_text=_(
                 "You can use this to share information with your attendees, such as travel information or the link to a digital event. "
                 "If you keep it empty, we will put a link to the event shop, the admission time, and your organizer name in there. "
@@ -2870,6 +2925,25 @@ Your {organizer} team"""))  # noqa: W291
             label=_('Use header image also for events without an individually uploaded logo'),
         )
     },
+    'favicon': {
+        'default': None,
+        'type': File,
+        'form_class': ExtFileField,
+        'form_kwargs': dict(
+            label=_('Favicon'),
+            ext_whitelist=settings.FILE_UPLOAD_EXTENSIONS_FAVICON,
+            max_size=settings.FILE_UPLOAD_MAX_SIZE_FAVICON,
+            help_text=_('If you provide a favicon, we will show it instead of the default pretix icon. '
+                        'We recommend a size of at least 200x200px to accommodate most devices.')
+        ),
+        'serializer_class': UploadedFileField,
+        'serializer_kwargs': dict(
+            allowed_types=[
+                'image/png', 'image/jpeg', 'image/gif', 'image/x-icon', 'image/vnd.microsoft.icon',
+            ],
+            max_size=settings.FILE_UPLOAD_MAX_SIZE_FAVICON,
+        )
+    },
     'og_image': {
         'default': None,
         'type': File,
@@ -2917,7 +2991,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_("Frontpage text"),
-            widget=I18nTextarea
+            widget=I18nMarkdownTextarea,
         )
     },
     'event_info_text': {
@@ -2939,7 +3013,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_("Banner text (top)"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '2'}},
             help_text=_("This text will be shown above every page of your shop. Please only use this for "
                         "very important messages.")
@@ -2952,7 +3026,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_("Banner text (bottom)"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '2'}},
             help_text=_("This text will be shown below every page of your shop. Please only use this for "
                         "very important messages.")
@@ -2965,7 +3039,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_("Voucher explanation"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '2'}},
             help_text=_("This text will be shown next to the input for a voucher code. You can use it e.g. to explain "
                         "how to obtain a voucher code.")
@@ -2978,7 +3052,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_("Attendee data explanation"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '2'}},
             help_text=_("This text will be shown above the questions asked for every personalized product. You can use it e.g. to explain "
                         "why you need information from them.")
@@ -2994,7 +3068,7 @@ Your {organizer} team"""))  # noqa: W291
             help_text=_("This message will be shown after an order has been created successfully. It will be shown in additional "
                         "to the default text."),
             widget_kwargs={'attrs': {'rows': '2'}},
-            widget=I18nTextarea
+            widget=I18nMarkdownTextarea,
         )
     },
     'checkout_phone_helptext': {
@@ -3005,7 +3079,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_kwargs': dict(
             label=_("Help text of the phone number field"),
             widget_kwargs={'attrs': {'rows': '2'}},
-            widget=I18nTextarea
+            widget=I18nMarkdownTextarea,
         )
     },
     'checkout_email_helptext': {
@@ -3019,7 +3093,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_kwargs': dict(
             label=_("Help text of the email field"),
             widget_kwargs={'attrs': {'rows': '2'}},
-            widget=I18nTextarea
+            widget=I18nMarkdownTextarea,
         )
     },
     'order_import_settings': {
@@ -3149,7 +3223,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_('Homepage text'),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             help_text=_('This will be displayed on the organizer homepage.')
         )
     },
@@ -3168,6 +3242,12 @@ Your {organizer} team"""))  # noqa: W291
             label=_('Length of gift card codes'),
             help_text=_('The system generates by default {}-character long gift card codes. However, if a different length '
                         'is required, it can be set here.'.format(settings.ENTROPY['giftcard_secret'])),
+            min_value=6,
+            max_value=64,
+        ),
+        'serializer_kwargs': dict(
+            min_value=6,
+            max_value=64,
         )
     },
     'giftcard_expiry_years': {
@@ -3200,7 +3280,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_("Dialog text"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '3', 'data-display-dependency': '#id_settings-cookie_consent'}},
         )
     },
@@ -3215,7 +3295,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_("Secondary dialog text"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '3', 'data-display-dependency': '#id_settings-cookie_consent'}},
         )
     },
@@ -3284,6 +3364,11 @@ Your {organizer} team"""))  # noqa: W291
         'form_kwargs': dict(
             label=_("Show button to copy user input from other products"),
         ),
+    },
+    'apple_domain_association': {
+        # To maintain backwards-compatibility, we provide Stripe's ApplePay MerchantID Domain Validation Certificate by default
+        'default': "7B227073704964223A2239373943394538343346343131343044463144313834343232393232313734313034353044314339464446394437384337313531303944334643463542433731222C2276657273696F6E223A312C22637265617465644F6E223A313536363233343735303036312C227369676E6174757265223A22333038303036303932613836343838366637306430313037303261303830333038303032303130313331306633303064303630393630383634383031363530333034303230313035303033303830303630393261383634383836663730643031303730313030303061303830333038323033653333303832303338386130303330323031303230323038346333303431343935313964353433363330306130363038326138363438636533643034303330323330376133313265333032633036303335353034303330633235343137303730366336353230343137303730366336393633363137343639366636653230343936653734363536373732363137343639366636653230343334313230326432303437333333313236333032343036303335353034306230633164343137303730366336353230343336353732373436393636363936333631373436393666366532303431373537343638366637323639373437393331313333303131303630333535303430613063306134313730373036633635323034393665363332653331306233303039303630333535303430363133303235353533333031653137306433313339333033353331333833303331333333323335333735613137306433323334333033353331333633303331333333323335333735613330356633313235333032333036303335353034303330633163363536333633326437333664373032643632373236663662363537323264373336393637366535663535343333343264353035323466343433313134333031323036303335353034306230633062363934663533323035333739373337343635366437333331313333303131303630333535303430613063306134313730373036633635323034393665363332653331306233303039303630333535303430363133303235353533333035393330313330363037326138363438636533643032303130363038326138363438636533643033303130373033343230303034633231353737656465626436633762323231386636386464373039306131323138646337623062643666326332383364383436303935643934616634613534313162383334323065643831316633343037653833333331663163353463336637656233323230643662616435643465666634393238393839336537633066313361333832303231313330383230323064333030633036303335353164313330313031666630343032333030303330316630363033353531643233303431383330313638303134323366323439633434663933653465663237653663346636323836633366613262626664326534623330343530363038326230363031303530353037303130313034333933303337333033353036303832623036303130353035303733303031383632393638373437343730336132663266366636333733373032653631373037303663363532653633366636643266366636333733373033303334326436313730373036633635363136393633363133333330333233303832303131643036303335353164323030343832303131343330383230313130333038323031306330363039326138363438383666373633363430353031333038316665333038316333303630383262303630313035303530373032303233303831623630633831623335323635366336393631366536333635323036663665323037343638363937333230363336353732373436393636363936333631373436353230363237393230363136653739323037303631373237343739323036313733373337353664363537333230363136333633363537303734363136653633363532303666363632303734363836353230373436383635366532303631373037303663363936333631363236633635323037333734363136653634363137323634323037343635373236643733323036313665363432303633366636653634363937343639366636653733323036663636323037353733363532633230363336353732373436393636363936333631373436353230373036663663363936333739323036313665363432303633363537323734363936363639363336313734363936663665323037303732363136333734363936333635323037333734363137343635366436353665373437333265333033363036303832623036303130353035303730323031313632613638373437343730336132663266373737373737326536313730373036633635326536333666366432663633363537323734363936363639363336313734363536313735373436383666373236393734373932663330333430363033353531643166303432643330326233303239613032376130323538363233363837343734373033613266326636333732366332653631373037303663363532653633366636643266363137303730366336353631363936333631333332653633373236633330316430363033353531643065303431363034313439343537646236666435373438313836383938393736326637653537383530376537396235383234333030653036303335353164306630313031666630343034303330323037383033303066303630393261383634383836663736333634303631643034303230353030333030613036303832613836343863653364303430333032303334393030333034363032323130306265303935373166653731653165373335623535653561666163623463373266656234343566333031383532323263373235313030326236316562643666353530323231303064313862333530613564643664643665623137343630333562313165623263653837636661336536616636636264383338303839306463383263646461613633333038323032656533303832303237356130303330323031303230323038343936643266626633613938646139373330306130363038326138363438636533643034303330323330363733313162333031393036303335353034303330633132343137303730366336353230353236663666373432303433343132303264323034373333333132363330323430363033353530343062306331643431373037303663363532303433363537323734363936363639363336313734363936663665323034313735373436383666373236393734373933313133333031313036303335353034306130633061343137303730366336353230343936653633326533313062333030393036303335353034303631333032353535333330316531373064333133343330333533303336333233333334333633333330356131373064333233393330333533303336333233333334333633333330356133303761333132653330326330363033353530343033306332353431373037303663363532303431373037303663363936333631373436393666366532303439366537343635363737323631373436393666366532303433343132303264323034373333333132363330323430363033353530343062306331643431373037303663363532303433363537323734363936363639363336313734363936663665323034313735373436383666373236393734373933313133333031313036303335353034306130633061343137303730366336353230343936653633326533313062333030393036303335353034303631333032353535333330353933303133303630373261383634386365336430323031303630383261383634386365336430333031303730333432303030346630313731313834313964373634383564353161356532353831303737366538383061326566646537626165346465303864666334623933653133333536643536363562333561653232643039373736306432323465376262613038666437363137636538386362373662623636373062656338653832393834666635343435613338316637333038316634333034363036303832623036303130353035303730313031303433613330333833303336303630383262303630313035303530373330303138363261363837343734373033613266326636663633373337303265363137303730366336353265363336663664326636663633373337303330333432643631373037303663363537323666366637343633363136373333333031643036303335353164306530343136303431343233663234396334346639336534656632376536633466363238366333666132626266643265346233303066303630333535316431333031303166663034303533303033303130316666333031663036303335353164323330343138333031363830313462626230646561313538333338383961613438613939646562656264656261666461636232346162333033373036303335353164316630343330333032653330326361303261613032383836323636383734373437303361326632663633373236633265363137303730366336353265363336663664326636313730373036633635373236663666373436333631363733333265363337323663333030653036303335353164306630313031666630343034303330323031303633303130303630613261383634383836663736333634303630323065303430323035303033303061303630383261383634386365336430343033303230333637303033303634303233303361636637323833353131363939623138366662333563333536636136326266663431376564643930663735346461323865626566313963383135653432623738396638393866373962353939663938643534313064386639646539633266653032333033323264643534343231623061333035373736633564663333383362393036376664313737633263323136643936346663363732363938323132366635346638376137643162393963623962303938393231363130363939306630393932316430303030333138323031386233303832303138373032303130313330383138363330376133313265333032633036303335353034303330633235343137303730366336353230343137303730366336393633363137343639366636653230343936653734363536373732363137343639366636653230343334313230326432303437333333313236333032343036303335353034306230633164343137303730366336353230343336353732373436393636363936333631373436393666366532303431373537343638366637323639373437393331313333303131303630333535303430613063306134313730373036633635323034393665363332653331306233303039303630333535303430363133303235353533303230383463333034313439353139643534333633303064303630393630383634383031363530333034303230313035303061303831393533303138303630393261383634383836663730643031303930333331306230363039326138363438383666373064303130373031333031633036303932613836343838366637306430313039303533313066313730643331333933303338333133393331333733313332333333303561333032613036303932613836343838366637306430313039333433313164333031623330306430363039363038363438303136353033303430323031303530306131306130363038326138363438636533643034303330323330326630363039326138363438383666373064303130393034333132323034323062303731303365313430613462386231376262613230316130336163643036396234653431366232613263383066383661383338313435633239373566633131333030613036303832613836343863653364303430333032303434363330343430323230343639306264636637626461663833636466343934396534633035313039656463663334373665303564373261313264376335666538633033303033343464663032323032363764353863393365626233353031333836363062353730373938613064643731313734316262353864626436613138363633353038353431656565393035303030303030303030303030227D",  # NoQA
+        'type': str,
     }
 }
 SETTINGS_AFFECTING_CSS = {
@@ -3334,7 +3419,7 @@ def concatenation_for_salutation(d):
         salutation = pgettext("person_name_salutation", salutation)
         given_name = None
 
-    return " ".join(filter(None, (salutation, title, given_name, family_name)))
+    return " ".join(str(p) for p in filter(None, (salutation, title, given_name, family_name)))
 
 
 def get_name_parts_localized(name_parts, key):
@@ -3591,7 +3676,7 @@ COUNTRIES_WITH_STATE_IN_ADDRESS = {
     'BR': (['State'], 'short'),
     'CA': (['Province', 'Territory'], 'short'),
     # 'CN': (['Province', 'Autonomous region', 'Munincipality'], 'long'),
-    'MY': (['State'], 'long'),
+    'MY': (['State', 'Federal territory'], 'long'),
     'MX': (['State', 'Federal district'], 'short'),
     'US': (['State', 'Outlying area', 'District'], 'short'),
 }

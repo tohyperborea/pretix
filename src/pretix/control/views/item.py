@@ -573,6 +573,11 @@ class QuestionDelete(EventPermissionRequiredMixin, CompatDeleteView):
     def get_context_data(self, *args, **kwargs) -> dict:
         context = super().get_context_data(*args, **kwargs)
         context['dependent'] = list(self.get_object().items.all())
+        context['edit_url'] = reverse('control:event.items.questions.edit', kwargs={
+            'organizer': self.request.event.organizer.slug,
+            'event': self.request.event.slug,
+            'question': self.get_object().pk,
+        })
         return context
 
     @transaction.atomic
@@ -717,13 +722,13 @@ class QuestionView(EventPermissionRequiredMixin, QuestionMixin, ChartContainingV
         total = sum(a['count'] for a in r)
         for a in r:
             a['percentage'] = (a['count'] / total * 100.) if total else 0
-        return r
+        return r, total
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data()
         ctx['items'] = self.object.items.all()
         stats = self.get_answer_statistics()
-        ctx['stats'] = stats
+        ctx['stats'], ctx['total'] = stats
         ctx['stats_json'] = json.dumps(stats)
         return ctx
 
@@ -1477,6 +1482,12 @@ class ItemUpdateGeneral(ItemDetailMixin, EventPermissionRequiredMixin, MetaDataE
     def form_invalid(self, form):
         messages.error(self.request, _('We could not save your changes. See below for details.'))
         return super().form_invalid(form)
+
+    def get_object(self, queryset=None) -> Item:
+        o = super().get_object(queryset)
+        if o.hide_without_voucher:
+            o.require_voucher = True
+        return o
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data()

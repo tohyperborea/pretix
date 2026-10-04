@@ -62,7 +62,6 @@ class LocaleSet(NoSearchIndexViewMixin, View):
                 max_age=max_age,
                 expires=(datetime.utcnow() + timedelta(seconds=max_age)).strftime(
                     '%a, %d-%b-%Y %H:%M:%S GMT'),
-                domain=settings.SESSION_COOKIE_DOMAIN
             )
 
         return resp

@@ -20,6 +20,8 @@
 # <https://www.gnu.org/licenses/>.
 #
 import logging
+from collections import defaultdict
+from datetime import timedelta
 from importlib import import_module
 from zoneinfo import ZoneInfo
 
@@ -29,20 +31,23 @@ from celery.result import AsyncResult
 from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.files.uploadedfile import UploadedFile
 from django.db import transaction
 from django.http import HttpResponse, JsonResponse, QueryDict
-from django.shortcuts import redirect, render
+from django.shortcuts import render
 from django.test import RequestFactory
 from django.utils import timezone, translation
-from django.utils.timezone import get_current_timezone
+from django.utils.datastructures import MultiValueDict
+from django.utils.timezone import get_current_timezone, now
 from django.utils.translation import get_language, gettext as _
 from django.views import View
 from django.views.generic import FormView
 from redis import ResponseError
 
-from pretix.base.models import User
+from pretix.base.models import CachedFile, User
 from pretix.base.services.tasks import ProfiledEventTask
 from pretix.celery_app import app
+from pretix.helpers.http import redirect_to_url
 
 logger = logging.getLogger('pretix.base.tasks')
 
@@ -148,7 +153,7 @@ class AsyncMixin:
                 'redirect': self.get_success_url(value),
                 'message': str(self.get_success_message(value))
             })
-        return redirect(self.get_success_url(value))
+        return redirect_to_url(self.get_success_url(value))
 
     def error(self, exception):
         if isinstance(exception, PermissionDenied):
@@ -161,7 +166,7 @@ class AsyncMixin:
                 'redirect': self.get_error_url(),
                 'message': str(self.get_error_message(exception))
             })
-        return redirect(self.get_error_url())
+        return redirect_to_url(self.get_error_url())
 
     def get_error_message(self, exception):
         if isinstance(exception, dict) and exception['exc_type'] in self.known_errortypes:
@@ -199,7 +204,7 @@ class AsyncAction(AsyncMixin):
                     return self.success(res.info)
                 else:
                     return self.error(res.info)
-            return redirect(self.get_check_url(res.id, False))
+            return redirect_to_url(self.get_check_url(res.id, False))
 
     def get(self, request, *args, **kwargs):
         if 'async_id' in request.GET and settings.HAS_CELERY:
@@ -228,15 +233,39 @@ class AsyncFormView(AsyncMixin, FormView):
             )
 
     def __init_subclass__(cls):
+        class StoredUploadedFile(UploadedFile):
+            pass
+
         def async_execute(self, *, request_path, query_string, form_kwargs, locale, tz, url_kwargs=None, url_args=None,
                           organizer=None, event=None, user=None, session_key=None):
             view_instance = cls()
             form_kwargs['data'] = QueryDict(form_kwargs['data'])
+
+            if form_kwargs['files']:
+                for k, l in form_kwargs['files'].items():
+                    uploadedfiles = []
+                    for cfid in l:
+                        cf = CachedFile.objects.get(pk=cfid)
+                        uploadedfiles.append(StoredUploadedFile(
+                            file=cf.file,
+                            name=cf.filename,
+                            content_type=cf.type,
+                            size=cf.file.size,
+                            charset=None,
+                            content_type_extra=None,
+                        ))
+
+                    form_kwargs['files'][k] = uploadedfiles
+                form_kwargs['files'] = MultiValueDict(form_kwargs['files'])
+
             req = RequestFactory().post(
                 request_path + '?' + query_string,
                 data=form_kwargs['data'].urlencode(),
                 content_type='application/x-www-form-urlencoded'
             )
+            if form_kwargs['files']:
+                req._load_post_and_files()
+                req._files = form_kwargs['files']
             view_instance.request = req
             view_instance.kwargs = url_kwargs
             view_instance.args = url_args
@@ -287,8 +316,19 @@ class AsyncFormView(AsyncMixin, FormView):
         return super().get(request, *args, **kwargs)
 
     def form_valid(self, form):
-        if form.files:
-            raise TypeError('File upload currently not supported in AsyncFormView')
+        files = defaultdict(list)
+        if self.request.FILES:
+            for k, v in self.request.FILES.items():
+                cf = CachedFile.objects.create(
+                    expires=now() + timedelta(hours=2),
+                    date=now(),
+                    web_download=False,
+                    filename=v.name,
+                    type=v.content_type,
+                )
+                cf.file.save('uploaded_file.dat', v)
+                files[k].append(str(cf.pk))
+
         form_kwargs = {
             k: v for k, v in self.get_form_kwargs().items()
         }
@@ -299,6 +339,7 @@ class AsyncFormView(AsyncMixin, FormView):
                 form_kwargs['instance'] = None
         form_kwargs.setdefault('data', QueryDict())
         form_kwargs['data'] = form_kwargs['data'].urlencode()
+        form_kwargs['files'] = files
         form_kwargs['initial'] = {}
         form_kwargs.pop('event', None)
         kwargs = {
@@ -335,7 +376,7 @@ class AsyncFormView(AsyncMixin, FormView):
                     return self.success(res.info)
                 else:
                     return self.error(res.info)
-            return redirect(self.get_check_url(res.id, False))
+            return redirect_to_url(self.get_check_url(res.id, False))
 
 
 class AsyncPostView(AsyncMixin, View):
@@ -438,4 +479,4 @@ class AsyncPostView(AsyncMixin, View):
                     return self.success(res.info)
                 else:
                     return self.error(res.info)
-            return redirect(self.get_check_url(res.id, False))
+            return redirect_to_url(self.get_check_url(res.id, False))

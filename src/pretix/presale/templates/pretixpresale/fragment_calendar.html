@@ -1,17 +1,14 @@
 {% load i18n %}
 {% load date_fast %}
+{% load calendarhead %}
 <div class="table-responsive">
     <table class="table table-calendar">
         <caption class="sr-only">{% trans "Calendar" %}</caption>
         <thead>
         <tr>
-            <th><span aria-hidden="true">{{ weeks.1.0.date|date_fast:"D" }}</span><span class="sr-only">{{ weeks.1.0.date|date_fast:"l" }}</span></th>
-            <th><span aria-hidden="true">{{ weeks.1.1.date|date_fast:"D" }}</span><span class="sr-only">{{ weeks.1.1.date|date_fast:"l" }}</span></th>
-            <th><span aria-hidden="true">{{ weeks.1.2.date|date_fast:"D" }}</span><span class="sr-only">{{ weeks.1.2.date|date_fast:"l" }}</span></th>
-            <th><span aria-hidden="true">{{ weeks.1.3.date|date_fast:"D" }}</span><span class="sr-only">{{ weeks.1.3.date|date_fast:"l" }}</span></th>
-            <th><span aria-hidden="true">{{ weeks.1.4.date|date_fast:"D" }}</span><span class="sr-only">{{ weeks.1.4.date|date_fast:"l" }}</span></th>
-            <th><span aria-hidden="true">{{ weeks.1.5.date|date_fast:"D" }}</span><span class="sr-only">{{ weeks.1.5.date|date_fast:"l" }}</span></th>
-            <th><span aria-hidden="true">{{ weeks.1.6.date|date_fast:"D" }}</span><span class="sr-only">{{ weeks.1.6.date|date_fast:"l" }}</span></th>
+            {% for d in weeks|iter_weekdays %}
+                <th><span aria-hidden="true">{{ d|date_fast:"D" }}</span><span class="sr-only">{{ d|date_fast:"l" }}</span></th>
+            {% endfor %}
         </tr>
         </thead>
         <tbody>
@@ -28,7 +25,7 @@
     {% if event.event.presale_is_running and show_avail %}
         {% if event.event.best_availability_state == 100 %}
             available {% if event.event.best_availability_is_low %} low {% endif %}
-        {% elif event.event.settings.waiting_list_enabled and event.event.best_availability_state >= 0 %}
+        {% elif event.event.waiting_list_active and event.event.best_availability_state >= 0 %}
             waitinglist
         {% elif event.event.best_availability_state == 20 %}
             reserved
@@ -77,7 +74,7 @@
                                                                 <span class="fa fa-ticket" aria-hidden="true"></span> {% trans "Book now" %}
                                                             {% endif %}
                                                         {% endif %}
-                                                    {% elif event.event.settings.waiting_list_enabled and event.event.best_availability_state >= 0 %}
+                                                    {% elif event.event.waiting_list_active and event.event.best_availability_state >= 0 %}
                                                         <span class="fa fa-ticket" aria-hidden="true"></span> {% trans "Waiting list" %}
                                                     {% elif event.event.best_availability_state == 20 %}
                                                         {% trans "Reserved" %}

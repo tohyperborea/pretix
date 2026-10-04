@@ -20,7 +20,7 @@
 # <https://www.gnu.org/licenses/>.
 #
 from collections import OrderedDict
-from urllib.parse import urlsplit
+from urllib.parse import urlparse, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.conf import settings
@@ -40,8 +40,28 @@ from pretix.base.settings import global_settings_object
 from pretix.multidomain.urlreverse import (
     get_event_domain, get_organizer_domain,
 )
+from pretix.presale.style import get_fonts
 
 _supported = None
+
+
+def get_supported_language(requested_language, allowed_languages, default_language):
+    language = requested_language
+    if language not in allowed_languages:
+        firstpart = language.split('-')[0]
+        if firstpart in allowed_languages:
+            language = firstpart
+        else:
+            language = default_language
+            for lang in allowed_languages:
+                if lang.startswith(firstpart + '-'):
+                    language = lang
+                    break
+    if language not in allowed_languages:
+        # This seems redundant, but can happen in the rare edge case that settings.locale is (wrongfully)
+        # not part of settings.locales
+        language = allowed_languages[0]
+    return language
 
 
 class LocaleMiddleware(MiddlewareMixin):
@@ -65,20 +85,11 @@ class LocaleMiddleware(MiddlewareMixin):
                 settings_holder = None
 
             if settings_holder:
-                if language not in settings_holder.settings.locales:
-                    firstpart = language.split('-')[0]
-                    if firstpart in settings_holder.settings.locales:
-                        language = firstpart
-                    else:
-                        language = settings_holder.settings.locale
-                        for lang in settings_holder.settings.locales:
-                            if lang.startswith(firstpart + '-'):
-                                language = lang
-                                break
-                if language not in settings_holder.settings.locales:
-                    # This seems redundant, but can happen in the rare edge case that settings.locale is (wrongfully)
-                    # not part of settings.locales
-                    language = settings_holder.settings.locales[0]
+                language = get_supported_language(
+                    language,
+                    settings_holder.settings.locales,
+                    settings_holder.settings.locale,
+                )
                 if '-' not in language and settings_holder.settings.region:
                     language += '-' + settings_holder.settings.region
         else:
@@ -230,6 +241,14 @@ class SecurityMiddleware(MiddlewareMixin):
     )
 
     def process_response(self, request, resp):
+        def nested_dict_values(d):
+            for v in d.values():
+                if isinstance(v, dict):
+                    yield from nested_dict_values(v)
+                else:
+                    if isinstance(v, str):
+                        yield v
+
         url = resolve(request.path_info)
 
         if settings.DEBUG and resp.status_code >= 400:
@@ -249,6 +268,14 @@ class SecurityMiddleware(MiddlewareMixin):
         if gs.settings.leaflet_tiles:
             img_src.append(gs.settings.leaflet_tiles[:gs.settings.leaflet_tiles.index("/", 10)].replace("{s}", "*"))
 
+        font_src = set()
+        if hasattr(request, 'event'):
+            for font in get_fonts(request.event, pdf_support_required=False).values():
+                for path in list(nested_dict_values(font)):
+                    font_location = urlparse(path)
+                    if font_location.scheme and font_location.netloc:
+                        font_src.add('{}://{}'.format(font_location.scheme, font_location.netloc))
+
         h = {
             'default-src': ["{static}"],
             'script-src': ['{static}'],
@@ -257,7 +284,7 @@ class SecurityMiddleware(MiddlewareMixin):
             'style-src': ["{static}", "{media}"],
             'connect-src': ["{dynamic}", "{media}"],
             'img-src': ["{static}", "{media}", "data:"] + img_src,
-            'font-src': ["{static}"],
+            'font-src': ["{static}"] + list(font_src),
             'media-src': ["{static}", "data:"],
             # form-action is not only used to match on form actions, but also on URLs
             # form-actions redirect to. In the context of e.g. payment providers or

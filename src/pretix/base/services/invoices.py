@@ -104,10 +104,10 @@ def build_invoice(invoice: Invoice) -> Invoice:
                 expire_date=date_format(invoice.order.expires, "SHORT_DATE_FORMAT")
             )
 
-        invoice.introductory_text = str(introductory).replace('\n', '<br />')
-        invoice.additional_text = str(additional).replace('\n', '<br />')
+        invoice.introductory_text = str(introductory).replace('\n', '<br />').replace('\r', '')
+        invoice.additional_text = str(additional).replace('\n', '<br />').replace('\r', '')
         invoice.footer_text = str(footer)
-        invoice.payment_provider_text = str(payment).replace('\n', '<br />')
+        invoice.payment_provider_text = str(payment).replace('\n', '<br />').replace('\r', '')
         invoice.payment_provider_stamp = str(payment_stamp) if payment_stamp else None
 
         try:
@@ -199,7 +199,7 @@ def build_invoice(invoice: Invoice) -> Invoice:
         positions = list(
             invoice.order.positions.select_related('addon_to', 'item', 'tax_rule', 'subevent', 'variation').annotate(
                 addon_c=Count('addons')
-            ).prefetch_related('answers', 'answers__question').order_by('positionid', 'id')
+            ).prefetch_related('answers', 'answers__options', 'answers__question').order_by('positionid', 'id')
         )
 
         reverse_charge = False
@@ -247,7 +247,7 @@ def build_invoice(invoice: Invoice) -> Invoice:
                 desc += "<br />{}{} {}".format(
                     answ.question.question,
                     "" if str(answ.question.question).endswith("?") else ":",
-                    str(answ)
+                    answ.to_string_i18n()
                 )
 
             if invoice.event.has_subevents:
@@ -395,6 +395,10 @@ def generate_invoice(order: Order, trigger_pdf=True):
     if order.status == Order.STATUS_CANCELED:
         generate_cancellation(invoice, trigger_pdf)
 
+    if order.invoice_dirty:
+        order.invoice_dirty = False
+        order.save(update_fields=['invoice_dirty'])
+
     return invoice
 
 
@@ -458,10 +462,10 @@ def build_preview_invoice_pdf(event):
         footer = event.settings.get('invoice_footer_text', as_type=LazyI18nString)
         payment = _("A payment provider specific text might appear here.")
 
-        invoice.introductory_text = str(introductory).replace('\n', '<br />')
-        invoice.additional_text = str(additional).replace('\n', '<br />')
+        invoice.introductory_text = str(introductory).replace('\n', '<br />').replace('\r', '')
+        invoice.additional_text = str(additional).replace('\n', '<br />').replace('\r', '')
         invoice.footer_text = str(footer)
-        invoice.payment_provider_text = str(payment).replace('\n', '<br />')
+        invoice.payment_provider_text = str(payment).replace('\n', '<br />').replace('\r', '')
         invoice.payment_provider_stamp = _('paid')
         invoice.invoice_to_name = _("John Doe")
         invoice.invoice_to_street = _("214th Example Street")
@@ -484,7 +488,7 @@ def build_preview_invoice_pdf(event):
                     InvoiceLine.objects.create(
                         invoice=invoice, description=_("Sample product {}").format(i + 1),
                         gross_value=tax.gross, tax_value=tax.tax,
-                        tax_rate=tax.rate
+                        tax_rate=tax.rate, tax_name=tax.name
                     )
         else:
             for i in range(5):

@@ -30,7 +30,8 @@ from django.core import mail as djmail
 from django.utils.timezone import now
 from django_countries.fields import Country
 from django_scopes import scopes_disabled
-from stripe.error import APIConnectionError
+from stripe import error
+from tests.plugins.stripe.test_checkout import apple_domain_create
 from tests.plugins.stripe.test_provider import MockedCharge
 
 from pretix.base.models import InvoiceAddress, Order, OrderPosition
@@ -187,6 +188,7 @@ TEST_ORDERPOSITION_RES = {
     "attendee_name": "Peter",
     "attendee_email": None,
     "voucher": None,
+    "voucher_budget_use": None,
     "discount": None,
     "tax_rate": "0.00",
     "tax_value": "0.00",
@@ -288,6 +290,7 @@ TEST_ORDER_RES = {
     "comment": "",
     "custom_followup_at": None,
     "checkin_attention": False,
+    "checkin_text": None,
     "invoice_address": {
         "last_modified": "2017-12-01T10:00:00Z",
         "is_business": False,
@@ -743,13 +746,14 @@ def test_payment_refund_fail(token_client, organizer, event, order, monkeypatch)
 
 @pytest.mark.django_db
 def test_payment_refund_success(token_client, organizer, event, order, monkeypatch):
-    def charge_retr(*args, **kwargs):
-        def refund_create(amount):
-            r = MockedCharge()
-            r.id = 'foo'
-            r.status = 'succeeded'
-            return r
 
+    def refund_create(*args, **kwargs):
+        r = MockedCharge()
+        r.id = 'foo'
+        r.status = 'succeeded'
+        return r
+
+    def charge_retr(*args, **kwargs):
         c = MockedCharge()
         c.refunds.create = refund_create
         return c
@@ -764,7 +768,9 @@ def test_payment_refund_success(token_client, organizer, event, order, monkeypat
                 'id': 'ch_123345345'
             })
         )
+    monkeypatch.setattr("stripe.ApplePayDomain.create", apple_domain_create)
     monkeypatch.setattr("stripe.Charge.retrieve", charge_retr)
+    monkeypatch.setattr("stripe.Refund.create", refund_create)
     resp = token_client.post('/api/v1/organizers/{}/events/{}/orders/{}/payments/{}/refund/'.format(
         organizer.slug, event.slug, order.code, p1.local_id
     ), format='json', data={
@@ -783,7 +789,7 @@ def test_payment_refund_success(token_client, organizer, event, order, monkeypat
 def test_payment_refund_unavailable(token_client, organizer, event, order, monkeypatch):
     def charge_retr(*args, **kwargs):
         def refund_create(amount):
-            raise APIConnectionError(message='Foo')
+            raise error.APIConnectionError(message='Foo')
 
         c = MockedCharge()
         c.refunds.create = refund_create
@@ -1676,6 +1682,7 @@ def test_refund_create_webhook_sent(token_client, organizer, event, order):
     assert r.provider == "manual"
     assert r.amount == Decimal("23.00")
     assert r.state == "done"
+    assert r.execution_date
     with scopes_disabled():
         assert order.all_logentries().get(action_type="pretix.event.order.refund.done")
 

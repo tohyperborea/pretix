@@ -17,7 +17,6 @@
                     <div class="row">
                         <div class="col-md-4 col-xs-12">
                             <strong class="panel-title">
-                                <span class="fa fa-fw chevron"></span>
                                 <span class="fa fa-warning text-danger hidden variation-error"></span>
                                 <span class="variation-name">
                                     Variation name
@@ -72,6 +71,7 @@
                     {% bootstrap_field form.active layout="control" %}
                     {% bootstrap_field form.value layout="control" %}
                     {% bootstrap_field form.default_price addon_after=request.event.currency layout="control" %}
+                    {% bootstrap_field form.free_price_suggestion addon_after=request.event.currency layout="control" %}
                     {% bootstrap_field form.original_price addon_after=request.event.currency layout="control" %}
                     {% bootstrap_field form.description layout="control" %}
                     {% if form.meta_fields %}
@@ -95,8 +95,8 @@
                             </div>
                         </div>
                     {% endif %}
-                    {% bootstrap_field form.available_from layout="control" %}
-                    {% bootstrap_field form.available_until layout="control" %}
+                    {% bootstrap_field form.available_from visibility_field=form.available_from_mode layout="control_with_visibility"  %}
+                    {% bootstrap_field form.available_until visibility_field=form.available_until_mode layout="control_with_visibility" %}
                     {% bootstrap_field form.sales_channels layout="control" %}
                     {% bootstrap_field form.hide_without_voucher layout="control" %}
                     {% bootstrap_field form.require_approval layout="control" %}
@@ -108,6 +108,7 @@
                         </div>
                     {% endif %}
                     {% bootstrap_field form.checkin_attention layout="control" %}
+                    {% bootstrap_field form.checkin_text layout="control" %}
                 </div>
             </details>
         {% endfor %}
@@ -124,7 +125,6 @@
                     <div class="row">
                         <div class="col-md-4 col-xs-12">
                             <strong class="panel-title">
-                                <span class="fa fa-fw chevron"></span>
                                 <span class="fa fa-warning text-danger hidden variation-error"></span>
                                 <span class="variation-name">
                                     {% trans "New variation" %}
@@ -170,6 +170,7 @@
                     {% bootstrap_field formset.empty_form.active layout="control" %}
                     {% bootstrap_field formset.empty_form.value layout="control" %}
                     {% bootstrap_field formset.empty_form.default_price addon_after=request.event.currency layout="control" %}
+                    {% bootstrap_field formset.empty_form.free_price_suggestion addon_after=request.event.currency layout="control" %}
                     {% bootstrap_field formset.empty_form.original_price addon_after=request.event.currency layout="control" %}
                     {% bootstrap_field formset.empty_form.description layout="control" %}
                     {% if formset.empty_form.meta_fields %}
@@ -193,7 +194,8 @@
                             </div>
                         </div>
                     {% endif %}
-                    {% bootstrap_field formset.empty_form.available_from layout="control" %}
+                    {% bootstrap_field formset.empty_form.available_from visibility_field=formset.empty_form.available_from_mode layout="control_with_visibility"  %}
+                    {% bootstrap_field formset.empty_form.available_until visibility_field=formset.empty_form.available_until_mode layout="control_with_visibility" %}
                     {% bootstrap_field formset.empty_form.available_until layout="control" %}
                     {% bootstrap_field formset.empty_form.sales_channels layout="control" %}
                     {% bootstrap_field formset.empty_form.hide_without_voucher layout="control" %}
@@ -206,6 +208,7 @@
                         </div>
                     {% endif %}
                     {% bootstrap_field formset.empty_form.checkin_attention layout="control" %}
+                    {% bootstrap_field formset.empty_form.checkin_text layout="control" %}
                 </div>
             </details>
         {% endescapescript %}

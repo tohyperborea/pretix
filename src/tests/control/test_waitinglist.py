@@ -78,7 +78,7 @@ def env():
     t = Team.objects.create(organizer=o, can_view_orders=True, can_change_orders=True)
     t.members.add(user)
     t.limit_events.add(event)
-    return event, user, o, item1, item2
+    return event, user, o, item1
 
 
 @pytest.mark.django_db
@@ -191,6 +191,7 @@ def test_delete_bulk(client, env):
             WaitingListEntry.objects.get(id=wle.id)
 
 
+# Sideburn: the name sorting must not bypass the "nothing selected" filter.
 @pytest.mark.django_db
 def test_delete_bulk_without_selection_deletes_nothing(client, env):
     client.login(email='dummy@dummy.dummy', password='dummy')
@@ -205,6 +206,7 @@ def test_delete_bulk_without_selection_deletes_nothing(client, env):
         assert WaitingListEntry.objects.count() == count
 
 
+# Sideburn: sort by name from the column header links.
 @pytest.mark.django_db
 def test_list_ordering_by_name(client, env):
     client.login(email='dummy@dummy.dummy', password='dummy')
@@ -221,6 +223,7 @@ def test_list_ordering_by_name(client, env):
     assert names == ['Carol', 'Bob', 'Alice']
 
 
+# Sideburn: bulk delete still works while the list is sorted by name.
 @pytest.mark.django_db
 def test_delete_bulk_confirmation_with_name_ordering(client, env):
     client.login(email='dummy@dummy.dummy', password='dummy')
@@ -236,6 +239,7 @@ def test_delete_bulk_confirmation_with_name_ordering(client, env):
     assert wle.email in response.content.decode()
 
 
+# Sideburn: entries that already have a voucher can be deleted too.
 @pytest.mark.django_db
 def test_delete_single_with_voucher(client, env):
     client.login(email='dummy@dummy.dummy', password='dummy')

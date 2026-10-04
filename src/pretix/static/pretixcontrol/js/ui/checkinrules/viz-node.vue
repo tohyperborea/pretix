@@ -75,6 +75,17 @@
                         {{ rightoperand.objectList.map((o) => o.lookup[2]).join(", ") }}
                     </strong>
                 </span>
+                <span v-else-if="vardata && vardata.type === 'enum_entry_status'">
+                    <span class="fa fa-check-circle-o"></span>
+                    {{ vardata.label }}
+                    <span v-if="varresult !== null">
+                      ({{varresult}})
+                    </span>
+                    <br>
+                    <strong>
+                        {{ op.label }} {{ rightoperand }}
+                    </strong>
+                </span>
             </div>
         </foreignObject>
 
@@ -165,6 +176,12 @@
           }
           if (this.node.rule[op][0]["entries_before"]) {
             return "entries_before";
+          }
+          if (this.node.rule[op][0]["entries_days_since"]) {
+            return "entries_days_since";
+          }
+          if (this.node.rule[op][0]["entries_days_before"]) {
+            return "entries_days_before";
           }
           return this.node.rule[op][0]["var"];
         } else {

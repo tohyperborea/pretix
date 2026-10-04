@@ -38,22 +38,21 @@ from importlib import import_module
 from urllib.parse import urljoin
 
 from django.conf import settings
-from django.core.exceptions import PermissionDenied
 from django.db.models import Q
-from django.http import Http404
+from django.http import Http404, HttpResponseForbidden
 from django.middleware.csrf import rotate_token
-from django.shortcuts import redirect
+from django.template import loader
 from django.template.response import TemplateResponse
 from django.urls import resolve
 from django.utils.crypto import constant_time_compare
 from django.utils.functional import SimpleLazyObject
 from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
-from django.views.defaults import permission_denied
 from django_scopes import scope
 
 from pretix.base.middleware import LocaleMiddleware
 from pretix.base.models import Customer, Event, Organizer
+from pretix.helpers.http import redirect_to_url
 from pretix.multidomain.urlreverse import (
     get_event_domain, get_organizer_domain,
 )
@@ -241,7 +240,7 @@ def _detect_event(request, require_live=True, require_plugin=None):
                 if url.kwargs['organizer'] != request.organizer.slug:
                     raise Http404(_('The selected event was not found.'))
                 path = "/" + request.get_full_path().split("/", 2)[-1]
-                return redirect(path)
+                return redirect_to_url(path)
 
             request.organizer = request.organizer
             if 'event' in url.kwargs:
@@ -256,7 +255,7 @@ def _detect_event(request, require_live=True, require_plugin=None):
                     if request.port and request.port not in (80, 443):
                         domain = '%s:%d' % (domain, request.port)
                     path = request.get_full_path().split("/", 2)[-1]
-                    r = redirect(urljoin('%s://%s' % (request.scheme, domain), path))
+                    r = redirect_to_url(urljoin('%s://%s' % (request.scheme, domain), path))
                     r['Access-Control-Allow-Origin'] = '*'
                     return r
         else:
@@ -277,7 +276,7 @@ def _detect_event(request, require_live=True, require_plugin=None):
                     if request.port and request.port not in (80, 443):
                         domain = '%s:%d' % (domain, request.port)
                     path = request.get_full_path().split("/", 3)[-1]
-                    r = redirect(urljoin('%s://%s' % (request.scheme, domain), path))
+                    r = redirect_to_url(urljoin('%s://%s' % (request.scheme, domain), path))
                     r['Access-Control-Allow-Origin'] = '*'
                     return r
             elif 'organizer' in url.kwargs:
@@ -293,7 +292,7 @@ def _detect_event(request, require_live=True, require_plugin=None):
                 if request.port and request.port not in (80, 443):
                     domain = '%s:%d' % (domain, request.port)
                 path = request.get_full_path().split("/", 2)[-1]
-                r = redirect(urljoin('%s://%s' % (request.scheme, domain), path))
+                r = redirect_to_url(urljoin('%s://%s' % (request.scheme, domain), path))
                 r['Access-Control-Allow-Origin'] = '*'
                 return r
 
@@ -325,8 +324,9 @@ def _detect_event(request, require_live=True, require_plugin=None):
                 if not can_access:
                     # Directly construct view instead of just calling `raise` since this case is so common that we
                     # don't want it to show in our log files.
-                    return permission_denied(
-                        request, PermissionDenied(_('The selected ticket shop is currently not available.'))
+                    template = loader.get_template("pretixpresale/event/offline.html")
+                    return HttpResponseForbidden(
+                        template.render(request=request)
                     )
 
             if require_plugin:
@@ -350,7 +350,7 @@ def _detect_event(request, require_live=True, require_plugin=None):
                 )
                 pathparts = request.get_full_path().split('/')
                 pathparts[1] = event.slug
-                r = redirect('/'.join(pathparts))
+                r = redirect_to_url('/'.join(pathparts))
                 r['Access-Control-Allow-Origin'] = '*'
                 return r
             else:
@@ -362,7 +362,7 @@ def _detect_event(request, require_live=True, require_plugin=None):
                     pathparts = request.get_full_path().split('/')
                     pathparts[1] = event.organizer.slug
                     pathparts[2] = event.slug
-                    r = redirect('/'.join(pathparts))
+                    r = redirect_to_url('/'.join(pathparts))
                     r['Access-Control-Allow-Origin'] = '*'
                     return r
         except Event.DoesNotExist:
@@ -378,7 +378,7 @@ def _detect_event(request, require_live=True, require_plugin=None):
                 raise Http404(_('The selected organizer was not found.'))
             pathparts = request.get_full_path().split('/')
             pathparts[1] = organizer.slug
-            r = redirect('/'.join(pathparts))
+            r = redirect_to_url('/'.join(pathparts))
             r['Access-Control-Allow-Origin'] = '*'
             return r
         raise Http404(_('The selected organizer was not found.'))

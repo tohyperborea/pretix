@@ -19,9 +19,12 @@
 # You should have received a copy of the GNU Affero General Public License along with this program.  If not, see
 # <https://www.gnu.org/licenses/>.
 #
+import types
 from datetime import datetime
+from http import cookies
 
 from PIL import Image
+from requests.adapters import HTTPAdapter
 
 
 def monkeypatch_vobject_performance():
@@ -67,6 +70,33 @@ def monkeypatch_pillow_safer():
         Image.ID.remove("EPS")
 
 
+def monkeypatch_requests_timeout():
+    """
+    The requests package does not by default set a timeout for outgoing HTTP requests. This is dangerous especially since
+    celery tasks have no timeout on the task as a whole (as web requests do), so HTTP requests to a non-responding
+    external service could lead to a clogging of the entire celery queue.
+    """
+    old_httpadapter_send = HTTPAdapter.send
+
+    def httpadapter_send(self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None, **kwargs):
+        if timeout is None:
+            timeout = 30
+        return types.MethodType(old_httpadapter_send, self)(
+            request, stream=stream, timeout=timeout, verify=verify, cert=cert, proxies=proxies,
+            **kwargs
+        )
+
+    HTTPAdapter.send = httpadapter_send
+
+
+def monkeypatch_cookie_morsel():
+    # See https://code.djangoproject.com/ticket/34613
+    cookies.Morsel._flags.add("partitioned")
+    cookies.Morsel._reserved.setdefault("partitioned", "Partitioned")
+
+
 def monkeypatch_all_at_ready():
     monkeypatch_vobject_performance()
     monkeypatch_pillow_safer()
+    monkeypatch_requests_timeout()
+    monkeypatch_cookie_morsel()

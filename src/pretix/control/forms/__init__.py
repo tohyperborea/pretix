@@ -123,8 +123,6 @@ class ClearableBasenameFileInput(forms.ClearableFileInput):
 
         @property
         def name(self):
-            if hasattr(self.file, 'display_name'):
-                return self.file.display_name
             return self.file.name
 
         @property
@@ -219,15 +217,17 @@ class ExtValidationMixin:
 
     def clean(self, *args, **kwargs):
         data = super().clean(*args, **kwargs)
-        if isinstance(data, UploadedFile):
-            filename = data.name
+
+        from ...base.models import CachedFile
+        if isinstance(data, (UploadedFile, CachedFile)):
+            filename = data.name if isinstance(data, UploadedFile) else data.filename
             ext = os.path.splitext(filename)[1]
             ext = ext.lower()
             if ext not in self.ext_whitelist:
                 raise forms.ValidationError(_("Filetype not allowed!"))
 
             if ext in IMAGE_EXTS:
-                validate_uploaded_file_for_valid_image(data)
+                validate_uploaded_file_for_valid_image(data if isinstance(data, UploadedFile) else data.file)
 
         return data
 
@@ -257,6 +257,12 @@ class CachedFileField(ExtFileField):
         if isinstance(data, File):
             if hasattr(data, '_uploaded_to'):
                 return data._uploaded_to
+
+            try:
+                self.clean(data)
+            except ValidationError:
+                return None
+
             cf = CachedFile.objects.create(
                 expires=now() + datetime.timedelta(days=1),
                 date=now(),
@@ -268,6 +274,9 @@ class CachedFileField(ExtFileField):
             cf.save()
             data._uploaded_to = cf
             return cf
+        if isinstance(data, CachedFile):
+            return data
+
         return super().bound_data(data, initial)
 
     def clean(self, *args, **kwargs):
@@ -415,3 +424,17 @@ class FontSelect(forms.RadioSelect):
 class ItemMultipleChoiceField(SafeModelMultipleChoiceField):
     def label_from_instance(self, obj):
         return str(obj) if obj.active else mark_safe(f'<strike class="text-muted">{escape(obj)}</strike>')
+
+
+class ButtonGroupRadioSelect(forms.RadioSelect):
+    template_name = 'pretixcontrol/button_group_radio.html'
+    option_template_name = 'pretixcontrol/button_group_radio_option.html'
+
+    def __init__(self, *args, **kwargs):
+        self.option_icons = kwargs.pop('option_icons')
+        super().__init__(*args, **kwargs)
+
+    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
+        attrs['icon'] = self.option_icons[value]
+        opt = super().create_option(name, value, label, selected, index, subindex, attrs)
+        return opt

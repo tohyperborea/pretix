@@ -41,6 +41,7 @@ from typing import List, Optional
 
 from celery.exceptions import MaxRetriesExceededError
 from django import forms
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError, transaction
 from django.db.models import Count, Exists, IntegerField, OuterRef, Q, Value
@@ -111,6 +112,15 @@ error_messages = {
     'in_part': gettext_lazy(
         'Some of the products you selected are no longer available in '
         'the quantity you selected. Please see below for details.'
+    ),
+    'unavailable_listed': gettext_lazy(
+        'Some of the products you selected are no longer available. '
+        'The following products are affected and have not been added to your cart: %s'
+    ),
+    'in_part_listed': gettext_lazy(
+        'Some of the products you selected are no longer available in '
+        'the quantity you selected. The following products are affected and have not '
+        'been added to your cart: %s'
     ),
     'max_items': ngettext_lazy(
         "You cannot select more than %s item per order.",
@@ -193,7 +203,7 @@ error_messages = {
         'You need to select at least %(min)s add-ons from the category %(cat)s for the product %(base)s.',
         'min'
     ),
-    'addon_no_multi': gettext_lazy('You can select every add-ons from the category %(cat)s for the product %(base)s at most once.'),
+    'addon_no_multi': gettext_lazy('You can select every add-on from the category %(cat)s for the product %(base)s at most once.'),
     'addon_only': gettext_lazy('One of the products you selected can only be bought as an add-on to another product.'),
     'bundled_only': gettext_lazy('One of the products you selected can only be bought part of a bundle.'),
     'seat_required': gettext_lazy('You need to select a specific seat.'),
@@ -382,8 +392,9 @@ class CartManager:
             cartsize += sum([op.count for op in self._operations if isinstance(op, self.AddOperation) and not op.addon_to])
             cartsize -= len([1 for op in self._operations if isinstance(op, self.RemoveOperation) if
                              not op.position.addon_to_id])
-            if cartsize > int(self.event.settings.max_items_per_order):
-                raise CartError(error_messages['max_items'] % self.event.settings.max_items_per_order)
+            limit = min(int(self.event.settings.max_items_per_order), settings.PRETIX_MAX_ORDER_SIZE)
+            if cartsize > limit:
+                raise CartError(error_messages['max_items'] % limit)
 
     def _check_item_constraints(self, op, current_ops=[]):
         if isinstance(op, (self.AddOperation, self.ExtendOperation)):
@@ -1110,6 +1121,8 @@ class CartManager:
         if 'sleep-after-quota-check' in debugflags_var.get():
             sleep(2)
 
+        err_unavailable_products = []
+
         for iop, op in enumerate(self._operations):
             if isinstance(op, self.RemoveOperation):
                 if op.position.expires > self.now_dt:
@@ -1137,9 +1150,15 @@ class CartManager:
                     voucher_available_count = min(voucher_available_count, vouchers_ok[op.voucher])
 
                 if quota_available_count < 1:
-                    err = err or error_messages['unavailable']
+                    err = err or error_messages['unavailable_listed']
+                    err_unavailable_products.append(
+                        f'{op.item.name} – {op.variation}' if op.variation else op.item.name
+                    )
                 elif quota_available_count < requested_count:
-                    err = err or error_messages['in_part']
+                    err = err or error_messages['in_part_listed']
+                    err_unavailable_products.append(
+                        f'{op.item.name} – {op.variation}' if op.variation else op.item.name
+                    )
 
                 if voucher_available_count < 1:
                     if op.voucher in self._voucher_depend_on_cart:
@@ -1156,16 +1175,25 @@ class CartManager:
                         b_quotas = list(b.quotas)
                         if not b_quotas:
                             if not op.voucher or not op.voucher.allow_ignore_quota:
-                                err = err or error_messages['unavailable']
+                                err = err or error_messages['unavailable_listed']
+                                err_unavailable_products.append(
+                                    f'{op.item.name} – {op.variation}' if op.variation else op.item.name
+                                )
                                 available_count = 0
                             continue
                         b_quota_available_count = min(available_count * b.count, min(quotas_ok[q] for q in b_quotas))
                         if b_quota_available_count < b.count:
-                            err = err or error_messages['unavailable']
+                            err = err or error_messages['unavailable_listed']
+                            err_unavailable_products.append(
+                                f'{op.item.name} – {op.variation}' if op.variation else op.item.name
+                            )
                             available_count = 0
                         elif b_quota_available_count < available_count * b.count:
-                            err = err or error_messages['in_part']
+                            err = err or error_messages['in_part_listed']
                             available_count = b_quota_available_count // b.count
+                            err_unavailable_products.append(
+                                f'{op.item.name} – {op.variation}' if op.variation else op.item.name
+                            )
                         for q in b_quotas:
                             quotas_ok[q] -= available_count * b.count
                             # TODO: is this correct?
@@ -1304,9 +1332,22 @@ class CartManager:
 
                 op.position.price_after_voucher = op.price_after_voucher
                 op.position.voucher = op.voucher
-                # op.posiiton.price will be set in recompute_final_prices_and_taxes
+                # op.position.price will be set in recompute_final_prices_and_taxes
                 op.position.save(update_fields=['price_after_voucher', 'voucher'])
                 vouchers_ok[op.voucher] -= 1
+
+                if op.voucher.all_bundles_included or op.voucher.all_addons_included:
+                    for a in op.position.addons.all():
+                        if a.is_bundled and op.voucher.all_bundles_included and a.price:
+                            a.listed_price = Decimal("0.00")
+                            a.price_after_voucher = Decimal("0.00")
+                            # a.price will be set in recompute_final_prices_and_taxes
+                            a.save(update_fields=['listed_price', 'price_after_voucher'])
+                        elif not a.is_bundled and op.voucher.all_addons_included and a.price and not a.custom_price_input:
+                            a.listed_price = Decimal("0.00")
+                            a.price_after_voucher = Decimal("0.00")
+                            # op.positon.price will be set in recompute_final_prices_and_taxes
+                            a.save(update_fields=['listed_price', 'price_after_voucher'])
 
         for p in new_cart_positions:
             if getattr(p, '_answers', None):
@@ -1317,10 +1358,14 @@ class CartManager:
 
         if 'sleep-before-commit' in debugflags_var.get():
             sleep(2)
+
+        if err in (error_messages['unavailable_listed'], error_messages['in_part_listed']):
+            err = err % ', '.join(str(p) for p in err_unavailable_products)
+
         return err
 
     def recompute_final_prices_and_taxes(self):
-        positions = sorted(list(self.positions), key=lambda op: -(op.addon_to_id or 0))
+        positions = sorted(list(self.positions), key=lambda cp: (-(cp.addon_to_id or 0), cp.pk))
         diff = Decimal('0.00')
         for cp in positions:
             if cp.listed_price is None:

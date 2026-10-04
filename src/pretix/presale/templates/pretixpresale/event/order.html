@@ -239,7 +239,7 @@
                         <ul>
                             {% for i in invoices %}
                                 <li>
-                                    <a href="{% eventurl event "presale:event.invoice.download" invoice=i.pk secret=order.secret order=order.code %}">
+                                    <a href="{% eventurl event "presale:event.invoice.download" invoice=i.pk secret=order.secret order=order.code %}" target="_blank">
                                         {% if i.is_cancellation %}{% trans "Cancellation" context "invoice" %}{% else %}{% trans "Invoice" %}{% endif %}
                                         {{ i.number }}</a> ({{ i.date|date:"SHORT_DATE_FORMAT" }})
                                 </li>
@@ -345,7 +345,13 @@
         <div class="panel panel-default panel-cancellation">
             <div class="panel-heading">
                 <h3 class="panel-title">
+                {% if user_change_allowed and user_cancel_allowed %}
                     {% trans "Change or cancel your order" context "action" %}
+                {% elif user_change_allowed %}
+                    {% trans "Change your order" context "action" %}
+                {% else %}
+                    {% trans "Cancel your order" context "action" %}
+                {% endif %}
                 </h3>
             </div>
             <ul class="list-group">
@@ -368,7 +374,9 @@
                 {% if user_cancel_allowed %}
                     <li class="list-group-item">
                         {% if order.status == "p" and order.total != 0 %}
-                            {% if request.event.settings.cancel_allow_user_paid_require_approval and request.event.settings.cancel_allow_user_paid_require_approval_fee_unknown %}
+                            {% if request.event.settings.cancel_terms_paid %}
+                                {{ request.event.settings.cancel_terms_paid|rich_text }}
+                            {% elif request.event.settings.cancel_allow_user_paid_require_approval and request.event.settings.cancel_allow_user_paid_require_approval_fee_unknown %}
                                 <p>
                                     {% blocktrans trimmed %}
                                         You can request to cancel this order.
@@ -445,35 +453,31 @@
                                     {% trans "This will invalidate all tickets in this order." %}
                                 </p>
                             {% endif %}
+                        {% else %}
                             <p>
+                                {% if request.event.settings.cancel_terms_unpaid %}
+                                    {{ request.event.settings.cancel_terms_unpaid|rich_text }}
+                                {% elif order.total != 0 and order.user_cancel_fee %}
+                                    {% blocktrans trimmed with fee=order.user_cancel_fee|money:request.event.currency %}
+                                        You can cancel this order. As per our cancellation policy, you will still be required
+                                        to pay a cancellation fee of <strong>{{ fee }}</strong>.
+                                    {% endblocktrans %}
+                                    {% trans "This will invalidate all tickets in this order." %}
+                                {% else %}
+                                    {% blocktrans trimmed %}
+                                        You can cancel this order using the following button.
+                                    {% endblocktrans %}
+                                    {% trans "This will invalidate all tickets in this order." %}
+                                {% endif %}
+                            </p>
+                        {% endif %}
+                        <p>
                             <a href="{% eventurl event 'presale:event.order.cancel' secret=order.secret order=order.code %}"
                                     class="btn btn-danger">
                                 <span class="fa fa-remove" aria-hidden="true"></span>
                                 {% trans "Cancel order" %}
                             </a>
-                            </p>
-                        {% else %}
-                            <p>
-                                {% if order.total != 0 and order.user_cancel_fee %}
-                                    {% blocktrans trimmed with fee=order.user_cancel_fee|money:request.event.currency %}
-                                        You can cancel this order. As per our cancellation policy, you will still be required
-                                        to pay a cancellation fee of <strong>{{ fee }}</strong>.
-                                    {% endblocktrans %}
-                                {% else %}
-                                    {% blocktrans trimmed %}
-                                        You can cancel this order using the following button.
-                                    {% endblocktrans %}
-                                {% endif %}
-                                {% trans "This will invalidate all tickets in this order." %}
-                            </p>
-                            <p>
-                                <a href="{% eventurl event 'presale:event.order.cancel' secret=order.secret order=order.code %}"
-                                        class="btn btn-danger">
-                                    <span class="fa fa-remove" aria-hidden="true"></span>
-                                    {% trans "Cancel order" %}
-                                </a>
-                            </p>
-                        {% endif %}
+                        </p>
                     </li>
                 {% endif %}
             </ul>

@@ -11,6 +11,9 @@ In many places of your shop, like frontpage texts, product descriptions and emai
 since it is way easier to learn than languages like HTML but allows all basic formatting options required
 for text in those places.
 
+.. note:: Some fields that are used in one-line context only allow formatting that refers to individual words
+          (such as bold or italic font or a link) but do not allow block-level formatting like lists or headlines.
+
 Formatting rules
 ----------------
 
@@ -145,7 +148,7 @@ to get a better plain text representation of your text. Note however, that for
 security reasons you can only use the following HTML elements::
 
     a, abbr, acronym, b, br, code, div, em, h1, h2,
-    h3, h4, h5, h6, hr, i, li, ol, p, pre, span, strong,
+    h3, h4, h5, h6, hr, i, li, ol, p, pre, s, span, strong,
     table, tbody, td, thead, tr, ul
 
 Additionally, only the following attributes are allowed on them::

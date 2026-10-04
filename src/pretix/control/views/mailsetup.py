@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 def get_spf_record(hostname):
     try:
         r = dns.resolver.Resolver()
-        for resp in r.query(hostname, 'TXT'):
+        for resp in r.resolve(hostname, 'TXT'):
             data = b''.join(resp.strings).decode()
             if data.lower().strip().startswith('v=spf1 '):  # RFC7208, section 4.5
                 return data
@@ -70,6 +70,11 @@ def _check_spf_record(not_found_lookup_parts, spf_record, depth):
     for p in parts:
         if p.startswith('include:') or p.startswith('+include:'):
             _, hostname = p.split(':')
+            rec_record = get_spf_record(hostname)
+            if rec_record:
+                _check_spf_record(not_found_lookup_parts, rec_record, depth + 1)
+        elif p.startswith('redirect='):
+            _, hostname = p.split('=')
             rec_record = get_spf_record(hostname)
             if rec_record:
                 _check_spf_record(not_found_lookup_parts, rec_record, depth + 1)

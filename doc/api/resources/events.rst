@@ -36,6 +36,8 @@ geo_lon                               float                      Longitude of th
 has_subevents                         boolean                    ``true`` if the event series feature is active for this
                                                                  event. Cannot change after event is created.
 meta_data                             object                     Values set for organizer-specific meta data parameters.
+                                                                 The allowed keys need to be set up as meta properties
+                                                                 in the organizer configuration.
 plugins                               list                       A list of package names of the enabled plugins for this
                                                                  event.
 seating_plan                          integer                    If reserved seating is in use, the ID of a seating
@@ -343,8 +345,8 @@ Endpoints
    Creates a new event with properties as set in the request body. The properties that are copied are: ``is_public``,
    ``testmode``, ``has_subevents``, settings, plugin settings, items, variations, add-ons, quotas, categories, tax rules, questions.
 
-   If the ``plugins``, ``has_subevents`` and/or ``is_public`` fields are present in the post body this will determine their
-   value. Otherwise their value will be copied from the existing event.
+   If the ``plugins``, ``has_subevents``, ``meta_data`` and/or ``is_public`` fields are present in the post body this will
+   determine their  value. Otherwise their value will be copied from the existing event.
 
    Please note that you can only copy from events under the same organizer this way. Use the ``clone_from`` parameter
    when creating a new event for this instead.
@@ -564,6 +566,8 @@ organizer level.
 
 .. warning:: This API is intended for advanced users. Even though we take care to validate your input, you will be
              able to break your event using this API by creating situations of conflicting settings. Please take care.
+
+.. note:: When authenticating with :ref:`rest-deviceauth`, only a limited subset of settings is available.
 
 .. http:get:: /api/v1/organizers/(organizer)/events/(event)/settings/
 

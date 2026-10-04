@@ -43,6 +43,7 @@ from django.utils.timezone import now
 from django_countries.fields import Country
 from django_scopes import scopes_disabled
 from tests.base import SoupTest
+from tests.plugins.stripe.test_checkout import apple_domain_create
 from tests.plugins.stripe.test_provider import MockedCharge
 
 from pretix.base.models import (
@@ -1822,7 +1823,10 @@ def test_confirm_payment(client, env):
     with scopes_disabled():
         p = env[2].payments.last()
     client.login(email='dummy@dummy.dummy', password='dummy')
-    response = client.post('/control/event/dummy/dummy/orders/FOO/payments/{}/confirm'.format(p.pk), {}, follow=True)
+    response = client.post('/control/event/dummy/dummy/orders/FOO/payments/{}/confirm'.format(p.pk), {
+        'amount': str(p.amount),
+        'payment_date': str(now().date().isoformat()),
+    }, follow=True)
     assert 'alert-success' in response.content.decode()
     p.refresh_from_db()
     assert p.state == OrderPayment.PAYMENT_STATE_CONFIRMED
@@ -1837,7 +1841,10 @@ def test_confirm_payment_invalid_state(client, env):
     p.state = OrderPayment.PAYMENT_STATE_FAILED
     p.save()
     client.login(email='dummy@dummy.dummy', password='dummy')
-    response = client.post('/control/event/dummy/dummy/orders/FOO/payments/{}/confirm'.format(p.pk), {}, follow=True)
+    response = client.post('/control/event/dummy/dummy/orders/FOO/payments/{}/confirm'.format(p.pk), {
+        'amount': str(p.amount),
+        'payment_date': str(now().date().isoformat()),
+    }, follow=True)
     assert 'alert-danger' in response.content.decode()
     p.refresh_from_db()
     assert p.state == OrderPayment.PAYMENT_STATE_FAILED
@@ -1852,7 +1859,10 @@ def test_confirm_payment_partal_amount(client, env):
     p.amount -= Decimal(5.00)
     p.save()
     client.login(email='dummy@dummy.dummy', password='dummy')
-    response = client.post('/control/event/dummy/dummy/orders/FOO/payments/{}/confirm'.format(p.pk), {}, follow=True)
+    response = client.post('/control/event/dummy/dummy/orders/FOO/payments/{}/confirm'.format(p.pk), {
+        'amount': str(p.amount),
+        'payment_date': str(now().date().isoformat()),
+    }, follow=True)
     assert 'alert-success' in response.content.decode()
     p.refresh_from_db()
     assert p.state == OrderPayment.PAYMENT_STATE_CONFIRMED
@@ -2081,15 +2091,17 @@ def test_refund_paid_order_automatically_failed(client, env, monkeypatch):
         p.confirm()
     client.login(email='dummy@dummy.dummy', password='dummy')
 
-    def charge_retr(*args, **kwargs):
-        def refund_create(amount):
-            raise PaymentException('This failed.')
+    def refund_create(*args, **kwargs):
+        raise PaymentException('This failed.')
 
+    def charge_retr(*args, **kwargs):
         c = MockedCharge()
         c.refunds.create = refund_create
         return c
 
+    monkeypatch.setattr("stripe.ApplePayDomain.create", apple_domain_create)
     monkeypatch.setattr("stripe.Charge.retrieve", charge_retr)
+    monkeypatch.setattr("stripe.Refund.create", refund_create)
 
     r = client.post('/control/event/dummy/dummy/orders/FOO/refund', {
         'start-partial_amount': '7.00',
@@ -2123,18 +2135,20 @@ def test_refund_paid_order_automatically(client, env, monkeypatch):
         p.confirm()
     client.login(email='dummy@dummy.dummy', password='dummy')
 
-    def charge_retr(*args, **kwargs):
-        def refund_create(amount):
-            r = MockedCharge()
-            r.id = 'foo'
-            r.status = 'succeeded'
-            return r
+    def refund_create(*args, **kwargs):
+        r = MockedCharge()
+        r.id = 'foo'
+        r.status = 'succeeded'
+        return r
 
+    def charge_retr(*args, **kwargs):
         c = MockedCharge()
         c.refunds.create = refund_create
         return c
 
+    monkeypatch.setattr("stripe.ApplePayDomain.create", apple_domain_create)
     monkeypatch.setattr("stripe.Charge.retrieve", charge_retr)
+    monkeypatch.setattr("stripe.Refund.create", refund_create)
 
     client.post('/control/event/dummy/dummy/orders/FOO/refund', {
         'start-partial_amount': '7.00',
@@ -2175,22 +2189,28 @@ def test_refund_paid_order_offsetting_to_unknown(client, env):
 
 
 @pytest.mark.django_db
-def test_refund_paid_order_offsetting_to_expired(client, env):
+def test_refund_paid_order_offsetting_to_wrong_currency(client, env):
     with scopes_disabled():
         p = env[2].payments.last()
         p.confirm()
         client.login(email='dummy@dummy.dummy', password='dummy')
+        event2 = Event.objects.create(
+            organizer=env[0].organizer, name='Dummy', slug='dummy2',
+            date_from=now(), plugins='pretix.plugins.banktransfer,pretix.plugins.stripe,tests.testdummy',
+            currency='USD',
+        )
+        ticket2 = Item.objects.create(event=event2, name='Early-bird ticket',
+                                      category=None, default_price=23,
+                                      admission=True, personalized=True)
         o = Order.objects.create(
-            code='BAZ', event=env[0], email='dummy@dummy.test',
-            status=Order.STATUS_EXPIRED,
+            code='BAZ', event=event2, email='dummy@dummy.test',
+            status=Order.STATUS_PENDING,
             datetime=now(), expires=now() + timedelta(days=10),
             total=5, locale='en'
         )
-        o.positions.create(price=5, item=env[3])
-        q = Quota.objects.create(event=env[0], size=0)
-        q.items.add(env[3])
+        o.positions.create(price=5, item=ticket2)
 
-    client.post('/control/event/dummy/dummy/orders/FOO/refund', {
+    r = client.post('/control/event/dummy/dummy/orders/FOO/refund', {
         'start-partial_amount': '5.00',
         'start-mode': 'partial',
         'start-action': 'mark_pending',
@@ -2199,21 +2219,8 @@ def test_refund_paid_order_offsetting_to_expired(client, env):
         'manual_state': 'pending',
         'perform': 'on'
     }, follow=True)
-    p.refresh_from_db()
-    assert p.state == OrderPayment.PAYMENT_STATE_CONFIRMED
-    env[2].refresh_from_db()
-    with scopes_disabled():
-        r = env[2].refunds.last()
-        assert r.provider == "offsetting"
-        assert r.state == OrderRefund.REFUND_STATE_DONE
-        assert r.amount == Decimal('5.00')
-        assert env[2].status == Order.STATUS_PENDING
-        o.refresh_from_db()
-        assert o.status == Order.STATUS_EXPIRED
-        p2 = o.payments.first()
-        assert p2.provider == "offsetting"
-        assert p2.amount == Decimal('5.00')
-        assert p2.state == OrderPayment.PAYMENT_STATE_CONFIRMED
+    assert b'alert-danger' in r.content
+    assert b'different currency' in r.content
 
 
 @pytest.mark.django_db

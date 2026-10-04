@@ -1,5 +1,6 @@
 {% load i18n %}
 {% load eventurl %}
+{% include "pretixpresale/fragment_event_list_filter.html" with request=request %}
 <ul class="list-unstyled">
 {% for subev in subevent_list.subevent_list %}
     <li class="subevent-row">
@@ -30,7 +31,7 @@
                                 <span class="label label-success">{% trans "Book now" %}</span>
                             {% endif %}
                         {% endif %}
-                    {% elif event.settings.waiting_list_enabled and subev.best_availability_state >= 0 %}
+                    {% elif event.waiting_list_active and subev.best_availability_state >= 0 %}
                         <span class="label label-warning">{% trans "Waiting list" %}</span>
                     {% elif subev.best_availability_state == 20 %}
                         <span class="label label-danger">{% trans "Reserved" %}</span>

@@ -92,6 +92,7 @@ ALL_LANGUAGES = [
     ('id', _('Indonesian')),
     ('it', _('Italian')),
     ('lv', _('Latvian')),
+    ('nb-no', _('Norwegian Bokmål')),
     ('pl', _('Polish')),
     ('pt-pt', _('Portuguese (Portugal)')),
     ('pt-br', _('Portuguese (Brazil)')),
@@ -108,8 +109,9 @@ LANGUAGES_RTL = {
     'ar', 'hw'
 }
 LANGUAGES_INCUBATING = {
-    'pl', 'fi', 'pt-br', 'gl',
+    'fi', 'pt-br', 'gl',
 }
+LANGUAGES = ALL_LANGUAGES
 LOCALE_PATHS = [
     os.path.join(os.path.dirname(__file__), 'locale'),
 ]
@@ -233,7 +235,12 @@ COMPRESS_FILTERS = {
     )
 }
 
-CURRENCIES = list(currencies)
+CURRENCIES = [
+    c for c in currencies
+    if c.alpha_3 not in {
+        'XAG', 'XAU', 'XBA', 'XBB', 'XBC', 'XBD', 'XDR', 'XPD', 'XPT', 'XSU', 'XTS', 'XUA',
+    }
+]
 CURRENCY_PLACES = {
     # default is 2
     'BIF': 0,
@@ -266,9 +273,10 @@ CACHE_LARGE_VALUES_ALIAS = 'default'
 FILE_UPLOAD_EXTENSIONS_IMAGE = (".png", ".jpg", ".gif", ".jpeg")
 PILLOW_FORMATS_IMAGE = ('PNG', 'GIF', 'JPEG')
 
-FILE_UPLOAD_EXTENSIONS_FAVICON = (".ico", ".png", "jpg", ".gif", ".jpeg")
+FILE_UPLOAD_EXTENSIONS_FAVICON = (".ico", ".png", ".jpg", ".gif", ".jpeg")
+PILLOW_FORMATS_QUESTIONS_FAVICON = ('PNG', 'GIF', 'JPEG', 'ICO')
 
-FILE_UPLOAD_EXTENSIONS_QUESTION_IMAGE = (".png", "jpg", ".gif", ".jpeg", ".bmp", ".tif", ".tiff", ".jfif")
+FILE_UPLOAD_EXTENSIONS_QUESTION_IMAGE = (".png", ".jpg", ".gif", ".jpeg", ".bmp", ".tif", ".tiff", ".jfif")
 PILLOW_FORMATS_QUESTIONS_IMAGE = ('PNG', 'GIF', 'JPEG', 'BMP', 'TIFF')
 
 FILE_UPLOAD_EXTENSIONS_EMAIL_ATTACHMENT = (
@@ -277,3 +285,5 @@ FILE_UPLOAD_EXTENSIONS_EMAIL_ATTACHMENT = (
     ".bmp", ".tif", ".tiff"
 )
 FILE_UPLOAD_EXTENSIONS_OTHER = FILE_UPLOAD_EXTENSIONS_EMAIL_ATTACHMENT
+
+PRETIX_MAX_ORDER_SIZE = 500

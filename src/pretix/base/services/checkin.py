@@ -31,6 +31,7 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the Apache License 2.0 is
 # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations under the License.
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from functools import partial, reduce
@@ -41,8 +42,8 @@ from dateutil.tz import datetime_exists
 from django.core.files import File
 from django.db import IntegrityError, transaction
 from django.db.models import (
-    BooleanField, Count, ExpressionWrapper, F, IntegerField, Max, Min,
-    OuterRef, Q, Subquery, Value,
+    BooleanField, Case, Count, ExpressionWrapper, F, IntegerField, Max, Min,
+    OuterRef, Q, Subquery, TextField, Value, When,
 )
 from django.db.models.functions import Coalesce, TruncDate
 from django.dispatch import receiver
@@ -53,8 +54,8 @@ from django.utils.translation import gettext as _
 from django_scopes import scope, scopes_disabled
 
 from pretix.base.models import (
-    Checkin, CheckinList, Device, Event, ItemVariation, Order, OrderPosition,
-    QuestionOption,
+    Checkin, CheckinList, Device, Event, Gate, Item, ItemVariation, Order,
+    OrderPosition, QuestionOption,
 )
 from pretix.base.signals import checkin_created, order_placed, periodic_task
 from pretix.helpers import OF_SELF
@@ -64,6 +65,8 @@ from pretix.helpers.jsonlogic_query import (
     Equal, GreaterEqualThan, GreaterThan, InList, LowerEqualThan, LowerThan,
     MinutesSince, tolerance,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _build_time(t=None, value=None, ev=None, now_dt=None):
@@ -109,11 +112,26 @@ def _logic_annotate_for_graphic_explain(rules, ev, rule_data, now_dt):
             var = values[0] if isinstance(values, list) else values
             val = rule_data[var]
             if var == "product":
-                val = str(event.items.get(pk=val))
+                try:
+                    val = str(event.items.get(pk=val))
+                except Item.DoesNotExist:
+                    val = "?"
             elif var == "variation":
-                val = str(ItemVariation.objects.get(item__event=event, pk=val))
+                if not val:
+                    val = "-"
+                else:
+                    try:
+                        val = str(ItemVariation.objects.get(item__event=event, pk=val))
+                    except ItemVariation.DoesNotExist:
+                        val = "?"
             elif var == "gate":
-                val = str(event.organizer.gates.get(pk=val))
+                if not val:
+                    val = "-"
+                else:
+                    try:
+                        val = str(event.organizer.gates.get(pk=val))
+                    except Gate.DoesNotExist:
+                        val = "?"
             elif isinstance(val, datetime):
                 val = date_format(val.astimezone(ev.timezone), "SHORT_DATETIME_FORMAT")
             return {"var": var, "__result": val}
@@ -184,7 +202,7 @@ def _logic_explain(rules, ev, rule_data, now_dt=None):
                     'var': values[0]["var"],
                     'rhs': values[1:],
                 }
-            elif "entries_since" in values[0] or "entries_before" in values[0]:
+            elif any(t in values[0] for t in ("entries_since", "entries_before", "entries_days_since", "entries_days_before")):
                 _var_explanations[new_var_name] = {
                     'operator': operator,
                     'var': values[0],
@@ -255,6 +273,14 @@ def _logic_explain(rules, ev, rule_data, now_dt=None):
                 var_texts[vname] = _('Only allowed before {datetime}').format(datetime=compare_to_text)
             elif operator == 'isAfter':
                 var_texts[vname] = _('Only allowed after {datetime}').format(datetime=compare_to_text)
+        elif var == 'entry_status':
+            var_weights[vname] = (20, 0)
+            if operator == '==' and rhs[0] == 'present':
+                var_texts[vname] = _('Attendee is checked out')
+            elif operator == '==' and rhs[0] == 'absent':
+                var_texts[vname] = _('Attendee is already checked in')
+            else:
+                var_texts[vname] = f'{var} not {operator} {rhs}'
         elif var == 'product' or var == 'variation':
             var_weights[vname] = (1000, 0)
             var_texts[vname] = _('Ticket type not allowed')
@@ -262,11 +288,13 @@ def _logic_explain(rules, ev, rule_data, now_dt=None):
             var_weights[vname] = (500, 0)
             var_texts[vname] = _('Wrong entrance gate')
         elif var in ('entries_number', 'entries_today', 'entries_days', 'minutes_since_last_entry', 'minutes_since_first_entry', 'now_isoweekday') \
-                or (isinstance(var, dict) and ("entries_since" in var or "entries_before" in var)):
+                or (isinstance(var, dict) and any(t in var for t in ("entries_since", "entries_before", "entries_days_since", "entries_days_before"))):
             w = {
                 'minutes_since_first_entry': 80,
                 'minutes_since_last_entry': 90,
                 'entries_days': 100,
+                'entries_days_since': 105,
+                'entries_days_before': 105,
                 'entries_since': 110,
                 'entries_before': 110,
                 'entries_number': 120,
@@ -289,10 +317,12 @@ def _logic_explain(rules, ev, rule_data, now_dt=None):
                 'entries_today': _('number of entries today'),
                 'entries_since': _('number of entries since {datetime}'),
                 'entries_before': _('number of entries before {datetime}'),
+                'entries_days_since': _('number of days with an entry since {datetime}'),
+                'entries_days_before': _('number of days with an entry before {datetime}'),
                 'now_isoweekday': _('week day'),
             }
 
-            if isinstance(var, dict) and ("entries_since" in var or "entries_before" in var):
+            if isinstance(var, dict) and any(t in var for t in ("entries_since", "entries_before", "entries_days_since", "entries_days_before")):
                 varname = list(var.keys())[0]
                 cutoff = _build_time(*var[varname][0]['buildTime'], ev=ev, now_dt=now_dt).astimezone(ev.timezone)
                 if abs(now_dt - cutoff) < timedelta(hours=12):
@@ -392,6 +422,8 @@ def _get_logic_environment(ev, rule_data, now_dt):
     logic.add_operation('isAfter', lambda t1, t2, tol=None: is_before(t2, t1, tol))
     logic.add_operation('entries_since', lambda t1: rule_data.entries_since(t1))
     logic.add_operation('entries_before', lambda t1: rule_data.entries_before(t1))
+    logic.add_operation('entries_days_since', lambda t1: rule_data.entries_days_since(t1))
+    logic.add_operation('entries_days_before', lambda t1: rule_data.entries_days_before(t1))
     return logic
 
 
@@ -449,6 +481,32 @@ class LazyRuleVars:
             self.__cache['entries_before', cutoff] = self._position.checkins.filter(type=Checkin.TYPE_ENTRY, list=self._clist, datetime__lt=cutoff).count()
         return self.__cache['entries_before', cutoff]
 
+    def entries_days_since(self, cutoff):
+        tz = self._clist.event.timezone
+        with override(tz):
+            if ('entries_days_since', cutoff) not in self.__cache:
+                self.__cache['entries_days_since', cutoff] = self._position.checkins.filter(
+                    type=Checkin.TYPE_ENTRY,
+                    list=self._clist,
+                    datetime__gte=cutoff
+                ).annotate(
+                    day=TruncDate('datetime', tzinfo=tz)
+                ).values('day').distinct().count()
+            return self.__cache['entries_days_since', cutoff]
+
+    def entries_days_before(self, cutoff):
+        tz = self._clist.event.timezone
+        with override(tz):
+            if ('entries_days_before', cutoff) not in self.__cache:
+                self.__cache['entries_days_before', cutoff] = self._position.checkins.filter(
+                    type=Checkin.TYPE_ENTRY,
+                    list=self._clist,
+                    datetime__lt=cutoff
+                ).annotate(
+                    day=TruncDate('datetime', tzinfo=tz)
+                ).values('day').distinct().count()
+            return self.__cache['entries_days_before', cutoff]
+
     @cached_property
     def entries_days(self):
         tz = self._clist.event.timezone
@@ -456,6 +514,13 @@ class LazyRuleVars:
             return self._position.checkins.filter(list=self._clist, type=Checkin.TYPE_ENTRY).annotate(
                 day=TruncDate('datetime', tzinfo=tz)
             ).values('day').distinct().count()
+
+    @cached_property
+    def entry_status(self):
+        last_checkin = self._position.checkins.filter(list=self._clist).order_by('datetime').last()
+        if not last_checkin or last_checkin.type == Checkin.TYPE_EXIT:
+            return "absent"
+        return "present"
 
     @cached_property
     def minutes_since_last_entry(self):
@@ -515,9 +580,12 @@ class SQLLogic:
             "isBefore": partial(self.comparison_to_q, operator=LowerThan, modifier=partial(tolerance, sign=1)),
             "isAfter": partial(self.comparison_to_q, operator=GreaterThan, modifier=partial(tolerance, sign=-1)),
         }
-        self.expression_ops = {'buildTime', 'objectList', 'lookup', 'var', 'entries_since', 'entries_before'}
+        self.expression_ops = {'buildTime', 'objectList', 'lookup', 'var', 'entries_since', 'entries_before',
+                               'entries_days_since', 'entries_days_before'}
 
     def operation_to_expression(self, rule):
+        if isinstance(rule, str):
+            return Value(rule)
         if not isinstance(rule, dict):
             return rule
 
@@ -588,6 +656,42 @@ class SQLLogic:
                         datetime__lt=self.operation_to_expression(values[0]),
                     ).values('position_id').order_by().annotate(
                         c=Count('*')
+                    ).values('c')
+                ),
+                Value(0),
+                output_field=IntegerField()
+            )
+        elif operator == 'entries_days_since':
+            tz = self.list.event.timezone
+            return Coalesce(
+                Subquery(
+                    Checkin.objects.filter(
+                        position_id=OuterRef('pk'),
+                        type=Checkin.TYPE_ENTRY,
+                        list_id=self.list.pk,
+                        datetime__gte=self.operation_to_expression(values[0]),
+                    ).annotate(
+                        day=TruncDate('datetime', tzinfo=tz)
+                    ).values('position_id').order_by().annotate(
+                        c=Count('day', distinct=True)
+                    ).values('c')
+                ),
+                Value(0),
+                output_field=IntegerField()
+            )
+        elif operator == 'entries_days_before':
+            tz = self.list.event.timezone
+            return Coalesce(
+                Subquery(
+                    Checkin.objects.filter(
+                        position_id=OuterRef('pk'),
+                        type=Checkin.TYPE_ENTRY,
+                        list_id=self.list.pk,
+                        datetime__lt=self.operation_to_expression(values[0]),
+                    ).annotate(
+                        day=TruncDate('datetime', tzinfo=tz)
+                    ).values('position_id').order_by().annotate(
+                        c=Count('day', distinct=True)
                     ).values('c')
                 ),
                 Value(0),
@@ -682,6 +786,25 @@ class SQLLogic:
                     MinutesSince(sq_last_entry),
                     Value(-1),
                     output_field=IntegerField()
+                )
+            elif values[0] == 'entry_status':
+                sq_last_checkin = Subquery(
+                    Checkin.objects.filter(
+                        position_id=OuterRef('pk'),
+                        list_id=self.list.pk,
+                    ).order_by('-datetime').values('type')[:1]
+                )
+
+                return Case(
+                    When(
+                        condition=Equal(
+                            sq_last_checkin,
+                            Value(Checkin.TYPE_ENTRY)
+                        ),
+                        then=Value("present"),
+                    ),
+                    default=Value("absent"),
+                    output_field=TextField()
                 )
         else:
             raise ValueError(f'Unknown operator {operator}')
@@ -859,6 +982,15 @@ def perform_checkin(op: OrderPosition, clist: CheckinList, given_answers: dict, 
                 'blocked'
             )
 
+    if op.order.status == Order.STATUS_PENDING and op.order.require_approval:
+        if force:
+            force_used = True
+        else:
+            raise CheckInError(
+                _('This order is not yet approved.'),
+                'unapproved',
+            )
+
     if type != Checkin.TYPE_EXIT and op.valid_from and op.valid_from > dt:
         if force:
             force_used = True
@@ -926,14 +1058,6 @@ def perform_checkin(op: OrderPosition, clist: CheckinList, given_answers: dict, 
                     'product'
                 )
 
-        if op.order.status != Order.STATUS_PAID and op.order.require_approval:
-            if force:
-                force_used = True
-            else:
-                raise CheckInError(
-                    _('This order is not yet approved.'),
-                    'unpaid'
-                )
         elif op.order.status != Order.STATUS_PAID and not op.order.valid_if_pending and not (
             ignore_unpaid and clist.include_pending and op.order.status == Order.STATUS_PENDING
         ):
@@ -948,7 +1072,16 @@ def perform_checkin(op: OrderPosition, clist: CheckinList, given_answers: dict, 
         if type == Checkin.TYPE_ENTRY and clist.rules:
             rule_data = LazyRuleVars(op, clist, dt, gate=gate)
             logic = _get_logic_environment(op.subevent or clist.event, rule_data, now_dt=dt)
-            if not logic.apply(clist.rules, rule_data):
+            try:
+                logic_result = logic.apply(clist.rules, rule_data)
+            except Exception:
+                logger.exception("Check-in rule evaluation failed")
+                raise CheckInError(
+                    _('Evaluation of custom rules has failed.'),
+                    'rules',
+                )
+
+            if not logic_result:
                 if force:
                     force_used = True
                 else:

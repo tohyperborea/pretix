@@ -37,7 +37,7 @@ from urllib.parse import quote, urljoin, urlparse
 from django.conf import settings
 from django.contrib.auth import REDIRECT_FIELD_NAME, logout
 from django.http import Http404
-from django.shortcuts import get_object_or_404, redirect, resolve_url
+from django.shortcuts import get_object_or_404, resolve_url
 from django.template.response import TemplateResponse
 from django.urls import get_script_prefix, resolve, reverse
 from django.utils.encoding import force_str
@@ -46,8 +46,10 @@ from django_scopes import scope
 
 from pretix.base.models import Event, Organizer
 from pretix.base.models.auth import SuperuserPermissionSet, User
+from pretix.helpers.http import redirect_to_url
 from pretix.helpers.security import (
-    SessionInvalid, SessionReauthRequired, assert_session_valid,
+    Session2FASetupRequired, SessionInvalid, SessionPasswordChangeRequired,
+    SessionReauthRequired, assert_session_valid,
 )
 
 
@@ -66,6 +68,7 @@ class PermissionMiddleware:
         "auth.forgot.recover",
         "auth.invite",
         "user.settings.notifications.off",
+        "auth.bad_origin_report",
     )
 
     EXCEPTIONS_FORCED_PW_CHANGE = (
@@ -82,6 +85,7 @@ class PermissionMiddleware:
         "user.settings.2fa.confirm.totp",
         "user.settings.2fa.confirm.webauthn",
         "user.settings.2fa.delete",
+        "user.settings.2fa.leaveteams",
         "auth.logout",
         "user.reauth"
     )
@@ -118,7 +122,7 @@ class PermissionMiddleware:
 
         if hasattr(request, 'organizer'):
             # If the user is on a organizer's subdomain, he should be redirected to pretix
-            return redirect(urljoin(settings.SITE_URL, request.get_full_path()))
+            return redirect_to_url(urljoin(settings.SITE_URL, request.get_full_path()))
         if url_name in self.EXCEPTIONS:
             return self.get_response(request)
         if not request.user.is_authenticated:
@@ -132,14 +136,13 @@ class PermissionMiddleware:
             return self._login_redirect(request)
         except SessionReauthRequired:
             if url_name not in ('user.reauth', 'auth.logout'):
-                return redirect(reverse('control:user.reauth') + '?next=' + quote(request.get_full_path()))
-
-        if request.user.needs_password_change and url_name not in self.EXCEPTIONS_FORCED_PW_CHANGE:
-            return redirect(reverse('control:user.settings') + '?next=' + quote(request.get_full_path()))
-
-        if not request.user.require_2fa and settings.PRETIX_OBLIGATORY_2FA \
-                and url_name not in self.EXCEPTIONS_2FA:
-            return redirect(reverse('control:user.settings.2fa'))
+                return redirect_to_url(reverse('control:user.reauth') + '?next=' + quote(request.get_full_path()))
+        except SessionPasswordChangeRequired:
+            if url_name not in self.EXCEPTIONS_FORCED_PW_CHANGE:
+                return redirect_to_url(reverse('control:user.settings') + '?next=' + quote(request.get_full_path()))
+        except Session2FASetupRequired:
+            if url_name not in self.EXCEPTIONS_2FA:
+                return redirect_to_url(reverse('control:user.settings.2fa'))
 
         if 'event' in url.kwargs and 'organizer' in url.kwargs:
             if url.kwargs['organizer'] == '-' and url.kwargs['event'] == '-':
@@ -152,7 +155,7 @@ class PermissionMiddleware:
                 k = dict(url.kwargs)
                 k['organizer'] = ev.organizer.slug
                 k['event'] = ev.slug
-                return redirect(reverse(url.view_name, kwargs=k, args=url.args))
+                return redirect_to_url(reverse(url.view_name, kwargs=k, args=url.args))
 
             with scope(organizer=None):
                 request.event = Event.objects.filter(
@@ -178,7 +181,7 @@ class PermissionMiddleware:
                                     "have no permission to administrate it."))
                 k = dict(url.kwargs)
                 k['organizer'] = org.slug
-                return redirect(reverse(url.view_name, kwargs=k, args=url.args))
+                return redirect_to_url(reverse(url.view_name, kwargs=k, args=url.args))
 
             request.organizer = Organizer.objects.filter(
                 slug=url.kwargs['organizer'],

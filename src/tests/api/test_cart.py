@@ -934,7 +934,7 @@ def test_cartpos_create_with_voucher_unknown(token_client, organizer, event, ite
 @pytest.mark.django_db
 def test_cartpos_create_with_voucher_invalid_item(token_client, organizer, event, item, quota):
     with scopes_disabled():
-        item2 = event.items.create(name="item2")
+        item2 = event.items.create(name="item2", default_price=0)
         voucher = event.vouchers.create(code="FOOBAR", item=item2)
     res = copy.deepcopy(CARTPOS_CREATE_PAYLOAD)
     res['item'] = item.pk
@@ -1018,6 +1018,7 @@ def test_cartpos_create_with_voucher_redeemed(token_client, organizer, event, it
     assert resp.data == {'voucher': ['The specified voucher has already been used the maximum number of times.']}
 
 
+# Sideburn: a used-up voucher reports "used up" even if it has also expired (SID-95).
 @pytest.mark.django_db
 def test_cartpos_create_with_voucher_redeemed_and_expired_prefers_redeemed(token_client, organizer, event, item, quota):
     with scopes_disabled():

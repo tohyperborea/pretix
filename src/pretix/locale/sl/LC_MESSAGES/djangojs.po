@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2023-09-25 23:12+0000\n"
+"POT-Creation-Date: 2024-04-23 12:41+0000\n"
 "PO-Revision-Date: 2019-08-27 08:00+0000\n"
 "Last-Translator: Bostjan Marusic <bostjan@brokenbones.si>\n"
 "Language-Team: Slovenian <https://translate.pretix.eu/projects/pretix/pretix-"
@@ -133,7 +133,7 @@ msgstr ""
 msgid "Mercado Pago"
 msgstr ""
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:164
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:167
 #: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:48
 #, fuzzy
 #| msgctxt "widget"
@@ -141,13 +141,16 @@ msgstr ""
 msgid "Continue"
 msgstr "Nadaljuj"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:222
-#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:204
-#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:235
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:225
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:244
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:267
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:284
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:317
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:341
 msgid "Confirming your payment …"
 msgstr "Potrjevanje plačila …"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:247
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:254
 msgid "Payment method unavailable"
 msgstr ""
 
@@ -165,15 +168,15 @@ msgstr "Plačana naročila"
 msgid "Total revenue"
 msgstr "Skupni prihodek"
 
-#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:13
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:15
 msgid "Contacting Stripe …"
 msgstr "Povezovanje s servisom Stripe …"
 
-#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:70
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:72
 msgid "Total"
 msgstr "Skupaj"
 
-#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:211
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:291
 msgid "Contacting your bank …"
 msgstr "Povezovanje z banko …"
 
@@ -316,18 +319,34 @@ msgid "Ticket code is ambiguous on list"
 msgstr ""
 
 #: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:65
+msgid "Order not approved"
+msgstr ""
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:66
 #, fuzzy
 #| msgid "Check-in QR"
 msgid "Checked-in Tickets"
 msgstr "QR koda za check-in"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:66
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:67
 msgid "Valid Tickets"
 msgstr ""
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:67
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:68
 msgid "Currently inside"
 msgstr ""
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:69
+#: pretix/static/pretixcontrol/js/ui/question.js:137
+#: pretix/static/pretixpresale/js/ui/questions.js:270
+msgid "Yes"
+msgstr "Da"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:70
+#: pretix/static/pretixcontrol/js/ui/question.js:138
+#: pretix/static/pretixpresale/js/ui/questions.js:270
+msgid "No"
+msgstr "Ne"
 
 #: pretix/static/lightbox/js/lightbox.js:96
 #, fuzzy
@@ -440,99 +459,125 @@ msgstr ""
 msgid "is after"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:93
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:40
+msgid "="
+msgstr ""
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:99
 msgid "Product"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:97
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:103
 #, fuzzy
 #| msgctxt "widget"
 #| msgid "See variations"
 msgid "Product variation"
 msgstr "Poglej vrste"
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:101
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:107
 msgid "Gate"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:105
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:111
 msgid "Current date and time"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:109
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:115
 msgid "Current day of the week (1 = Monday, 7 = Sunday)"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:113
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:119
+msgid "Current entry status"
+msgstr ""
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:123
 msgid "Number of previous entries"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:117
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:127
 msgid "Number of previous entries since midnight"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:121
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:131
 msgid "Number of previous entries since"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:125
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:135
 msgid "Number of previous entries before"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:129
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:139
 msgid "Number of days with a previous entry"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:133
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:143
+msgid "Number of days with a previous entry since"
+msgstr ""
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:147
+msgid "Number of days with a previous entry before"
+msgstr ""
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:151
 msgid "Minutes since last entry (-1 on first entry)"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:137
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:155
 msgid "Minutes since first entry (-1 on first entry)"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:164
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:182
 msgid "All of the conditions below (AND)"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:165
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:183
 msgid "At least one of the conditions below (OR)"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:166
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:184
 msgid "Event start"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:167
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:185
 msgid "Event end"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:168
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:186
 msgid "Event admission"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:169
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:187
 msgid "custom date and time"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:170
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:188
 msgid "custom time"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:171
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:189
 msgid "Tolerance (minutes)"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:172
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:190
 msgid "Add condition"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:173
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:191
 msgid "minutes"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:174
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:192
 msgid "Duplicate"
+msgstr ""
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:193
+msgctxt "entry_status"
+msgid "present"
+msgstr ""
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules.js:194
+msgctxt "entry_status"
+msgid "absent"
 msgstr ""
 
 #: pretix/static/pretixcontrol/js/ui/editor.js:72
@@ -543,46 +588,46 @@ msgstr "QR koda za check-in"
 msgid "The PDF background file could not be loaded for the following reason:"
 msgstr "Ozadja PDF ni bilo mogoče naložiti zaradi naslednjega razloga:"
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:648
+#: pretix/static/pretixcontrol/js/ui/editor.js:656
 msgid "Group of objects"
 msgstr "Skupina objektov"
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:653
+#: pretix/static/pretixcontrol/js/ui/editor.js:661
 msgid "Text object"
 msgstr "Tekstovni objekt"
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:655
+#: pretix/static/pretixcontrol/js/ui/editor.js:663
 msgid "Barcode area"
 msgstr "Področje za črtno kodo"
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:657
+#: pretix/static/pretixcontrol/js/ui/editor.js:665
 #, fuzzy
 #| msgid "Barcode area"
 msgid "Image area"
 msgstr "Področje za črtno kodo"
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:659
+#: pretix/static/pretixcontrol/js/ui/editor.js:667
 msgid "Powered by pretix"
 msgstr "Powered by pretix"
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:661
+#: pretix/static/pretixcontrol/js/ui/editor.js:669
 msgid "Object"
 msgstr "Objekt"
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:665
+#: pretix/static/pretixcontrol/js/ui/editor.js:673
 msgid "Ticket design"
 msgstr "Oblikovanje vstopnice"
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:964
+#: pretix/static/pretixcontrol/js/ui/editor.js:972
 msgid "Saving failed."
 msgstr "Shranjevanje ni bilo uspešno."
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:1033
-#: pretix/static/pretixcontrol/js/ui/editor.js:1083
+#: pretix/static/pretixcontrol/js/ui/editor.js:1041
+#: pretix/static/pretixcontrol/js/ui/editor.js:1091
 msgid "Error while uploading your PDF file, please try again."
 msgstr "Napaka pri nalaganju datoteke PDF. Poskusite ponovno."
 
-#: pretix/static/pretixcontrol/js/ui/editor.js:1066
+#: pretix/static/pretixcontrol/js/ui/editor.js:1074
 msgid "Do you really want to leave the editor without saving your changes?"
 msgstr "Ali zares želite zapustiti urejevalnik ne da bi shranili spremembe?"
 
@@ -598,15 +643,15 @@ msgstr "Pripravljam sporočilo …"
 msgid "Unknown error."
 msgstr "Neznana napaka."
 
-#: pretix/static/pretixcontrol/js/ui/main.js:311
+#: pretix/static/pretixcontrol/js/ui/main.js:313
 msgid "Your color has great contrast and is very easy to read!"
 msgstr "Vaša barva ima dober kontrast in je lepo čitljiva!"
 
-#: pretix/static/pretixcontrol/js/ui/main.js:315
+#: pretix/static/pretixcontrol/js/ui/main.js:317
 msgid "Your color has decent contrast and is probably good-enough to read!"
 msgstr "Vaša barva ima zadovoljiv kontrast in je berljiva!"
 
-#: pretix/static/pretixcontrol/js/ui/main.js:319
+#: pretix/static/pretixcontrol/js/ui/main.js:321
 msgid ""
 "Your color has bad contrast for text on white background, please choose a "
 "darker shade."
@@ -614,32 +659,40 @@ msgstr ""
 "Vaša barva ima slab kontrast za besedilo na belem ozadju. Izberite temnejši "
 "odtenek."
 
-#: pretix/static/pretixcontrol/js/ui/main.js:468
-#: pretix/static/pretixcontrol/js/ui/main.js:488
+#: pretix/static/pretixcontrol/js/ui/main.js:475
+#: pretix/static/pretixcontrol/js/ui/main.js:495
 msgid "Search query"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/main.js:486
+#: pretix/static/pretixcontrol/js/ui/main.js:493
 msgid "All"
 msgstr "Vse"
 
-#: pretix/static/pretixcontrol/js/ui/main.js:487
+#: pretix/static/pretixcontrol/js/ui/main.js:494
 msgid "None"
 msgstr "Nič"
 
-#: pretix/static/pretixcontrol/js/ui/main.js:491
+#: pretix/static/pretixcontrol/js/ui/main.js:498
 msgid "Selected only"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/main.js:926
+#: pretix/static/pretixcontrol/js/ui/main.js:794
+msgid "Enter page number between 1 and %(max)s."
+msgstr ""
+
+#: pretix/static/pretixcontrol/js/ui/main.js:797
+msgid "Invalid page number."
+msgstr ""
+
+#: pretix/static/pretixcontrol/js/ui/main.js:955
 msgid "Use a different name internally"
 msgstr "Uporabite drugo interno ime"
 
-#: pretix/static/pretixcontrol/js/ui/main.js:966
+#: pretix/static/pretixcontrol/js/ui/main.js:995
 msgid "Click to close"
 msgstr "Kliknite za zapiranje"
 
-#: pretix/static/pretixcontrol/js/ui/main.js:1041
+#: pretix/static/pretixcontrol/js/ui/main.js:1070
 msgid "You have unsaved changes!"
 msgstr ""
 
@@ -654,16 +707,6 @@ msgstr "Drugi"
 #: pretix/static/pretixcontrol/js/ui/question.js:82
 msgid "Count"
 msgstr "Seštevek"
-
-#: pretix/static/pretixcontrol/js/ui/question.js:137
-#: pretix/static/pretixpresale/js/ui/questions.js:270
-msgid "Yes"
-msgstr "Da"
-
-#: pretix/static/pretixcontrol/js/ui/question.js:138
-#: pretix/static/pretixpresale/js/ui/questions.js:270
-msgid "No"
-msgstr "Ne"
 
 #: pretix/static/pretixcontrol/js/ui/subevent.js:111
 msgid "(one more date)"
@@ -697,40 +740,40 @@ msgstr[1] "Izdelki v vaši košarici bodo rezervirani še dve minuti."
 msgstr[2] "Izdelki v vaši košarici bodo rezervirani še nekaj minut."
 msgstr[3] "Izdelki v vaši košarici bodo rezervirani še več minut."
 
-#: pretix/static/pretixpresale/js/ui/main.js:171
+#: pretix/static/pretixpresale/js/ui/main.js:203
 #, fuzzy
 #| msgctxt "widget"
 #| msgid "from %(currency)s %(price)s"
 msgid "The organizer keeps %(currency)s %(amount)s"
 msgstr "od %(currency)s %(price)s"
 
-#: pretix/static/pretixpresale/js/ui/main.js:179
+#: pretix/static/pretixpresale/js/ui/main.js:211
 #, fuzzy
 #| msgctxt "widget"
 #| msgid "from %(currency)s %(price)s"
 msgid "You get %(currency)s %(amount)s back"
 msgstr "od %(currency)s %(price)s"
 
-#: pretix/static/pretixpresale/js/ui/main.js:195
+#: pretix/static/pretixpresale/js/ui/main.js:227
 msgid "Please enter the amount the organizer can keep."
 msgstr ""
 
-#: pretix/static/pretixpresale/js/ui/main.js:412
+#: pretix/static/pretixpresale/js/ui/main.js:444
 msgid "Please enter a quantity for one of the ticket types."
 msgstr "Prosimo vnesite količino za eno od vrst vstopnic."
 
-#: pretix/static/pretixpresale/js/ui/main.js:448
+#: pretix/static/pretixpresale/js/ui/main.js:480
 #, fuzzy
 #| msgid "Cart expired"
 msgid "required"
 msgstr "Vsebina košarice je potekla"
 
-#: pretix/static/pretixpresale/js/ui/main.js:551
-#: pretix/static/pretixpresale/js/ui/main.js:570
+#: pretix/static/pretixpresale/js/ui/main.js:583
+#: pretix/static/pretixpresale/js/ui/main.js:602
 msgid "Time zone:"
 msgstr ""
 
-#: pretix/static/pretixpresale/js/ui/main.js:561
+#: pretix/static/pretixpresale/js/ui/main.js:593
 msgid "Your local time:"
 msgstr ""
 
@@ -759,12 +802,17 @@ msgid "Price"
 msgstr ""
 
 #: pretix/static/pretixpresale/js/widget/widget.js:20
+msgctxt "widget"
+msgid "Select"
+msgstr ""
+
+#: pretix/static/pretixpresale/js/widget/widget.js:21
 #, javascript-format
 msgctxt "widget"
 msgid "Select %s"
 msgstr ""
 
-#: pretix/static/pretixpresale/js/widget/widget.js:21
+#: pretix/static/pretixpresale/js/widget/widget.js:22
 #, fuzzy, javascript-format
 #| msgctxt "widget"
 #| msgid "See variations"
@@ -772,91 +820,112 @@ msgctxt "widget"
 msgid "Select variant %s"
 msgstr "Poglej vrste"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:22
+#: pretix/static/pretixpresale/js/widget/widget.js:23
 msgctxt "widget"
 msgid "Sold out"
 msgstr "Razprodano"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:23
+#: pretix/static/pretixpresale/js/widget/widget.js:24
 msgctxt "widget"
 msgid "Buy"
 msgstr "Kupi"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:24
+#: pretix/static/pretixpresale/js/widget/widget.js:25
 msgctxt "widget"
 msgid "Register"
 msgstr "Register"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:25
+#: pretix/static/pretixpresale/js/widget/widget.js:26
 msgctxt "widget"
 msgid "Reserved"
 msgstr "Rezervirano"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:26
+#: pretix/static/pretixpresale/js/widget/widget.js:27
 msgctxt "widget"
 msgid "FREE"
 msgstr "Brezplačno"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:27
+#: pretix/static/pretixpresale/js/widget/widget.js:28
 msgctxt "widget"
 msgid "from %(currency)s %(price)s"
 msgstr "od %(currency)s %(price)s"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:28
+#: pretix/static/pretixpresale/js/widget/widget.js:29
 msgctxt "widget"
 msgid "incl. %(rate)s% %(taxname)s"
 msgstr "vsebuje %(rate)s% %(taxname)s"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:29
+#: pretix/static/pretixpresale/js/widget/widget.js:30
 msgctxt "widget"
 msgid "plus %(rate)s% %(taxname)s"
 msgstr "plus %(rate)s% %(taxname)s"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:30
+#: pretix/static/pretixpresale/js/widget/widget.js:31
 msgctxt "widget"
 msgid "incl. taxes"
 msgstr "vsebuje davek"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:31
+#: pretix/static/pretixpresale/js/widget/widget.js:32
 msgctxt "widget"
 msgid "plus taxes"
 msgstr "plus davek"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:32
+#: pretix/static/pretixpresale/js/widget/widget.js:33
 #, javascript-format
 msgctxt "widget"
 msgid "currently available: %s"
 msgstr "trenutno na voljo: %s"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:33
+#: pretix/static/pretixpresale/js/widget/widget.js:34
 msgctxt "widget"
 msgid "Only available with a voucher"
 msgstr "Na voljo samo z vavčerjem"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:34
+#: pretix/static/pretixpresale/js/widget/widget.js:35
+#, fuzzy
+#| msgctxt "widget"
+#| msgid "currently available: %s"
+msgctxt "widget"
+msgid "Not yet available"
+msgstr "trenutno na voljo: %s"
+
+#: pretix/static/pretixpresale/js/widget/widget.js:36
+msgctxt "widget"
+msgid "Not available anymore"
+msgstr ""
+
+#: pretix/static/pretixpresale/js/widget/widget.js:37
+#, fuzzy
+#| msgctxt "widget"
+#| msgid "currently available: %s"
+msgctxt "widget"
+msgid "Currently not available"
+msgstr "trenutno na voljo: %s"
+
+#: pretix/static/pretixpresale/js/widget/widget.js:38
 #, javascript-format
 msgctxt "widget"
 msgid "minimum amount to order: %s"
 msgstr "najmanjša količina za naročilo: %s"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:35
+#: pretix/static/pretixpresale/js/widget/widget.js:39
 msgctxt "widget"
 msgid "Close ticket shop"
 msgstr "Zapri trgovino z vstopnicami"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:36
+#: pretix/static/pretixpresale/js/widget/widget.js:40
 msgctxt "widget"
 msgid "The ticket shop could not be loaded."
 msgstr "Trgovine z vstopnicami ni bilo mogoče naložiti."
 
-#: pretix/static/pretixpresale/js/widget/widget.js:37
+#: pretix/static/pretixpresale/js/widget/widget.js:41
 msgctxt "widget"
 msgid ""
 "There are currently a lot of users in this ticket shop. Please open the shop "
 "in a new tab to continue."
 msgstr ""
 
-#: pretix/static/pretixpresale/js/widget/widget.js:39
+#: pretix/static/pretixpresale/js/widget/widget.js:43
 #, fuzzy
 #| msgctxt "widget"
 #| msgid "Close ticket shop"
@@ -864,24 +933,24 @@ msgctxt "widget"
 msgid "Open ticket shop"
 msgstr "Zapri trgovino z vstopnicami"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:40
+#: pretix/static/pretixpresale/js/widget/widget.js:44
 msgctxt "widget"
 msgid "The cart could not be created. Please try again later"
 msgstr "Košarice ni bilo mogoče ustvariti. Poskusite ponovno kasneje"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:41
+#: pretix/static/pretixpresale/js/widget/widget.js:45
 msgctxt "widget"
 msgid ""
 "We could not create your cart, since there are currently too many users in "
 "this ticket shop. Please click \"Continue\" to retry in a new tab."
 msgstr ""
 
-#: pretix/static/pretixpresale/js/widget/widget.js:43
+#: pretix/static/pretixpresale/js/widget/widget.js:47
 msgctxt "widget"
 msgid "Waiting list"
 msgstr "Čakalni seznam"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:44
+#: pretix/static/pretixpresale/js/widget/widget.js:48
 msgctxt "widget"
 msgid ""
 "You currently have an active cart for this event. If you select more "
@@ -890,72 +959,83 @@ msgstr ""
 "Imate aktivno košarico za ta dogodek. Če izberete več izdelkov, bodo dodani "
 "v obstoječo košarico."
 
-#: pretix/static/pretixpresale/js/widget/widget.js:46
+#: pretix/static/pretixpresale/js/widget/widget.js:50
 msgctxt "widget"
 msgid "Resume checkout"
 msgstr "Nadaljujte s checkoutom"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:47
+#: pretix/static/pretixpresale/js/widget/widget.js:51
 msgctxt "widget"
 msgid "Redeem a voucher"
 msgstr "Izkoristi vavčer"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:48
+#: pretix/static/pretixpresale/js/widget/widget.js:52
 msgctxt "widget"
 msgid "Redeem"
 msgstr "Izkoristi"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:49
+#: pretix/static/pretixpresale/js/widget/widget.js:53
 msgctxt "widget"
 msgid "Voucher code"
 msgstr "Koda vavčerja"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:50
+#: pretix/static/pretixpresale/js/widget/widget.js:54
 msgctxt "widget"
 msgid "Close"
 msgstr "Zapri"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:51
+#: pretix/static/pretixpresale/js/widget/widget.js:55
 msgctxt "widget"
 msgid "Continue"
 msgstr "Nadaljuj"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:52
+#: pretix/static/pretixpresale/js/widget/widget.js:56
+#, fuzzy
+#| msgctxt "widget"
+#| msgid "See variations"
 msgctxt "widget"
-msgid "See variations"
+msgid "Show variants"
 msgstr "Poglej vrste"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:53
+#: pretix/static/pretixpresale/js/widget/widget.js:57
+#, fuzzy
+#| msgctxt "widget"
+#| msgid "See variations"
+msgctxt "widget"
+msgid "Hide variants"
+msgstr "Poglej vrste"
+
+#: pretix/static/pretixpresale/js/widget/widget.js:58
 msgctxt "widget"
 msgid "Choose a different event"
 msgstr "Izberite drug dogodek"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:54
+#: pretix/static/pretixpresale/js/widget/widget.js:59
 msgctxt "widget"
 msgid "Choose a different date"
 msgstr "Izberite drug datum"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:55
+#: pretix/static/pretixpresale/js/widget/widget.js:60
 msgctxt "widget"
 msgid "Back"
 msgstr "Nazaj"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:56
+#: pretix/static/pretixpresale/js/widget/widget.js:61
 msgctxt "widget"
 msgid "Next month"
 msgstr "Naslednji mesec"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:57
+#: pretix/static/pretixpresale/js/widget/widget.js:62
 msgctxt "widget"
 msgid "Previous month"
 msgstr "Prejšnji mesec"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:58
+#: pretix/static/pretixpresale/js/widget/widget.js:63
 msgctxt "widget"
 msgid "Next week"
 msgstr ""
 
-#: pretix/static/pretixpresale/js/widget/widget.js:59
+#: pretix/static/pretixpresale/js/widget/widget.js:64
 #, fuzzy
 #| msgctxt "widget"
 #| msgid "Previous month"
@@ -963,12 +1043,12 @@ msgctxt "widget"
 msgid "Previous week"
 msgstr "Prejšnji mesec"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:60
+#: pretix/static/pretixpresale/js/widget/widget.js:65
 msgctxt "widget"
 msgid "Open seat selection"
 msgstr "Odpri izbiro sedežev"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:61
+#: pretix/static/pretixpresale/js/widget/widget.js:66
 msgctxt "widget"
 msgid ""
 "Some or all ticket categories are currently sold out. If you want, you can "
@@ -976,86 +1056,90 @@ msgid ""
 "again."
 msgstr ""
 
-#: pretix/static/pretixpresale/js/widget/widget.js:62
+#: pretix/static/pretixpresale/js/widget/widget.js:67
 msgctxt "widget"
 msgid "Load more"
 msgstr ""
 
-#: pretix/static/pretixpresale/js/widget/widget.js:64
+#: pretix/static/pretixpresale/js/widget/widget.js:69
 msgid "Mo"
 msgstr "Pon"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:65
+#: pretix/static/pretixpresale/js/widget/widget.js:70
 msgid "Tu"
 msgstr "Tor"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:66
+#: pretix/static/pretixpresale/js/widget/widget.js:71
 msgid "We"
 msgstr "Sre"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:67
+#: pretix/static/pretixpresale/js/widget/widget.js:72
 msgid "Th"
 msgstr "Čet"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:68
+#: pretix/static/pretixpresale/js/widget/widget.js:73
 msgid "Fr"
 msgstr "Pet"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:69
+#: pretix/static/pretixpresale/js/widget/widget.js:74
 msgid "Sa"
 msgstr "Sob"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:70
+#: pretix/static/pretixpresale/js/widget/widget.js:75
 msgid "Su"
 msgstr "Ned"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:73
+#: pretix/static/pretixpresale/js/widget/widget.js:78
 msgid "January"
 msgstr "Januar"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:74
+#: pretix/static/pretixpresale/js/widget/widget.js:79
 msgid "February"
 msgstr "Februar"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:75
+#: pretix/static/pretixpresale/js/widget/widget.js:80
 msgid "March"
 msgstr "Marec"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:76
+#: pretix/static/pretixpresale/js/widget/widget.js:81
 msgid "April"
 msgstr "April"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:77
+#: pretix/static/pretixpresale/js/widget/widget.js:82
 msgid "May"
 msgstr "Maj"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:78
+#: pretix/static/pretixpresale/js/widget/widget.js:83
 msgid "June"
 msgstr "Junij"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:79
+#: pretix/static/pretixpresale/js/widget/widget.js:84
 msgid "July"
 msgstr "Julij"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:80
+#: pretix/static/pretixpresale/js/widget/widget.js:85
 msgid "August"
 msgstr "Avgust"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:81
+#: pretix/static/pretixpresale/js/widget/widget.js:86
 msgid "September"
 msgstr "September"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:82
+#: pretix/static/pretixpresale/js/widget/widget.js:87
 msgid "October"
 msgstr "Oktober"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:83
+#: pretix/static/pretixpresale/js/widget/widget.js:88
 msgid "November"
 msgstr "November"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:84
+#: pretix/static/pretixpresale/js/widget/widget.js:89
 msgid "December"
 msgstr "December"
+
+#~ msgctxt "widget"
+#~ msgid "See variations"
+#~ msgstr "Poglej vrste"
 
 #~ msgid "Lead Scan QR"
 #~ msgstr "Lead Scan QR"
