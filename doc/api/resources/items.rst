@@ -46,8 +46,11 @@ personalized                            boolean                    ``true`` for 
 position                                integer                    An integer, used for sorting
 picture                                 file                       A product picture to be displayed in the shop
                                                                    (can be ``null``).
-sales_channels                          list of strings            Sales channels this product is available on, such as
-                                                                   ``"web"`` or ``"resellers"``. Defaults to ``["web"]``.
+all_sales_channels                      boolean                    If ``true`` (default), the item is available on all sales channels.
+limit_sales_channels                    list of strings            List of sales channel identifiers the item is available on
+                                                                   if ``all_sales_channels`` is ``false``.
+sales_channels                          list of strings            **DEPRECATED.** Legacy interface, use ``all_sales_channels``
+                                                                   and ``limit_sales_channels`` instead.
 available_from                          datetime                   The first date time at which this item can be bought
                                                                    (or ``null``).
 available_from_mode                     string                     If ``hide`` (the default), this item is hidden in the shop
@@ -66,6 +69,10 @@ hidden_if_available                     integer                    **DEPRECATED*
 hidden_if_item_available                integer                    The internal ID of a different item, or ``null``. If
                                                                    set, this item won't be shown publicly as long as this
                                                                    other item is available.
+hidden_if_item_available_mode           string                     If ``hide`` (the default), this item is hidden in the shop
+                                                                   if unavailable due to the ``hidden_if_item_available`` setting.
+                                                                   If ``info``, the item is visible, but can't be purchased,
+                                                                   and a note explaining the unavailability is displayed.
 require_voucher                         boolean                    If ``true``, this item can only be bought using a
                                                                    voucher that is specifically assigned to this item.
 hide_without_voucher                    boolean                    If ``true``, this item is only shown during the voucher
@@ -132,6 +139,10 @@ has_variations                          boolean                    Shows whether
 variations                              list of objects            A list with one object for each variation of this item.
                                                                    Can be empty. Only writable during creation,
                                                                    use separate endpoint to modify this later.
+program_times                           list of objects            A list with one object for each program time of this item.
+                                                                   Can be empty. Only writable during creation,
+                                                                   use separate endpoint to modify this later.
+                                                                   Not available for items in event series.
 ├ id                                    integer                    Internal ID of the variation
 ├ value                                 multi-lingual string       The "name" of the variation
 ├ default_price                         money (string)             The price set directly for this variation or ``null``
@@ -157,11 +168,14 @@ variations                              list of objects            A list with o
                                                                    be hidden from users without a valid membership.
 ├ require_membership_types              list of integers           Internal IDs of membership types valid if ``require_membership`` is ``true``
                                                                    Markdown syntax or can be ``null``.
-├ sales_channels                        list of strings            Sales channels this variation is available on, such as
-                                                                   ``"web"`` or ``"resellers"``. Defaults to all existing sales channels.
+├ all_sales_channels                    boolean                    If ``true`` (default), the variation is available on all sales channels.
+├ limit_sales_channels                  list of strings            List of sales channel identifiers the variation is available on
+                                                                   if ``all_sales_channels`` is ``false``.
                                                                    The item-level list takes precedence, i.e. a sales
-                                                                   channel needs to be on both lists for the item to be
-                                                                   available.
+                                                                   channel needs to be on both lists for the variation to be
+                                                                   available (unless ``all_sales_channels`` is used).
+├ sales_channels                        list of strings            **DEPRECATED.** Legacy interface, use ``all_sales_channels``
+                                                                   and ``limit_sales_channels`` instead.
 ├ available_from                        datetime                   The first date time at which this variation can be bought
                                                                    (or ``null``).
 ├ available_from_mode                   string                     If ``hide`` (the default), this variation is hidden in the shop
@@ -201,28 +215,6 @@ bundles                                 list of objects            Definition of
 meta_data                               object                     Values set for event-specific meta data parameters.
 ======================================= ========================== =======================================================
 
-.. versionchanged:: 4.0
-
-   The attributes ``require_membership``, ``require_membership_types``, ``grant_membership_type``, ``grant_membership_duration_like_event``,
-    ``grant_membership_duration_days`` and ``grant_membership_duration_months`` have been added.
-
-.. versionchanged:: 4.4
-
-   The attributes ``require_membership_hidden`` attribute has been added.
-
-.. versionchanged:: 4.16
-
-   The ``variations[x].meta_data`` and ``variations[x].checkin_attention`` attributes have been added.
-   The ``personalized`` attribute has been added.
-
-.. versionchanged:: 4.17
-
-   The ``validity_*`` attributes have been added.
-
-.. versionchanged:: 4.18
-
-   The ``media_policy`` and ``media_type`` attributes have been added.
-
 .. versionchanged:: 2023.10
 
    The ``checkin_text`` and ``variations[x].checkin_text`` attributes have been added.
@@ -233,6 +225,14 @@ meta_data                               object                     Values set fo
    The ``hidden_if_item_available`` attributes has been added, the ``hidden_if_available`` attribute has been
    deprecated.
 
+.. versionchanged:: 2025.01
+
+   The ``hidden_if_item_available_mode`` attributes has been added.
+
+.. versionchanged:: 2025.9
+
+   The ``program_times`` attribute has been added.
+
 Notes
 -----
 
@@ -240,9 +240,11 @@ Please note that an item either always has variations or never has. Once created
 change to an item without and vice versa. To create an item with variations ensure that you POST an item with at least
 one variation.
 
-Also note that ``variations``, ``bundles``, and  ``addons`` are only supported on ``POST``. To update/delete variations,
-bundles, and add-ons please use the dedicated nested endpoints. By design this endpoint does not support ``PATCH`` and ``PUT``
-with nested ``variations``, ``bundles`` and/or ``addons``.
+Also note that ``variations``, ``bundles``, ``addons`` and  ``program_times`` are only supported on ``POST``. To update/delete variations,
+bundles, add-ons and program times please use the dedicated nested endpoints. By design this endpoint does not support ``PATCH`` and ``PUT``
+with nested ``variations``, ``bundles``, ``addons`` and/or ``program_times``.
+
+``program_times`` is not available to items in event series.
 
 Endpoints
 ---------
@@ -276,6 +278,8 @@ Endpoints
             "id": 1,
             "name": {"en": "Standard ticket"},
             "internal_name": "",
+            "all_sales_channels": false,
+            "limit_sales_channels": ["web"],
             "sales_channels": ["web"],
             "default_price": "23.00",
             "original_price": null,
@@ -300,6 +304,7 @@ Endpoints
             "available_until_mode": "hide",
             "hidden_if_available": null,
             "hidden_if_item_available": null,
+            "hidden_if_item_available_mode": "hide",
             "require_voucher": false,
             "hide_without_voucher": false,
             "allow_cancel": true,
@@ -340,6 +345,8 @@ Endpoints
                  "require_approval": false,
                  "require_membership": false,
                  "require_membership_types": [],
+                 "all_sales_channels": false,
+                 "limit_sales_channels": ["web"],
                  "sales_channels": ["web"],
                  "available_from": null,
                  "available_from_mode": "hide",
@@ -362,6 +369,8 @@ Endpoints
                  "require_approval": false,
                  "require_membership": false,
                  "require_membership_types": [],
+                 "all_sales_channels": false,
+                 "limit_sales_channels": ["web"],
                  "sales_channels": ["web"],
                  "available_from": null,
                  "available_from_mode": "hide",
@@ -374,12 +383,14 @@ Endpoints
               }
             ],
             "addons": [],
-            "bundles": []
+            "bundles": [],
+            "program_times": []
           }
         ]
       }
 
    :query integer page: The page number in case of a multi-page result set, default is 1
+   :query string search: Filter the list by internal name or name of the item (substring search).
    :query boolean active: If set to ``true`` or ``false``, only items with this value for the field ``active`` will be
                           returned.
    :query integer category: If set to the ID of a category, only items within that category will be returned.
@@ -420,6 +431,8 @@ Endpoints
         "id": 1,
         "name": {"en": "Standard ticket"},
         "internal_name": "",
+        "all_sales_channels": false,
+        "limit_sales_channels": ["web"],
         "sales_channels": ["web"],
         "default_price": "23.00",
         "original_price": null,
@@ -444,6 +457,7 @@ Endpoints
         "available_until_mode": "hide",
         "hidden_if_available": null,
         "hidden_if_item_available": null,
+        "hidden_if_item_available_mode": "hide",
         "require_voucher": false,
         "hide_without_voucher": false,
         "allow_cancel": true,
@@ -485,6 +499,8 @@ Endpoints
              "require_membership": false,
              "require_membership_types": [],
              "description": null,
+             "all_sales_channels": false,
+             "limit_sales_channels": ["web"],
              "sales_channels": ["web"],
              "available_from": null,
              "available_from_mode": "hide",
@@ -506,6 +522,8 @@ Endpoints
              "require_approval": false,
              "require_membership": false,
              "require_membership_types": [],
+             "all_sales_channels": false,
+             "limit_sales_channels": ["web"],
              "sales_channels": ["web"],
              "available_from": null,
              "available_from_mode": "hide",
@@ -518,7 +536,8 @@ Endpoints
           }
         ],
         "addons": [],
-        "bundles": []
+        "bundles": [],
+        "program_times": []
       }
 
    :param organizer: The ``slug`` field of the organizer to fetch
@@ -545,7 +564,8 @@ Endpoints
         "id": 1,
         "name": {"en": "Standard ticket"},
         "internal_name": "",
-        "sales_channels": ["web"],
+        "all_sales_channels": false,
+        "limit_sales_channels": ["web"],
         "default_price": "23.00",
         "original_price": null,
         "category": null,
@@ -569,6 +589,7 @@ Endpoints
         "available_until_mode": "hide",
         "hidden_if_available": null,
         "hidden_if_item_available": null,
+        "hidden_if_item_available_mode": "hide",
         "require_voucher": false,
         "hide_without_voucher": false,
         "allow_cancel": true,
@@ -608,7 +629,8 @@ Endpoints
              "require_approval": false,
              "require_membership": false,
              "require_membership_types": [],
-             "sales_channels": ["web"],
+             "all_sales_channels": false,
+             "limit_sales_channels": ["web"],
              "available_from": null,
              "available_from_mode": "hide",
              "available_until": null,
@@ -630,7 +652,8 @@ Endpoints
              "require_approval": false,
              "require_membership": false,
              "require_membership_types": [],
-             "sales_channels": ["web"],
+             "all_sales_channels": false,
+             "limit_sales_channels": ["web"],
              "available_from": null,
              "available_from_mode": "hide",
              "available_until": null,
@@ -642,7 +665,13 @@ Endpoints
           }
         ],
         "addons": [],
-        "bundles": []
+        "bundles": [],
+        "program_times": [
+          {
+            "start": "2025-08-14T22:00:00Z",
+            "end": "2025-08-15T00:00:00Z"
+          }
+        ]
       }
 
    **Example response**:
@@ -657,6 +686,8 @@ Endpoints
         "id": 1,
         "name": {"en": "Standard ticket"},
         "internal_name": "",
+        "all_sales_channels": false,
+        "limit_sales_channels": ["web"],
         "sales_channels": ["web"],
         "default_price": "23.00",
         "original_price": null,
@@ -681,6 +712,7 @@ Endpoints
         "available_until_mode": "hide",
         "hidden_if_available": null,
         "hidden_if_item_available": null,
+        "hidden_if_item_available_mode": "hide",
         "require_voucher": false,
         "hide_without_voucher": false,
         "allow_cancel": true,
@@ -721,6 +753,8 @@ Endpoints
              "require_approval": false,
              "require_membership": false,
              "require_membership_types": [],
+             "all_sales_channels": false,
+             "limit_sales_channels": ["web"],
              "sales_channels": ["web"],
              "available_from": null,
              "available_from_mode": "hide",
@@ -743,6 +777,8 @@ Endpoints
              "require_approval": false,
              "require_membership": false,
              "require_membership_types": [],
+             "all_sales_channels": false,
+             "limit_sales_channels": ["web"],
              "sales_channels": ["web"],
              "available_from": null,
              "available_from_mode": "hide",
@@ -755,7 +791,13 @@ Endpoints
           }
         ],
         "addons": [],
-        "bundles": []
+        "bundles": [],
+        "program_times": [
+          {
+            "start": "2025-08-14T22:00:00Z",
+            "end": "2025-08-15T00:00:00Z"
+          }
+        ]
       }
 
    :param organizer: The ``slug`` field of the organizer of the event to create an item for
@@ -771,8 +813,9 @@ Endpoints
    the resource, other fields will be reset to default. With ``PATCH``, you only need to provide the fields that you
    want to change.
 
-   You can change all fields of the resource except the ``has_variations``, ``variations`` and the ``addon`` field. If
-   you need to update/delete variations or add-ons please use the nested dedicated endpoints.
+   You can change all fields of the resource except the ``has_variations``, ``variations``, ``addon`` and the
+   ``program_times`` field. If you need to update/delete variations, add-ons or program times, please use the nested
+   dedicated endpoints.
 
    **Example request**:
 
@@ -801,6 +844,8 @@ Endpoints
         "id": 1,
         "name": {"en": "Ticket"},
         "internal_name": "",
+        "all_sales_channels": false,
+        "limit_sales_channels": ["web"],
         "sales_channels": ["web"],
         "default_price": "25.00",
         "original_price": null,
@@ -825,6 +870,7 @@ Endpoints
         "available_until_mode": "hide",
         "hidden_if_available": null,
         "hidden_if_item_available": null,
+        "hidden_if_item_available_mode": "hide",
         "require_voucher": false,
         "hide_without_voucher": false,
         "generate_tickets": null,
@@ -865,6 +911,8 @@ Endpoints
              "require_approval": false,
              "require_membership": false,
              "require_membership_types": [],
+             "all_sales_channels": false,
+             "limit_sales_channels": ["web"],
              "sales_channels": ["web"],
              "available_from": null,
              "available_from_mode": "hide",
@@ -887,6 +935,8 @@ Endpoints
              "require_approval": false,
              "require_membership": false,
              "require_membership_types": [],
+             "all_sales_channels": false,
+             "limit_sales_channels": ["web"],
              "sales_channels": ["web"],
              "available_from": null,
              "available_from_mode": "hide",
@@ -899,7 +949,8 @@ Endpoints
           }
         ],
         "addons": [],
-        "bundles": []
+        "bundles": [],
+        "program_times": []
       }
 
    :param organizer: The ``slug`` field of the organizer to modify

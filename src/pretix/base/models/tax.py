@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -21,15 +21,18 @@
 #
 import json
 from decimal import Decimal
+from typing import Optional
 
-import jsonschema
 from django.contrib.staticfiles import finders
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils.deconstruct import deconstructible
 from django.utils.formats import localize
-from django.utils.translation import gettext_lazy as _, pgettext
+from django.utils.functional import lazy
+from django.utils.hashable import make_hashable
+from django.utils.html import format_html
+from django.utils.translation import gettext_lazy as _, pgettext, pgettext_lazy
 from i18nfield.fields import I18nCharField
 from i18nfield.strings import LazyI18nString
 
@@ -40,7 +43,7 @@ from pretix.helpers.countries import FastCountryField
 
 
 class TaxedPrice:
-    def __init__(self, *, gross: Decimal, net: Decimal, tax: Decimal, rate: Decimal, name: str):
+    def __init__(self, *, gross: Decimal, net: Decimal, tax: Decimal, rate: Decimal, name: str, code: Optional[str]):
         if net + tax != gross:
             raise ValueError('Net value and tax value need to add to the gross value')
         self.gross = gross
@@ -48,6 +51,7 @@ class TaxedPrice:
         self.tax = tax
         self.rate = rate
         self.name = name
+        self.code = code
 
     def __repr__(self):
         return '{} + {}% = {}'.format(localize(self.net), localize(self.rate), localize(self.gross))
@@ -70,6 +74,7 @@ class TaxedPrice:
             tax=newgross - newnet,
             rate=self.rate,
             name=self.name,
+            code=self.code,
         )
 
     def __mul__(self, other):
@@ -83,6 +88,7 @@ class TaxedPrice:
             tax=newgross - newnet,
             rate=self.rate,
             name=self.name,
+            code=self.code,
         )
 
     def __eq__(self, other):
@@ -91,7 +97,8 @@ class TaxedPrice:
             self.net == other.net and
             self.tax == other.tax and
             self.rate == other.rate and
-            self.name == other.name
+            self.name == other.name and
+            self.code == other.code
         )
 
 
@@ -100,7 +107,8 @@ TAXED_ZERO = TaxedPrice(
     net=Decimal('0.00'),
     tax=Decimal('0.00'),
     rate=Decimal('0.00'),
-    name=''
+    name='',
+    code=None,
 )
 
 EU_COUNTRIES = {
@@ -119,6 +127,154 @@ EU_CURRENCIES = {
     'SE': 'SEK'
 }
 VAT_ID_COUNTRIES = EU_COUNTRIES | {'CH', 'NO'}
+
+format_html_lazy = lazy(format_html, str)
+
+
+TAX_CODE_LISTS = (
+    # Sources:
+    # https://ec.europa.eu/digital-building-blocks/sites/display/DIGITAL/Registry+of+supporting+artefacts+to+implement+EN16931#RegistryofsupportingartefactstoimplementEN16931-Codelists#RegistryofsupportingartefactstoimplementEN16931-Codelists
+    # https://docs.peppol.eu/poacc/billing/3.0/codelist/vatex/
+    # https://docs.peppol.eu/poacc/billing/3.0/codelist/UNCL5305/
+    # https://www.bzst.de/DE/Unternehmen/Aussenpruefungen/DigitaleSchnittstelleFinV/digitaleschnittstellefinv_node.html#js-toc-entry2
+    #
+    # !! When changed, also update tax-rules-custom.schema.json and doc/api/resources/taxrules.rst !!
+    (
+        _("Standard rates"),
+        (
+            # Standard rate in any country, such as 19% in Germany or 20% in Austria
+            # DSFinV-K mapping: 1
+            ("S/standard", pgettext_lazy("tax_code", "Standard rate")),
+
+            # Reduced rate in any country, such as 7% in Germany or both 10% and 13% in Austria
+            # DSFinV-K mapping: 2
+            ("S/reduced", pgettext_lazy("tax_code", "Reduced rate")),
+
+            # Averaged rate, for example Germany § 24 (1) Nr. 3 UStG "für die übrigen Umsätze" in agricultural and silvicultural businesses
+            # DSFinV-K mapping: 3
+            ("S/averaged", pgettext_lazy("tax_code", "Averaged rate (other revenue in a agricultural and silvicultural business)")),
+
+            # We ignore the German special case of the actual silvicultural products as they won't be sold through pretix (DSFinV-K mapping: 4)
+        )
+    ),
+    (
+        _("Reverse charge"),
+        (
+            ("AE", pgettext_lazy("tax_code", "Reverse charge")),
+        )
+    ),
+    (
+        _("Tax free"),
+        (
+            # DSFinV-K mapping: 5
+            ("O", pgettext_lazy("tax_code", "Services outside of scope of tax")),
+
+            # DSFinV-K mapping: 6
+            ("E", pgettext_lazy("tax_code", "Exempt from tax (no reason given)")),
+
+            # DSFinV-K mapping: 6
+            ("Z", pgettext_lazy("tax_code", "Zero-rated goods")),
+
+            # DSFinV-K mapping: 5
+            ("G", pgettext_lazy("tax_code", "Free export item, VAT not charged")),
+
+            # DSFinV-K mapping: 6?
+            ("K", pgettext_lazy("tax_code", "VAT exempt for EEA intra-community supply of goods and services")),
+        )
+    ),
+    (
+        _("Special cases"),
+        (
+            ("L", pgettext_lazy("tax_code", "Canary Islands general indirect tax")),
+            ("M", pgettext_lazy("tax_code", "Tax for production, services and importation in Ceuta and Melilla")),
+            ("B", pgettext_lazy("tax_code", "Transferred (VAT), only in Italy")),
+        )
+    ),
+    (
+        _("Exempt with specific reason"),
+        (
+            ("E/VATEX-EU-79-C",
+             pgettext_lazy("tax_code", "Exempt based on article 79, point c of Council Directive 2006/112/EC")),
+            *[
+                (
+                    f"E/VATEX-EU-132-1{letter.upper()}",
+                    lazy(
+                        lambda let: pgettext(
+                            "tax_code",
+                            "Exempt based on article {article}, section {section} ({letter}) of Council "
+                            "Directive 2006/112/EC"
+                        ).format(article="132", section="1", letter=let),
+                        str
+                    )(letter)
+                ) for letter in ("a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q")
+            ],
+            *[
+                (
+                    f"E/VATEX-EU-143-1{letter.upper()}",
+                    lazy(
+                        lambda let: pgettext(
+                            "tax_code",
+                            "Exempt based on article {article}, section {section} ({letter}) of Council "
+                            "Directive 2006/112/EC"
+                        ).format(article="143", section="1", letter=let),
+                        str
+                    )(letter)
+                ) for letter in ("a", "b", "c", "d", "e", "f", "fa", "g", "h", "i", "j", "k", "l")
+            ],
+            *[
+                (
+                    f"E/VATEX-EU-148-{letter.upper()}",
+                    lazy(
+                        lambda let: pgettext(
+                            "tax_code",
+                            "Exempt based on article {article}, section ({letter}) of Council "
+                            "Directive 2006/112/EC"
+                        ).format(article="148", letter=let),
+                        str
+                    )(letter)
+                ) for letter in ("a", "b", "c", "d", "e", "f", "g")
+            ],
+            *[
+                (
+                    f"E/VATEX-EU-151-1{letter.upper()}",
+                    lazy(
+                        lambda let: pgettext(
+                            "tax_code",
+                            "Exempt based on article {article}, section {section} ({letter}) of Council "
+                            "Directive 2006/112/EC"
+                        ).format(article="151", section="1", letter=let),
+                        str
+                    )(letter)
+                ) for letter in ("a", "aa", "b", "c", "d", "e")
+            ],
+            ("E/VATEX-EU-309",
+             pgettext_lazy("tax_code", "Exempt based on article 309 of Council Directive 2006/112/EC")),
+            ("E/VATEX-EU-D",
+             pgettext_lazy("tax_code", "Intra-Community acquisition from second hand means of transport")),
+            ("E/VATEX-EU-F",
+             pgettext_lazy("tax_code", "Intra-Community acquisition of second hand goods")),
+            ("E/VATEX-EU-I",
+             pgettext_lazy("tax_code", "Intra-Community acquisition of works of art")),
+            ("E/VATEX-EU-J",
+             pgettext_lazy("tax_code", "Intra-Community acquisition of collectors items and antiques")),
+            ("E/VATEX-FR-FRANCHISE",
+             pgettext_lazy("tax_code", "France domestic VAT franchise in base")),
+            ("E/VATEX-FR-CNWVAT",
+             pgettext_lazy("tax_code", "France domestic Credit Notes without VAT, due to supplier forfeit of VAT for discount")),
+        )
+    ),
+)
+
+
+def get_tax_code_labels():
+    flat = []
+    for choice, value in TAX_CODE_LISTS:
+        if isinstance(value, (list, tuple)):
+            flat.extend(value)
+        else:
+            flat.append((choice, value))
+
+    return dict(make_hashable(flat))
 
 
 def is_eu_country(cc):
@@ -141,6 +297,8 @@ def cc_to_vat_prefix(country_code):
 @deconstructible
 class CustomRulesValidator:
     def __call__(self, value):
+        import jsonschema
+
         if not isinstance(value, dict):
             try:
                 val = json.loads(value)
@@ -169,6 +327,14 @@ class TaxRule(LoggedModel):
         help_text=_('Should be short, e.g. "VAT"'),
         max_length=190,
     )
+    code = models.CharField(
+        verbose_name=_('Tax code'),
+        help_text=_('If you help us understand what this tax rules legally is, we can use this information for '
+                    'eInvoices, exporting to accounting system, etc.'),
+        null=True, blank=True,
+        max_length=190,
+        choices=TAX_CODE_LISTS,
+    )
     rate = models.DecimalField(
         max_digits=10,
         decimal_places=2,
@@ -193,11 +359,17 @@ class TaxRule(LoggedModel):
     eu_reverse_charge = models.BooleanField(
         verbose_name=_("Use EU reverse charge taxation rules"),
         default=False,
-        help_text=_("Not recommended. Most events will NOT be qualified for reverse charge since the place of "
-                    "taxation is the location of the event. This option disables charging VAT for all customers "
-                    "outside the EU and for business customers in different EU countries who entered a valid EU VAT "
-                    "ID. Only enable this option after consulting a tax counsel. No warranty given for correct tax "
-                    "calculation. USE AT YOUR OWN RISK.")
+        help_text=format_html_lazy(
+            '<span class="label label-warning" data-toggle="tooltip" title="{}">{}</span> {}',
+            _('This feature will be removed in the future as it does not handle VAT for non-business customers in '
+              'other EU countries in a way that works for all organizers. Use custom rules instead.'),
+            _('DEPRECATED'),
+            _("Not recommended. Most events will NOT be qualified for reverse charge since the place of "
+              "taxation is the location of the event. This option disables charging VAT for all customers "
+              "outside the EU and for business customers in different EU countries who entered a valid EU VAT "
+              "ID. Only enable this option after consulting a tax counsel. No warranty given for correct tax "
+              "calculation. USE AT YOUR OWN RISK.")
+        ),
     )
     home_country = FastCountryField(
         verbose_name=_('Merchant country'),
@@ -206,9 +378,20 @@ class TaxRule(LoggedModel):
                     'if configured above.'),
     )
     custom_rules = models.TextField(blank=True, null=True)
+    default = models.BooleanField(
+        verbose_name=_('Default'),
+        default=False,
+    )
 
     class Meta:
         ordering = ('event', 'rate', 'id')
+        constraints = [
+            models.UniqueConstraint(
+                fields=["event"],
+                condition=models.Q(default=True),
+                name="one_default_per_event",
+            ),
+        ]
 
     class SaleNotAllowed(Exception):
         pass
@@ -223,7 +406,7 @@ class TaxRule(LoggedModel):
             and not OrderFee.objects.filter(tax_rule=self, order__event=self.event).exists()
             and not OrderPosition.all.filter(tax_rule=self, order__event=self.event).exists()
             and not self.event.items.filter(tax_rule=self).exists()
-            and self.event.settings.tax_rate_default != self
+            and not (self.default and self.event.tax_rules.filter(~models.Q(pk=self.pk)).exists())
         )
 
     @classmethod
@@ -239,6 +422,16 @@ class TaxRule(LoggedModel):
     def clean(self):
         if self.eu_reverse_charge and not self.home_country:
             raise ValidationError(_('You need to set your home country to use the reverse charge feature.'))
+
+        if self.rate != Decimal("0.00") and self.code and (self.code.split("/")[0] in ("O", "E", "Z", "G", "K", "AE")):
+            raise ValidationError({
+                "code": _("A combination of this tax code with a non-zero tax rate does not make sense.")
+            })
+
+        if self.rate == Decimal("0.00") and self.code and (self.code.split("/")[0] in ("S", "L", "M", "B")):
+            raise ValidationError({
+                "code": _("A combination of this tax code with a zero tax rate does not make sense.")
+            })
 
     def __str__(self):
         if self.price_includes_tax:
@@ -266,8 +459,9 @@ class TaxRule(LoggedModel):
                 return Decimal(rule.get('rate'))
         return Decimal(self.rate)
 
-    def tax(self, base_price, base_price_is='auto', currency=None, override_tax_rate=None, invoice_address=None,
-            subtract_from_gross=Decimal('0.00'), gross_price_is_tax_rate: Decimal = None, force_fixed_gross_price=False):
+    def tax(self, base_price, base_price_is='auto', currency=None, override_tax_rate=None, override_tax_code=None,
+            invoice_address=None, subtract_from_gross=Decimal('0.00'), gross_price_is_tax_rate: Decimal = None,
+            force_fixed_gross_price=False):
         from .event import Event
         try:
             currency = currency or self.event.currency
@@ -275,6 +469,13 @@ class TaxRule(LoggedModel):
             pass
 
         rate = Decimal(self.rate)
+        code = self.code
+
+        if override_tax_code is not None:
+            code = override_tax_code
+        elif invoice_address:
+            code = self.tax_code_for(invoice_address)
+
         if override_tax_rate is not None:
             rate = override_tax_rate
         elif invoice_address:
@@ -294,10 +495,21 @@ class TaxRule(LoggedModel):
                     subtract_from_gross = Decimal('0.00')
                 rate = adjust_rate
 
+        def _limit_subtract(base_price, subtract_from_gross):
+            if not subtract_from_gross:
+                return base_price
+            if base_price >= Decimal('0.00'):
+                # For positive prices, make sure they don't go negative because of bundles
+                return max(Decimal('0.00'), base_price - subtract_from_gross)
+            else:
+                # If the price is already negative, we don't really care any more
+                return base_price - subtract_from_gross
+
         if rate == Decimal('0.00'):
+            gross = _limit_subtract(base_price, subtract_from_gross)
             return TaxedPrice(
-                net=base_price - subtract_from_gross, gross=base_price - subtract_from_gross, tax=Decimal('0.00'),
-                rate=rate, name=self.name
+                net=gross, gross=gross, tax=Decimal('0.00'),
+                rate=rate, name=self.name, code=code,
             )
 
         if base_price_is == 'auto':
@@ -307,19 +519,14 @@ class TaxRule(LoggedModel):
                 base_price_is = 'net'
 
         if base_price_is == 'gross':
-            if base_price >= Decimal('0.00'):
-                # For positive prices, make sure they don't go negative because of bundles
-                gross = max(Decimal('0.00'), base_price - subtract_from_gross)
-            else:
-                # If the price is already negative, we don't really care any more
-                gross = base_price - subtract_from_gross
+            gross = _limit_subtract(base_price, subtract_from_gross)
             net = round_decimal(gross - (gross * (1 - 100 / (100 + rate))),
                                 currency)
         elif base_price_is == 'net':
             net = base_price
             gross = round_decimal((net * (1 + rate / 100)), currency)
             if subtract_from_gross:
-                gross -= subtract_from_gross
+                gross = _limit_subtract(gross, subtract_from_gross)
                 net = round_decimal(gross - (gross * (1 - 100 / (100 + rate))),
                                     currency)
         else:
@@ -327,7 +534,7 @@ class TaxRule(LoggedModel):
 
         return TaxedPrice(
             net=net, gross=gross, tax=gross - net,
-            rate=rate, name=self.name
+            rate=rate, name=self.name, code=code,
         )
 
     @property
@@ -407,6 +614,38 @@ class TaxRule(LoggedModel):
             if rule.get('action', 'vat') == 'require_approval':
                 return True
         return False
+
+    def tax_code_for(self, invoice_address):
+        if self._custom_rules:
+            rule = self.get_matching_rule(invoice_address)
+            if rule.get("code"):
+                return rule["code"]
+            if rule.get("action", "vat") == "reverse":
+                return "AE"
+            return self.code
+
+        if not self.eu_reverse_charge:
+            # No reverse charge rules? Always apply VAT!
+            return self.code
+
+        if not invoice_address or not invoice_address.country:
+            # No country specified? Always apply VAT!
+            return self.code
+
+        if not is_eu_country(invoice_address.country):
+            # Non-EU country? "Non-taxable" since not in scope
+            return "O"
+
+        if invoice_address.country == self.home_country:
+            # Within same EU country? Always apply VAT!
+            return self.code
+
+        if invoice_address.is_business and invoice_address.vat_id and invoice_address.vat_id_validated:
+            # Reverse charge case
+            return "AE"
+
+        # Consumer in different EU country / invalid VAT
+        return self.code
 
     def _tax_applicable(self, invoice_address):
         if self._custom_rules:

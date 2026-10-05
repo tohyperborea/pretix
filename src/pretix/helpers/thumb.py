@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -180,7 +180,11 @@ def create_thumbnail(source, size, formats=None):
     except:
         raise ThumbnailError('Could not load image')
 
-    frames = [resize_image(frame, size) for frame in ImageSequence.Iterator(image)]
+    frames = []
+    durations = []
+    for f in ImageSequence.Iterator(image):
+        durations.append(f.info.get("duration", 1000))
+        frames.append(resize_image(f, size))
     image_out = frames[0]
     save_kwargs = {}
     source_ext = os.path.splitext(source_name)[1].lower()
@@ -198,6 +202,8 @@ def create_thumbnail(source, size, formats=None):
             'loop': image.info.get('loop', 0),
             'save_all': True,
         }
+        if len(frames) > 1 and 'duration' in image.info:
+            save_kwargs['duration'] = durations
     else:
         target_ext = 'png'
         quality = None

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -211,8 +211,12 @@ class CartPositionViewSet(CreateModelMixin, DestroyModelMixin, viewsets.ReadOnly
 
                     if validated_data.get('seat'):
                         # Assumption: Add-ons currently can't have seats, thus we only need to check the main product
+                        if validated_data.get('sales_channel'):
+                            sales_channel_id = validated_data.get('sales_channel').identifier
+                        else:
+                            sales_channel_id = "web"
                         if not validated_data['seat'].is_available(
-                            sales_channel=validated_data.get('sales_channel', 'web'),
+                            sales_channel=sales_channel_id,
                             distance_ignore_cart_id=validated_data['cart_id'],
                             ignore_voucher_id=validated_data['voucher'].pk if validated_data.get('voucher') else None,
                         ):

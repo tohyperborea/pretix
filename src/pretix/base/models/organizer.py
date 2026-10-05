@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -46,7 +46,9 @@ from django.utils.crypto import get_random_string
 from django.utils.functional import cached_property
 from django.utils.timezone import get_current_timezone, make_aware, now
 from django.utils.translation import gettext_lazy as _
+from django_scopes import ScopedManager, scope
 from i18nfield.fields import I18nCharField
+from i18nfield.strings import LazyI18nString
 
 from pretix.base.models.base import LoggedModel
 from pretix.base.validators import OrganizerSlugBanlistValidator
@@ -66,6 +68,8 @@ class Organizer(LoggedModel):
     :param slug: A globally unique, short name for this organizer, to be used
                  in URLs and similar places.
     :type slug: str
+    :param plugins: A comma-separated list of plugin names that are active for this organizer.
+    :type plugins: str
     """
 
     settings_namespace = 'organizer'
@@ -89,6 +93,10 @@ class Organizer(LoggedModel):
         verbose_name=_("Short form"),
         unique=True
     )
+    plugins = models.TextField(
+        verbose_name=_("Plugins"),
+        null=False, blank=True, default="",
+    )
 
     class Meta:
         verbose_name = _("Organizer")
@@ -104,6 +112,8 @@ class Organizer(LoggedModel):
         if is_new:
             kwargs.pop('update_fields', None)  # does not make sense here
             self.set_defaults()
+            with scope(organizer=self):
+                self.create_default_sales_channels()
         else:
             self.get_cache().clear()
         return obj
@@ -114,6 +124,11 @@ class Organizer(LoggedModel):
         This way, we can use this to introduce new default settings to pretix that do not affect existing organizers.
         """
         self.settings.cookie_consent = True
+
+        plugins = [p for p in settings.PRETIX_PLUGINS_ORGANIZER_DEFAULT.split(",") if p]
+        if plugins and not self.get_plugins():
+            self.set_active_plugins(plugins, allow_restricted=plugins)
+            self.save()
 
     def get_cache(self):
         """
@@ -138,6 +153,61 @@ class Organizer(LoggedModel):
         from pretix.base.cache import ObjectRelatedCache
 
         return ObjectRelatedCache(self)
+
+    def get_plugins(self):
+        """
+        Returns the names of the plugins activated for this organizer as a list.
+        """
+        if not self.plugins:
+            return []
+        return self.plugins.split(",")
+
+    def get_available_plugins(self):
+        from pretix.base.plugins import get_all_plugins
+
+        return {
+            p.module: p for p in get_all_plugins(organizer=self)
+            if not p.name.startswith('.') and getattr(p, 'visible', True)
+        }
+
+    def set_active_plugins(self, modules, allow_restricted=frozenset()):
+        plugins_active = self.get_plugins()
+        plugins_available = self.get_available_plugins()
+
+        enable = [m for m in modules if m not in plugins_active and m in plugins_available]
+
+        for module in enable:
+            if getattr(plugins_available[module].app, 'restricted', False) and module not in allow_restricted:
+                modules.remove(module)
+            elif hasattr(plugins_available[module].app, 'installed'):
+                getattr(plugins_available[module].app, 'installed')(self)
+
+        self.plugins = ",".join(modules)
+
+    def enable_plugin(self, module, allow_restricted=frozenset()):
+        """
+        Adds a plugin to the list of plugins, calling its ``installed`` hook (if available).
+        It is the caller's responsibility to save the organizer object.
+        """
+        plugins_active = self.get_plugins()
+        if module not in plugins_active:
+            plugins_active.append(module)
+            self.set_active_plugins(plugins_active, allow_restricted=allow_restricted)
+
+    def disable_plugin(self, module):
+        """
+        Removes a plugin from the list of plugins, calling its ``uninstalled`` hook (if available).
+        It is the caller's responsibility to save the organizer object and, in case of a hybrid organizer-event plugin,
+        to remove it from all events.
+        """
+        plugins_active = self.get_plugins()
+        if module in plugins_active:
+            plugins_active.remove(module)
+            self.set_active_plugins(plugins_active)
+
+            plugins_available = self.get_available_plugins()
+            if module in plugins_available and hasattr(plugins_available[module].app, 'uninstalled'):
+                getattr(plugins_available[module].app, 'uninstalled')(self)
 
     @property
     def timezone(self):
@@ -211,6 +281,24 @@ class Organizer(LoggedModel):
                                   fail_silently=False, timeout=timeout)
         else:
             return get_connection(fail_silently=False)
+
+    def create_default_sales_channels(self):
+        from pretix.base.channels import get_all_sales_channel_types
+
+        i = 0
+        for channel in get_all_sales_channel_types().values():
+            if not channel.default_created:
+                continue
+
+            self.sales_channels.get_or_create(
+                identifier=channel.identifier,
+                defaults={
+                    'label': LazyI18nString.from_gettext(channel.verbose_name),
+                    'type': channel.identifier,
+                },
+                position=i
+            )
+            i += 1
 
 
 def generate_invite_token():
@@ -504,3 +592,58 @@ class OrganizerFooterLink(models.Model):
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
         self.organizer.cache.clear()
+
+
+class SalesChannel(LoggedModel):
+    organizer = models.ForeignKey('Organizer', on_delete=models.CASCADE, related_name='sales_channels')
+    label = I18nCharField(
+        max_length=200,
+        verbose_name=_("Name"),
+    )
+    identifier = models.CharField(
+        verbose_name=_("Identifier"),
+        max_length=200,
+        validators=[
+            RegexValidator(
+                regex=r"^[a-zA-Z0-9.\-_]+$",
+                message=_("The identifier may only contain letters, numbers, dots, dashes, and underscores."),
+            ),
+        ],
+    )
+    type = models.CharField(
+        verbose_name=_("Type"),
+        max_length=200,
+    )
+    position = models.PositiveIntegerField(
+        default=0,
+        verbose_name=_("Position")
+    )
+    configuration = models.JSONField(default=dict)
+
+    objects = ScopedManager(organizer="organizer")
+
+    class Meta:
+        ordering = ("position", "type", "identifier", "id")
+        unique_together = ("organizer", "identifier")
+
+    def __str__(self):
+        return str(self.label)
+
+    @cached_property
+    def type_instance(self):
+        from ..channels import get_all_sales_channel_types
+
+        types = get_all_sales_channel_types()
+        return types[self.type]
+
+    @property
+    def icon(self):
+        return self.type_instance.icon
+
+    def allow_delete(self):
+        from . import Order
+
+        if self.type_instance.default_created:
+            return False
+
+        return not Order.objects.filter(sales_channel=self).exists()

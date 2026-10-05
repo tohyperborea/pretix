@@ -6,7 +6,13 @@
 {% load eventsignal %}
 {% block title %}{% trans "Waiting list" %}{% endblock %}
 {% block content %}
-    <h1>{% trans "Waiting list" %}</h1>
+    <h1>
+        {% trans "Waiting list" %}
+        <a href="{% url "control:event.settings" event=request.event.slug organizer=request.organizer.slug %}#waiting-list-open" class="btn btn-default">
+            <span class="fa fa-cog"></span>
+            {% trans "Settings" %}
+        </a>
+    </h1>
     {% if not request.event.settings.waiting_list_enabled %}
         <div class="alert alert-danger">
             {% trans "The waiting list is disabled, so if the event is sold out, people cannot add themselves to this list. If you want to enable it, go to the event settings." %}
@@ -14,6 +20,11 @@
     {% elif not request.event.waiting_list_active and not request.event.has_subevents %}
         <div class="alert alert-danger">
             {% trans "The waiting list is no longer active for this event. The waiting list no longer affects quotas and no longer notifies waiting users." %}
+        </div>
+    {% endif %}
+    {% if request.event.settings.hide_sold_out %}
+        <div class="alert alert-warning">
+            {% trans "According to your event settings, sold out products are hidden from customers. This way, customers will not be able to discover the waiting list." %}
         </div>
     {% endif %}
     <div class="row">
@@ -58,7 +69,7 @@
                                 {% for se in request.event.subevents.all %}
                                     <option value="{{ se.id }}"
                                             {% if request.GET.subevent|add:0 == se.id %}selected="selected"{% endif %}>
-                                        {{ se.name }} – {{ se.get_date_range_display }}
+                                        {{ se }}
                                     </option>
                                 {% endfor %}
                             </select>
@@ -114,13 +125,14 @@
                 </option>
             {% endfor %}
         </select>
+        <input name="search" type="text" placeholder="{% trans "Search" %}" class="form-control" value="{{ request.GET.search }}">
         {% if request.event.has_subevents %}
             <select name="subevent" class="form-control">
                 <option value="">{% trans "All dates" context "subevent" %}</option>
                 {% for se in request.event.subevents.all %}
                     <option value="{{ se.id }}"
                             {% if request.GET.subevent|add:0 == se.id %}selected="selected"{% endif %}>
-                        {{ se.name }} – {{ se.get_date_range_display }}
+                        {{ se }}
                     </option>
                 {% endfor %}
             </select>
@@ -201,7 +213,7 @@
                             {% endif %}
                         </td>
                         {% if request.event.has_subevents %}
-                            <td>{{ e.subevent.name }} – {{ e.subevent.get_date_range_display }}</td>
+                            <td>{{ e.subevent }}</td>
                         {% endif %}
                         <td>
                             {{ e.created|date:"SHORT_DATETIME_FORMAT" }}
@@ -263,13 +275,13 @@
                                     data-toggle="tooltip" title="{% trans "Move to the end of the list" %}">
                                     <span class="fa fa-thumbs-down"></span>
                                 </button>
-                                {% if request.event.has_subevents %}
-                                    <a href="{% url "control:event.orders.waitinglist.transfer" organizer=request.event.organizer.slug event=request.event.slug entry=e.id %}"
-                                       class="btn btn-default btn-sm" title="{% trans "Transfer to other date" context "subevent" %}"
-                                        data-toggle="tooltip">
-                                        <i class="fa fa-calendar" aria-hidden="true"></i>
-                                    </a>
-                                {% endif %}
+
+                                <a href="{% url "control:event.orders.waitinglist.edit" organizer=request.event.organizer.slug event=request.event.slug entry=e.id %}"
+                                   class="btn btn-default btn-sm" title="{% trans "Edit entry" %}"
+                                    data-toggle="tooltip">
+                                    <i class="fa fa-edit" aria-hidden="true"></i>
+                                </a>
+
                                 <a href="{% url "control:event.orders.waitinglist.delete" organizer=request.event.organizer.slug event=request.event.slug entry=e.id %}?next={{ request.get_full_path|urlencode }}" class="btn btn-danger btn-sm"><i class="fa fa-trash"></i></a>
                             {% else %}
                                 <button class="btn btn-default btn-sm disabled">

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -41,6 +41,8 @@ def env():
 
 TEMPLATE_FRONT_PAGE = Template("{% load eventurl %} {% eventurl event 'presale:event.index' %}")
 TEMPLATE_KWARGS = Template("{% load eventurl %} {% eventurl event 'presale:event.checkout' step='payment' %}")
+TEMPLATE_ABSEVENTURL = Template("{% load eventurl %} {% abseventurl event 'presale:event.checkout' step='payment' %}")
+TEMPLATE_ABSMAINURL = Template("{% load eventurl %} {% absmainurl 'control:event.settings' organizer=event.organizer.slug event=event.slug %}")
 
 
 @pytest.mark.django_db
@@ -54,6 +56,36 @@ def test_event_main_domain_front_page(env):
 @pytest.mark.django_db
 def test_event_custom_domain_front_page(env):
     KnownDomain.objects.create(domainname='foobar', organizer=env[0])
+    rendered = TEMPLATE_FRONT_PAGE.render(Context({
+        'event': env[1]
+    })).strip()
+    assert rendered == 'http://foobar/2015/'
+
+
+@pytest.mark.django_db
+def test_event_custom_event_domain_front_page(env):
+    KnownDomain.objects.create(domainname='foobar', organizer=env[0], event=env[1], mode=KnownDomain.MODE_EVENT_DOMAIN)
+    rendered = TEMPLATE_FRONT_PAGE.render(Context({
+        'event': env[1]
+    })).strip()
+    assert rendered == 'http://foobar/'
+
+
+@pytest.mark.django_db
+def test_event_custom_org_alt_domain_front_page(env):
+    KnownDomain.objects.create(domainname='foobar', organizer=env[0], mode=KnownDomain.MODE_ORG_DOMAIN)
+    d = KnownDomain.objects.create(domainname='altfoo', organizer=env[0], mode=KnownDomain.MODE_ORG_ALT_DOMAIN)
+    d.event_assignments.create(event=env[1])
+    rendered = TEMPLATE_FRONT_PAGE.render(Context({
+        'event': env[1]
+    })).strip()
+    assert rendered == 'http://altfoo/2015/'
+
+
+@pytest.mark.django_db
+def test_event_custom_org_alt_domain_unassigned_front_page(env):
+    KnownDomain.objects.create(domainname='foobar', organizer=env[0], mode=KnownDomain.MODE_ORG_DOMAIN)
+    KnownDomain.objects.create(domainname='altfoo', organizer=env[0], mode=KnownDomain.MODE_ORG_ALT_DOMAIN)
     rendered = TEMPLATE_FRONT_PAGE.render(Context({
         'event': env[1]
     })).strip()
@@ -75,6 +107,40 @@ def test_event_custom_domain_kwargs(env):
         'event': env[1]
     })).strip()
     assert rendered == 'http://foobar/2015/checkout/payment/'
+
+
+@pytest.mark.django_db
+def test_abseventurl_event_main_domain(env):
+    rendered = TEMPLATE_ABSEVENTURL.render(Context({
+        'event': env[1]
+    })).strip()
+    assert rendered == 'http://example.com/mrmcd/2015/checkout/payment/'
+
+
+@pytest.mark.django_db
+def test_abseventurl_event_custom_domain(env):
+    KnownDomain.objects.create(domainname='foobar', organizer=env[0])
+    rendered = TEMPLATE_ABSEVENTURL.render(Context({
+        'event': env[1]
+    })).strip()
+    assert rendered == 'http://foobar/2015/checkout/payment/'
+
+
+@pytest.mark.django_db
+def test_absmainurl_main_domain(env):
+    rendered = TEMPLATE_ABSMAINURL.render(Context({
+        'event': env[1]
+    })).strip()
+    assert rendered == 'http://example.com/control/event/mrmcd/2015/settings/'
+
+
+@pytest.mark.django_db
+def test_absmainurl_custom_domain(env):
+    KnownDomain.objects.create(domainname='foobar', organizer=env[0])
+    rendered = TEMPLATE_ABSMAINURL.render(Context({
+        'event': env[1]
+    })).strip()
+    assert rendered == 'http://example.com/control/event/mrmcd/2015/settings/'
 
 
 @pytest.mark.django_db

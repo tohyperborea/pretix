@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -38,6 +38,7 @@ import logging
 import os
 import sys
 from json import loads
+from pathlib import Path
 from urllib.parse import urlparse
 
 import importlib_metadata as metadata
@@ -70,14 +71,10 @@ MEDIA_ROOT = os.path.join(DATA_DIR, 'media')
 PROFILE_DIR = os.path.join(DATA_DIR, 'profiles')
 CACHE_DIR = config.get('pretix', 'cachedir', fallback=os.path.join(DATA_DIR, 'cache'))
 
-if not os.path.exists(DATA_DIR):
-    os.mkdir(DATA_DIR)
-if not os.path.exists(LOG_DIR):
-    os.mkdir(LOG_DIR)
-if not os.path.exists(MEDIA_ROOT):
-    os.mkdir(MEDIA_ROOT)
-if not os.path.exists(CACHE_DIR):
-    os.mkdir(CACHE_DIR)
+Path(DATA_DIR).mkdir(parents=False, exist_ok=True)
+Path(LOG_DIR).mkdir(parents=False, exist_ok=True)
+Path(MEDIA_ROOT).mkdir(parents=False, exist_ok=True)
+Path(CACHE_DIR).mkdir(parents=False, exist_ok=True)
 
 if config.has_option('django', 'secret'):
     SECRET_KEY = config.get('django', 'secret')
@@ -97,9 +94,16 @@ else:
                 pass  # os.chown is not available on Windows
             f.write(SECRET_KEY)
 
+
+SECRET_KEY_FALLBACKS = []
+for i in range(10):
+    if config.has_option('django', f'secret_fallback{i}'):
+        SECRET_KEY_FALLBACKS.append(config.get('django', f'secret_fallback{i}'))
+
+
 # Adjustable settings
 
-debug_fallback = "runserver" in sys.argv
+debug_fallback = "runserver" in sys.argv or "runserver_plus" in sys.argv
 DEBUG = config.getboolean('django', 'debug', fallback=debug_fallback)
 LOG_CSP = config.getboolean('pretix', 'csp_log', fallback=False)
 CSP_ADDITIONAL_HEADER = config.get('pretix', 'csp_additional_header', fallback='')
@@ -207,12 +211,18 @@ USE_X_FORWARDED_HOST = config.getboolean('pretix', 'trust_x_forwarded_host', fal
 
 
 REQUEST_ID_HEADER = config.get('pretix', 'request_id_header', fallback=False)
+if REQUEST_ID_HEADER in config.cp.BOOLEAN_STATES:
+    raise ImproperlyConfigured(
+        "request_id_header should be set to a header name, not a boolean value."
+    )
 
 if config.getboolean('pretix', 'trust_x_forwarded_proto', fallback=False):
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 PRETIX_PLUGINS_DEFAULT = config.get('pretix', 'plugins_default',
-                                    fallback='pretix.plugins.sendmail,pretix.plugins.statistics,pretix.plugins.checkinlists,pretix.plugins.autocheckin')
+                                    fallback='pretix.plugins.sendmail,pretix.plugins.statistics,pretix.plugins.checkinlists')
+PRETIX_PLUGINS_ORGANIZER_DEFAULT = config.get('pretix', 'plugins_organizer_default',
+                                              fallback='')
 PRETIX_PLUGINS_EXCLUDE = config.get('pretix', 'plugins_exclude', fallback='').split(',')
 PRETIX_PLUGINS_SHOW_META = config.getboolean('pretix', 'plugins_show_meta', fallback=True)
 
@@ -341,10 +351,53 @@ if HAS_CELERY:
     CELERY_RESULT_BACKEND = config.get('celery', 'backend')
     if HAS_CELERY_BROKER_TRANSPORT_OPTS:
         CELERY_BROKER_TRANSPORT_OPTIONS = loads(config.get('celery', 'broker_transport_options'))
+    else:
+        CELERY_BROKER_TRANSPORT_OPTIONS = {}
     if HAS_CELERY_BACKEND_TRANSPORT_OPTS:
         CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = loads(config.get('celery', 'backend_transport_options'))
+    CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+
+    if CELERY_BROKER_URL.startswith("amqp://"):
+        # https://docs.celeryq.dev/en/latest/userguide/routing.html#routing-options-rabbitmq-priorities
+        # Enable priorities for all queues
+        CELERY_TASK_QUEUE_MAX_PRIORITY = 3
+        # On RabbitMQ, higher number is higher priority, and having less levels makes rabbitmq use less CPU and RAM
+        PRIORITY_CELERY_LOW = 1
+        PRIORITY_CELERY_MID = 2
+        PRIORITY_CELERY_HIGH = 3
+        PRIORITY_CELERY_LOWEST_FUNC = min
+        PRIORITY_CELERY_HIGHEST_FUNC = max
+        # Set default
+        CELERY_TASK_DEFAULT_PRIORITY = PRIORITY_CELERY_MID
+    elif CELERY_BROKER_URL.startswith("redis://"):
+        # https://docs.celeryq.dev/en/latest/userguide/routing.html#redis-message-priorities
+        CELERY_BROKER_TRANSPORT_OPTIONS.update({
+            "queue_order_strategy": "priority",
+            "sep": ":",
+            "priority_steps": [0, 4, 8]
+        })
+        # On redis, lower number is higher priority, and it appears that there are always levels 0-9 even though it
+        # is only really executed based on the 3 steps listed above.
+        PRIORITY_CELERY_LOW = 9
+        PRIORITY_CELERY_MID = 5
+        PRIORITY_CELERY_HIGH = 0
+        PRIORITY_CELERY_LOWEST_FUNC = max
+        PRIORITY_CELERY_HIGHEST_FUNC = min
+        CELERY_TASK_DEFAULT_PRIORITY = PRIORITY_CELERY_MID
+    else:
+        # No priority support assumed
+        PRIORITY_CELERY_LOW = 0
+        PRIORITY_CELERY_MID = 0
+        PRIORITY_CELERY_HIGH = 0
+        PRIORITY_CELERY_LOWEST_FUNC = min
+        PRIORITY_CELERY_HIGHEST_FUNC = max
 else:
     CELERY_TASK_ALWAYS_EAGER = True
+    PRIORITY_CELERY_LOW = 0
+    PRIORITY_CELERY_MID = 0
+    PRIORITY_CELERY_HIGH = 0
+    PRIORITY_CELERY_LOWEST_FUNC = min
+    PRIORITY_CELERY_HIGHEST_FUNC = max
 
 CACHE_TICKETS_HOURS = config.getint('cache', 'tickets', fallback=24 * 3)
 
@@ -429,14 +482,6 @@ REST_FRAMEWORK = {
     'UNICODE_JSON': False
 }
 
-
-CORE_MODULES = {
-    "pretix.base",
-    "pretix.presale",
-    "pretix.control",
-    "pretix.plugins.checkinlists",
-    "pretix.plugins.reports",
-}
 
 MIDDLEWARE = [
     'pretix.helpers.logs.RequestIdMiddleware',
@@ -615,6 +660,11 @@ LOGGING = {
             'handlers': ['null'],
             'propagate': False,
         },
+        'celery.utils.functional': {
+            'handlers': ['file', 'console'],
+            'level': 'INFO',  # Do not output all the queries
+            'propagate': False,
+        },
         'django.db.backends': {
             'handlers': ['file', 'console'],
             'level': 'INFO',  # Do not output all the queries
@@ -629,15 +679,21 @@ LOGGING = {
 
 SENTRY_ENABLED = False
 if config.has_option('sentry', 'dsn') and not any(c in sys.argv for c in ('shell', 'shell_scoped', 'shell_plus')):
+    import django.db.models.signals
     import sentry_sdk
     from sentry_sdk.integrations.celery import CeleryIntegration
     from sentry_sdk.integrations.logging import (
         LoggingIntegration, ignore_logger,
     )
+    from sentry_sdk.scrubber import EventScrubber, DEFAULT_DENYLIST
 
     from .sentry import PretixSentryIntegration, setup_custom_filters
 
     SENTRY_TOKEN = config.get('sentry', 'traces_sample_token', fallback='')
+    pretix_denylist = DEFAULT_DENYLIST + [
+        "access_token",
+        "sentry_dsn",
+    ]
 
     def traces_sampler(sampling_context):
         qs = sampling_context.get('wsgi_environ', {}).get('QUERY_STRING', '')
@@ -649,7 +705,12 @@ if config.has_option('sentry', 'dsn') and not any(c in sys.argv for c in ('shell
     sentry_sdk.init(
         dsn=config.get('sentry', 'dsn'),
         integrations=[
-            PretixSentryIntegration(),
+            PretixSentryIntegration(
+                signals_denylist=[
+                    django.db.models.signals.pre_init,
+                    django.db.models.signals.post_init,
+                ]
+            ),
             CeleryIntegration(),
             LoggingIntegration(
                 level=logging.INFO,
@@ -659,6 +720,7 @@ if config.has_option('sentry', 'dsn') and not any(c in sys.argv for c in ('shell
         traces_sampler=traces_sampler,
         environment=urlparse(SITE_URL).netloc,
         release=__version__,
+        event_scrubber=EventScrubber(denylist=pretix_denylist, recursive=True),
         send_default_pii=False,
         propagate_traces=False,  # see https://github.com/getsentry/sentry-python/issues/1717
     )
@@ -702,14 +764,67 @@ BOOTSTRAP3 = {
         'bulkedit_inline': 'pretix.control.forms.renderers.InlineBulkEditFieldRenderer',
         'checkout': 'pretix.presale.forms.renderers.CheckoutFieldRenderer',
     },
+    'set_placeholder': False,
 }
 
+PASSWORD_HASHERS = [
+    # Note that when updating this, all user passwords will be re-hashed on next login, however,
+    # the HistoricPassword model will not be changed automatically. In case a serious issue with a hasher
+    # comes to light, dropping the contents of the HistoricPassword table might be the more risk-adequate
+    # decision.
+    *(
+        ["django.contrib.auth.hashers.Argon2PasswordHasher"]
+        if config.getboolean('django', 'passwords_argon2', fallback=True)
+        else []
+    ),
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
+    "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
+    "django.contrib.auth.hashers.ScryptPasswordHasher",
+]
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+        "OPTIONS": {
+            # To fulfill per PCI DSS requirement 8.3.6
+            "min_length": 12,
+        },
+    },
+    {
+        # To fulfill per PCI DSS requirement 8.3.6
+        'NAME': 'pretix.base.auth.NumericAndAlphabeticPasswordValidator',
+    },
+    {
+        "NAME": "pretix.base.auth.HistoryPasswordValidator",
+        "OPTIONS": {
+            # To fulfill per PCI DSS requirement 8.3.7
+            "history_length": 4,
+        },
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+    },
+    {
+        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+    },
+]
+CUSTOMER_AUTH_PASSWORD_VALIDATORS = [
+    # For customer accounts, we apply a little less strict requirements to provide a risk-adequate
+    # user experience.
+    {
+        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+    },
+    {
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+        "OPTIONS": {
+            "min_length": 8,
+        },
+    },
+    {
+        'NAME': 'pretix.base.auth.NumericAndAlphabeticPasswordValidator',
     },
     {
         'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
@@ -743,6 +858,8 @@ COUNTRIES_OVERRIDE = {
 
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 25000
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
+
+OUTGOING_MAIL_RETENTION = 14 * 24 * 3600  # 14 days in seonds
 
 # File sizes are in MiB
 FILE_UPLOAD_MAX_SIZE_IMAGE = 1024 * 1024 * config.getint("pretix_file_upload", "max_size_image", fallback=10)

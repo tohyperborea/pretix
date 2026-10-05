@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -144,7 +144,7 @@ def test_sendmail_preview(logged_in_client, sendmail_url, event, order, pos):
                                       },
                                      follow=True)
     assert response.status_code == 200
-    assert 'E-mail preview' in response.rendered_content
+    assert 'Email preview' in response.rendered_content
 
     assert len(djmail.outbox) == 0
 
@@ -173,10 +173,11 @@ def test_sendmail_multi_locales(logged_in_client, sendmail_url, event, item):
     event.settings.set('locales', ['en', 'de'])
 
     with scopes_disabled():
-        o = Order.objects.create(event=item.event, status=Order.STATUS_PAID,
+        o = Order.objects.create(event=event, status=Order.STATUS_PAID,
                                  expires=now() + datetime.timedelta(hours=1),
                                  total=13, code='DUMMY', email='dummy@dummy.test',
                                  datetime=now(),
+                                 sales_channel=event.organizer.sales_channels.get(identifier="web"),
                                  locale='de')
         OrderPosition.objects.create(order=o, item=item, price=13)
 
@@ -401,6 +402,79 @@ def test_sendmail_attendee_product_filter(logged_in_client, sendmail_url, event,
     assert 'alert-success' in response.rendered_content
     assert len(djmail.outbox) == 1
     assert djmail.outbox[0].to == ['attendee2@dummy.test']
+    assert '/ticket/' in djmail.outbox[0].body
+    assert '/order/' not in djmail.outbox[0].body
+
+
+@pytest.mark.django_db
+def test_sendmail_attendee_subevent_filter(logged_in_client, sendmail_url, event, item, order, pos):
+    event.settings.attendee_emails_asked = True
+    event.has_subevents = True
+    event.save()
+    with scopes_disabled():
+        se1 = event.subevents.create(name='Subevent FOO', date_from=now())
+        se2 = event.subevents.create(name='Bar', date_from=now())
+        pos.attendee_email = 'attendee1@dummy.test'
+        pos.subevent = se1
+        pos.save()
+        with scopes_disabled():
+            order.positions.create(
+                item=item, price=0, attendee_email='attendee2@dummy.test', subevent=se2
+            )
+
+        djmail.outbox = []
+        response = logged_in_client.post(sendmail_url + 'orders/',
+                                         {'sendto': 'na',
+                                          'action': 'send',
+                                          'recipients': 'attendees',
+                                          'items': item.pk,
+                                          'subject_0': 'Test subject',
+                                          'message_0': 'This is a test file for sending mails.',
+                                          'subevent': se2.pk,
+                                          },
+                                         follow=True)
+    assert response.status_code == 200
+    assert 'alert-success' in response.rendered_content
+    assert len(djmail.outbox) == 1
+    assert djmail.outbox[0].to == ['attendee2@dummy.test']
+    assert '/ticket/' in djmail.outbox[0].body
+    assert '/order/' not in djmail.outbox[0].body
+
+
+@pytest.mark.django_db
+def test_sendmail_attendee_subevent_range_filter(logged_in_client, sendmail_url, event, item, order, pos):
+    event.settings.attendee_emails_asked = True
+    event.has_subevents = True
+    event.save()
+    with scopes_disabled():
+        se1 = event.subevents.create(name='Subevent FOO', date_from=datetime.datetime(2023, 7, 6, 1, 2, 3, tzinfo=event.timezone))
+        se2 = event.subevents.create(name='Bar', date_from=datetime.datetime(2023, 8, 9, 1, 2, 3, tzinfo=event.timezone))
+        pos.attendee_email = 'attendee1@dummy.test'
+        pos.subevent = se1
+        pos.save()
+        with scopes_disabled():
+            order.positions.create(
+                item=item, price=0, attendee_email='attendee2@dummy.test', subevent=se2
+            )
+
+        djmail.outbox = []
+        response = logged_in_client.post(sendmail_url + 'orders/',
+                                         {'sendto': 'na',
+                                          'action': 'send',
+                                          'recipients': 'attendees',
+                                          'items': item.pk,
+                                          'subject_0': 'Test subject',
+                                          'message_0': 'This is a test file for sending mails.',
+                                          'subevents_from_0': '2023-07-01',
+                                          'subevents_from_1': '00:00:00',
+                                          'subevents_to_0': '2023-08-01',
+                                          'subevents_to_1': '00:00:00',
+                                          },
+                                         follow=True)
+    assert response.status_code == 200
+    assert 'alert-success' in response.rendered_content
+    assert len(djmail.outbox) == 1
+    assert djmail.outbox[0].to == ['attendee1@dummy.test']
     assert '/ticket/' in djmail.outbox[0].body
     assert '/order/' not in djmail.outbox[0].body
 

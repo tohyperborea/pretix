@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -36,7 +36,7 @@ from django.template.response import TemplateResponse
 from django.urls import resolve
 from django_scopes import scope
 
-from pretix.base.channels import WebshopSalesChannel
+from pretix.base.timemachine import time_machine_now_assigned_from_request
 from pretix.presale.signals import process_response
 
 from .utils import _detect_event
@@ -56,10 +56,6 @@ class EventMiddleware:
         url = resolve(request.path_info)
         request._namespace = url.namespace
 
-        if not hasattr(request, 'sales_channel'):
-            # The environ lookup is only relevant during unit testing
-            request.sales_channel = request.environ.get('PRETIX_SALES_CHANNEL', WebshopSalesChannel())
-
         if url.namespace != 'presale':
             return self.get_response(request)
 
@@ -68,7 +64,14 @@ class EventMiddleware:
             if redirect:
                 return redirect
 
-        with scope(organizer=getattr(request, 'organizer', None)):
+        with scope(organizer=getattr(request, 'organizer', None)), \
+             time_machine_now_assigned_from_request(request):
+            if not hasattr(request, 'sales_channel') and hasattr(request, 'organizer'):
+                # The environ lookup is only relevant during unit testing
+                request.sales_channel = request.organizer.sales_channels.get(
+                    identifier=request.environ.get('PRETIX_SALES_CHANNEL', 'web')
+                )
+
             response = self.get_response(request)
 
             if hasattr(request, '_namespace') and request._namespace == 'presale' and hasattr(request, 'event'):

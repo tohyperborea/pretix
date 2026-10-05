@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -174,6 +174,9 @@ class Voucher(LoggedModel):
         ('percent', _('Reduce product price by (%)')),
     )
 
+    created = models.DateTimeField(
+        auto_now_add=True,
+    )
     event = models.ForeignKey(
         Event,
         on_delete=models.CASCADE,
@@ -236,7 +239,7 @@ class Voucher(LoggedModel):
         )
     )
     price_mode = models.CharField(
-        verbose_name=_("Price mode"),
+        verbose_name=_("Price effect"),
         max_length=100,
         choices=PRICE_MODES,
         default='none'
@@ -370,10 +373,11 @@ class Voucher(LoggedModel):
                     'redeemed': redeemed
                 }
             )
-        if data.get('max_usages', 1) < data.get('min_usages', 1):
-            raise ValidationError(
-                _('The maximum number of usages may not be lower than the minimum number of usages.'),
-            )
+        if data.get('min_usages') is not None:
+            if data.get('max_usages', 1) < data.get('min_usages', 1):
+                raise ValidationError(
+                    _('The maximum number of usages may not be lower than the minimum number of usages.'),
+                )
 
     @staticmethod
     def clean_subevent(data, event):
@@ -459,7 +463,7 @@ class Voucher(LoggedModel):
             new_quotas = set(
                 Quota.objects.filter(
                     pk__in=Quota.variations.through.objects.filter(
-                        itemvariation__item=old_instance.item,
+                        itemvariation__item=item,
                         quota__subevent=data.get('subevent'),
                     ).values('quota_id')
                 )
@@ -623,7 +627,7 @@ class Voucher(LoggedModel):
         return max(1, self.min_usages - self.redeemed)
 
     @classmethod
-    def annotate_budget_used_orders(cls, qs):
+    def annotate_budget_used(cls, qs):
         opq = OrderPosition.objects.filter(
             voucher_id=OuterRef('pk'),
             voucher_budget_use__isnull=False,
@@ -632,7 +636,7 @@ class Voucher(LoggedModel):
                 Order.STATUS_PENDING
             ]
         ).order_by().values('voucher_id').annotate(s=Sum('voucher_budget_use')).values('s')
-        return qs.annotate(budget_used_orders=Coalesce(Subquery(opq, output_field=models.DecimalField(max_digits=13, decimal_places=2)), Decimal('0.00')))
+        return qs.annotate(budget_used=Coalesce(Subquery(opq, output_field=models.DecimalField(max_digits=13, decimal_places=2)), Decimal('0.00')))
 
     def budget_used(self):
         ops = OrderPosition.objects.filter(

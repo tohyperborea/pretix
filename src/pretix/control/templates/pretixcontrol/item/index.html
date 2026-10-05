@@ -152,9 +152,8 @@
                     </fieldset>
                     <fieldset>
                         <legend>{% trans "Availability" %}</legend>
-
-
-                        {% bootstrap_field form.sales_channels layout="control" horizontal_field_class="col-md-7" %}
+                        {% bootstrap_field form.all_sales_channels layout="control" horizontal_field_class="col-md-7" %}
+                        {% bootstrap_field form.limit_sales_channels layout="control" horizontal_field_class="col-md-7" %}
                         {% bootstrap_field form.available_from visibility_field=form.available_from_mode layout="control_with_visibility"  %}
                         {% bootstrap_field form.available_until visibility_field=form.available_until_mode layout="control_with_visibility" %}
                         {% bootstrap_field form.max_per_order layout="control" horizontal_field_class="col-md-7" %}
@@ -173,11 +172,23 @@
                         {% if form.hidden_if_available %}
                             {% bootstrap_field form.hidden_if_available layout="control" horizontal_field_class="col-md-7" %}
                         {% endif %}
-                        {% bootstrap_field form.hidden_if_item_available layout="control" horizontal_field_class="col-md-7" %}
+                        {% bootstrap_field form.hidden_if_item_available visibility_field=form.hidden_if_item_available_mode layout="control_with_visibility" %}
                     </fieldset>
                     {% for v in formsets.values %}
                         <fieldset>
                             <legend>{{ v.title }}</legend>
+
+                            {% for f in plugin_forms %}
+                                {% if f.group_with_formset and f.title == v.title %}
+                                    {% if f.template and not "template" in f.fields %}
+                                        {% include f.template with form=f %}
+                                    {% else %}
+                                        {% bootstrap_form f layout="control" %}
+                                    {% endif %}
+                                    <hr />
+                                {% endif %}
+                            {% endfor %}
+
                             {% include v.template with formset=v %}
                         </fieldset>
                     {% endfor %}
@@ -277,7 +288,7 @@
                         {% endfor %}
                     </fieldset>
                     {% for f in plugin_forms %}
-                        {% if not f.is_layouts and f.title %}
+                        {% if not f.is_layouts and not f.group_with_formset and f.title %}
                             <fieldset>
                                 <legend>{{ f.title }}</legend>
                                 {% if f.template and not "template" in f.fields %}

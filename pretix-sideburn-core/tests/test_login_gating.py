@@ -36,6 +36,7 @@ def env():
     customer.save()
     order = Order.objects.create(
         event=event, email=EMAIL, status=Order.STATUS_PENDING, total=10, datetime=now(), expires=now(),
+        sales_channel=organizer.sales_channels.get(identifier="web"),
     )
     return {"organizer": organizer, "event": event, "item": item, "order": order}
 

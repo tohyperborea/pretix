@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -175,12 +175,6 @@ def test_incompatible():
         oidc_validate_and_complete_config(config)
     assert "not requesting" in str(e.value)
 
-    config["scope"] = "openid foo"
-
-    with pytest.raises(ValidationError) as e:
-        oidc_validate_and_complete_config(config)
-    assert "requesting scope" in str(e.value)
-
 
 @responses.activate
 def test_compatible():
@@ -236,7 +230,8 @@ def provider(organizer):
                 "response_modes_supported": ["query"],
                 "grant_types_supported": ["authorization_code"],
                 "scopes_supported": ["openid", "email", "profile"],
-                "claims_supported": ["email", "sub"]
+                "claims_supported": ["email", "sub"],
+                "code_challenge_methods_supported": ["plain", "S256"],
             }
         }
     )
@@ -250,8 +245,23 @@ def test_authorize_url(provider):
         "client_id=abc123&"
         "scope=openid+email+profile&"
         "state=state_val&"
+        "redirect_uri=https%3A%2F%2Fredirect%3Ffoo%3Dbar&"
+        "code_challenge=S1ZnvzwMZHrWOO62nENdJ6jhODhf7VfyZFBIXQyrTKo&"
+        "code_challenge_method=S256"
+    ) == oidc_authorize_url(provider, "state_val", "https://redirect?foo=bar", "pkce_value")
+
+
+@pytest.mark.django_db
+def test_authorize_url_no_pkce(provider):
+    del provider.configuration["provider_config"]["code_challenge_methods_supported"]
+    assert (
+        "https://example.com/authorize?"
+        "response_type=code&"
+        "client_id=abc123&"
+        "scope=openid+email+profile&"
+        "state=state_val&"
         "redirect_uri=https%3A%2F%2Fredirect%3Ffoo%3Dbar"
-    ) == oidc_authorize_url(provider, "state_val", "https://redirect?foo=bar")
+    ) == oidc_authorize_url(provider, "state_val", "https://redirect?foo=bar", "pkce_value")
 
 
 @pytest.mark.django_db
@@ -264,7 +274,7 @@ def test_validate_authorization_invalid(provider):
         status=400,
     )
     with pytest.raises(ValidationError):
-        oidc_validate_authorization(provider, "code_received", "https://redirect?foo=bar")
+        oidc_validate_authorization(provider, "code_received", "https://redirect?foo=bar", "pkce_value")
 
 
 @pytest.mark.django_db
@@ -281,6 +291,7 @@ def test_validate_authorization_userinfo_invalid(provider):
                 "grant_type": "authorization_code",
                 "code": "code_received",
                 "redirect_uri": "https://redirect?foo=bar",
+                "code_verifier": "pkce_value",
             })
         ],
     )
@@ -296,7 +307,7 @@ def test_validate_authorization_userinfo_invalid(provider):
         ],
     )
     with pytest.raises(ValidationError) as e:
-        oidc_validate_authorization(provider, "code_received", "https://redirect?foo=bar")
+        oidc_validate_authorization(provider, "code_received", "https://redirect?foo=bar", "pkce_value")
     assert 'could not fetch' in str(e.value)
 
 
@@ -314,6 +325,7 @@ def test_validate_authorization_valid(provider):
                 "grant_type": "authorization_code",
                 "code": "code_received",
                 "redirect_uri": "https://redirect?foo=bar",
+                "code_verifier": "pkce_value",
             })
         ],
     )
@@ -328,4 +340,4 @@ def test_validate_authorization_valid(provider):
             matchers.header_matcher({"Authorization": "Bearer test_access_token"})
         ],
     )
-    oidc_validate_authorization(provider, "code_received", "https://redirect?foo=bar")
+    oidc_validate_authorization(provider, "code_received", "https://redirect?foo=bar", "pkce_value")

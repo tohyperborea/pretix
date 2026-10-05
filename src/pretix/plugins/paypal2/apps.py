@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -38,9 +38,12 @@ class Paypal2App(AppConfig):
         featured = True
         picture = 'pretixplugins/paypal2/paypal_logo.svg'
         description = _("Accept payments with your PayPal account. In addition to regular PayPal payments, you can now "
-                        "also offer payments in a variety of local payment methods such as giropay, SOFORT, iDEAL and "
+                        "also offer payments in a variety of local payment methods such as eps, iDEAL, and "
                         "many more to your customers - they don't even need a PayPal account. PayPal is one of the "
                         "most popular payment methods world-wide.")
+        settings_links = [
+            ((_("Payment"), _("PayPal")), "control:event.settings.payment.provider", {"provider": "paypal_settings"}),
+        ]
 
     def ready(self):
         from . import signals  # NOQA

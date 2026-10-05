@@ -47,6 +47,105 @@ fabric.Imagearea = fabric.util.createClass(fabric.Rect, {
 fabric.Imagearea.fromObject = function (object, callback, forceAsync) {
     return fabric.Object._fromObject('Imagearea', object, callback, forceAsync);
 };
+fabric.Textcontainer = fabric.util.createClass(fabric.Rect, {
+    type: 'textcontainer',
+
+    initialize: function (text, options) {
+        options || (options = {});
+
+        this.callSuper('initialize', options);
+
+        //this.textbox = new fabric.Textbox(text, JSON.parse(JSON.stringify(options)));
+        this.set('content', options.content || '');
+
+        this.cacheProperties.push(
+            "width", "height", "fontSize", "lineHeight", "fill", "fontFamily", "fontWeight",
+            "fontStyle", "text", "textAlign", "splitLongWords", "splitByGrapheme", "verticalAlign",
+            "autoResize",
+        )
+    },
+
+    toObject: function (propertiesToInclude) {
+        return this.callSuper('toObject', ['content'].concat(propertiesToInclude));
+    },
+
+    _internalTextbox: function () {
+        var fontSize = parseFloat(this.fontSize);
+        var text = (this.text || "").replace("-", "-\u200B");
+        while (true) {
+            var tmptext = new fabric.Textbox(text, {
+                _wordJoiners: /[ \t\r\u200B]/u,
+                left: 0,
+                top: 0,
+                originY: 'top',
+                originX: 'left',
+                width: this.width,
+                height: this.height,
+                fontSize: fontSize,
+                lineHeight: this.lineHeight,
+                fill: this.fill,
+                fontFamily: this.fontFamily,
+                fontWeight: this.fontWeight,
+                fontStyle: this.fontStyle,
+                text: text,
+                textAlign: this.textAlign,
+                splitByGrapheme: this.splitLongWords
+            })
+            tmptext.setCoords();
+            var lineHeights = 0;
+            for (var i = 0, len = tmptext._textLines.length; i < len; i++) {
+                var heightOfLine = tmptext.getHeightOfLine(i);
+                lineHeights += heightOfLine;
+            }
+            if (!this.autoResize || (lineHeights <= this.height && tmptext.width <= this.width) || fontSize <= 1.0) {
+                return {textbox: tmptext, height: lineHeights, width: tmptext.width}
+            }
+            if (lineHeights > this.height) { // we can do larger steps for height
+                fontSize = fontSize - Math.max(1.0, fontSize * .1)
+            } else {
+                fontSize = fontSize - Math.max(.25, fontSize * .025)
+            }
+        }
+    },
+
+    _render: function (ctx) {
+        var h = this.height, w = this.width;
+
+        /*
+        var x = -this.width / 2,
+            y = -this.height / 2;
+        ctx.fillStyle = '#ccc';
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + w, y);
+        ctx.lineTo(x + w, y + h);
+        ctx.lineTo(x, y + h);
+        ctx.lineTo(x, y);
+        ctx.closePath();
+        ctx.fill();
+         */
+        var { textbox, height, width } = this._internalTextbox();
+
+        ctx.save();
+        if (this.verticalAlign === "top") {
+            ctx.translate(0, - (h - height) / 2);
+        } else if (this.verticalAlign === "bottom") {
+            ctx.translate(0, (h - height) / 2);
+        }
+
+        // it is entirely unclear to me why overflow is always rendered centered, so we manually readjust
+        if (this.textAlign === "left" && width > w) {
+            ctx.translate(-(w - width) / 2, 0);
+        } else if (this.verticalAlign === "right" && width > w) {
+            ctx.translate((w - width) / 2, 0);
+        }
+        textbox._render(ctx);
+        ctx.restore();
+    },
+});
+fabric.Textcontainer.fromObject = function (object, callback, forceAsync) {
+    return fabric.Object._fromObject('Textcontainer', object, callback, forceAsync);
+};
 fabric.Barcodearea = fabric.util.createClass(fabric.Rect, {
     type: 'barcodearea',
 
@@ -150,9 +249,10 @@ var editor = {
                 top += o.group.top + o.group.height / 2;
                 left += o.group.left + o.group.width / 2;
             }
+            var col, bottom;
             if (o.type === "textarea") {
-                var col = (new fabric.Color(o.fill))._source;
-                var bottom = editor.pdf_viewport.height - o.height - top;
+                col = (new fabric.Color(o.fill))._source;
+                bottom = editor.pdf_viewport.height - o.height - top;
                 if (o.downward) {
                     bottom = editor.pdf_viewport.height - top;
                 }
@@ -176,6 +276,32 @@ var editor = {
                     rotation: o.angle,
                     align: o.textAlign,
                 });
+            } else  if (o.type === "textcontainer") {
+                col = (new fabric.Color(o.fill))._source;
+                bottom = editor.pdf_viewport.height - o.height - top;
+                d.push({
+                    type: "textcontainer",
+                    page: editor.pdf_page_number,
+                    locale: $("#pdf-info-locale").val(),
+                    left: editor._px2mm(left).toFixed(2),
+                    bottom: editor._px2mm(bottom).toFixed(2),
+                    fontsize: editor._px2pt(o.fontSize).toFixed(1),
+                    lineheight: o.lineHeight,
+                    color: col,
+                    fontfamily: o.fontFamily,
+                    bold: o.fontWeight === 'bold',
+                    italic: o.fontStyle === 'italic',
+                    width: editor._px2mm(o.width).toFixed(2),
+                    height: editor._px2mm(o.height).toFixed(2),
+                    content: o.content,
+                    text: o.text,
+                    text_i18n: o.text_i18n || {},
+                    rotation: o.angle,
+                    align: o.textAlign || 'left',
+                    verticalalign: o.verticalAlign || 'middle',
+                    autoresize: o.autoResize || false,
+                    splitlongwords: o.splitLongWords || false,
+                });
             } else  if (o.type === "imagearea") {
                 d.push({
                     type: "imagearea",
@@ -187,6 +313,7 @@ var editor = {
                     content: o.content,
                 });
             } else  if (o.type === "barcodearea") {
+                col = (new fabric.Color(o.fill))._source;
                 d.push({
                     type: "barcodearea",
                     page: editor.pdf_page_number,
@@ -197,6 +324,7 @@ var editor = {
                     text: o.text,
                     text_i18n: o.text_i18n || {},
                     nowhitespace: o.nowhitespace || false,
+                    color: col,
                 });
             } else  if (o.type === "poweredby") {
                 d.push({
@@ -223,6 +351,10 @@ var editor = {
             o.content = d.content;
             o.scaleToHeight(editor._mm2px(d.size));
             o.nowhitespace = d.nowhitespace || false;
+            if (!d.color) {
+              d.color = [0, 0, 0, 1];
+            }
+            o.set('fill', 'rgb(' + d.color[0] + ',' + d.color[1] + ',' + d.color[2] + ')');
             if (d.content === "other") {
                 o.text = d.text
             } else if (d.content === "other_i18n") {
@@ -239,6 +371,36 @@ var editor = {
             o = editor._add_poweredby(d.content);
             o.content = d.content;
             o.scaleToHeight(editor._mm2px(d.size));
+        } else if (d.type === "textcontainer") {
+            o = editor._add_textcontainer();
+            o.set('fill', 'rgb(' + d.color[0] + ',' + d.color[1] + ',' + d.color[2] + ')');
+            o.set('fontSize', editor._pt2px(d.fontsize));
+            o.set('lineHeight', d.lineheight || 1);
+            o.set('fontFamily', d.fontfamily);
+            o.set('fontWeight', d.bold ? 'bold' : 'normal');
+            o.set('fontStyle', d.italic ? 'italic' : 'normal');
+            o.content = d.content;
+            o.set('textAlign', d.align);
+            o.set('verticalAlign', d.verticalalign);
+            o.set('autoResize', d.autoresize);
+            o.set('splitLongWords', d.splitlongwords);
+            if (d.rotation) {
+                o.rotate(d.rotation);
+            }
+            if (d.content === "other") {
+                o.set('text', d.text);
+            } else if (d.content === "other_i18n") {
+                o.text_i18n = d.text_i18n
+                o.set('text', d.text_i18n[Object.keys(d.text_i18n)[0]]);
+            } else if (d.content) {
+                o.set('text', editor._get_text_sample(d.content));
+            }
+            o.set('width', editor._mm2px(d.width));  // needs to be after setText
+            o.set('height', editor._mm2px(d.height));  // needs to be after setText
+            if (d.locale) {
+                // The data format allows to set the locale per text field but we currently only expose a global field
+                $("#pdf-info-locale").val(d.locale);
+            }
         } else if (d.type === "textarea" || o.type === "text") {
             o = editor._add_text();
             o.set('fill', 'rgb(' + d.color[0] + ',' + d.color[1] + ',' + d.color[2] + ')');
@@ -452,9 +614,18 @@ var editor = {
                 $("#loading-initial").remove();
             });
         }
+        editor._update_version_notice();
+    },
+
+    _update_version_notice: function () {
+        $("#version-notice").toggle(
+            editor._other_page_objects.some((o) => o.type === "textcontainer") ||
+            editor.fabric.getObjects().some((o) => o.type === "textcontainer")
+        );
     },
 
     _update_toolbox_values: function () {
+        editor._update_version_notice();
         var o = editor.fabric.getActiveObject();
         if (!o) {
             return;
@@ -475,6 +646,8 @@ var editor = {
                 }));
             });
         } else if (o.type === "barcodearea") {
+            var col = (new fabric.Color(o.fill))._source;
+            $("#toolbox-qrcolor").val("#" + ((1 << 24) + (col[0] << 16) + (col[1] << 8) + col[2]).toString(16).slice(1));
             $("#toolbox-squaresize").val(editor._px2mm(o.height * o.scaleY).toFixed(2));
             $("#toolbox-qrwhitespace").prop("checked", o.nowhitespace || false);
         } else if (o.type === "imagearea") {
@@ -484,6 +657,35 @@ var editor = {
         } else if (o.type === "poweredby") {
             $("#toolbox-squaresize").val(editor._px2mm(o.height * o.scaleY).toFixed(2));
             $("#toolbox-poweredby-style").val(o.content);
+        } else if (o.type === "textcontainer") {
+            var col = (new fabric.Color(o.fill))._source;
+            $("#toolbox-col").val("#" + ((1 << 24) + (col[0] << 16) + (col[1] << 8) + col[2]).toString(16).slice(1));
+            $("#toolbox-fontsize").val(editor._px2pt(o.fontSize).toFixed(1));
+            $("#toolbox-lineheight").val(o.lineHeight || 1);
+            $("#toolbox-fontfamily").val(o.fontFamily);
+            $("#toolbox").find("button[data-action=bold]").toggleClass('active', o.fontWeight === 'bold');
+            $("#toolbox").find("button[data-action=italic]").toggleClass('active', o.fontStyle === 'italic');
+            $("#toolbox").find("button[data-action=autoresize]").toggleClass('active', o.autoResize || false)
+            $("#toolbox").find("button[data-action=splitlongwords]").toggleClass('active', o.splitLongWords || false)
+            $("#toolbox").find("button[data-action=left]").toggleClass('active', o.textAlign === 'left' || !o.textAlign);
+            $("#toolbox").find("button[data-action=center]").toggleClass('active', o.textAlign === 'center');
+            $("#toolbox").find("button[data-action=right]").toggleClass('active', o.textAlign === 'right');
+            $("#toolbox").find("button[data-action=top]").toggleClass('active', o.verticalAlign === 'top' || !o.verticalAlign);
+            $("#toolbox").find("button[data-action=middle]").toggleClass('active', o.verticalAlign === 'middle');
+            $("#toolbox").find("button[data-action=bottom]").toggleClass('active', o.verticalAlign === 'bottom');
+
+            if (o.scaleY !== 1 || o.scaleX !== 1) {
+                o.set({
+                    height: o.height * o.scaleY,
+                    width: o.width * o.scaleX,
+                    scaleX: 1,
+                    scaleY: 1
+                });
+            }
+
+            $("#toolbox-height").val(editor._px2mm(o.height).toFixed(2));
+            $("#toolbox-width").val(editor._px2mm(o.width).toFixed(2));
+            $("#toolbox-textrotation").val((o.angle || 0.0).toFixed(1));
         } else if (o.type === "text" || o.type === "textarea") {
             var col = (new fabric.Color(o.fill))._source;
             $("#toolbox-col").val("#" + ((1 << 24) + (col[0] << 16) + (col[1] << 8) + col[2]).toString(16).slice(1));
@@ -500,7 +702,7 @@ var editor = {
             $("#toolbox-textrotation").val((o.angle || 0.0).toFixed(1));
         }
 
-        if (o.type === "textarea" || o.type === "barcodearea") {
+        if (o.type === "textarea" || o.type === "barcodearea" || o.type === "textcontainer") {
             if (!o.content && o.type == "barcodearea") {
                 o.content = "secret";
             }
@@ -548,6 +750,7 @@ var editor = {
             o.set('scaleX', 1);
             o.set('scaleY', 1);
             o.set('top', new_top)
+            o.set('fill', $("#toolbox-qrcolor").val());
             o.nowhitespace = $("#toolbox-qrwhitespace").prop("checked") || false;
 
             $("#toolbox-content-other").toggle($("#toolbox-content").val() === "other");
@@ -598,6 +801,50 @@ var editor = {
                 editor.fabric.discardActiveObject();
                 editor.fabric.setActiveObject(newo);
             }
+        } else if (o.type === "textcontainer") {
+            o.set('fill', $("#toolbox-col").val());
+            o.set('fontSize', editor._pt2px($("#toolbox-fontsize").val()));
+            o.set('lineHeight', $("#toolbox-lineheight").val() || 1);
+            o.set('fontFamily', $("#toolbox-fontfamily").val());
+            o.set('fontWeight', $("#toolbox").find("button[data-action=bold]").is('.active') ? 'bold' : 'normal');
+            o.set('fontStyle', $("#toolbox").find("button[data-action=italic]").is('.active') ? 'italic' : 'normal');
+            var align = $("#toolbox-align").find(".active").attr("data-action");
+            if (align) {
+                o.set('textAlign', align);
+            }
+            var verticalAlign = $("#toolbox-verticalalign").find(".active").attr("data-action");
+            if (verticalAlign) {
+                o.set('verticalAlign', verticalAlign);
+            }
+            o.set('autoResize', $("#toolbox").find("button[data-action=autoresize]").is('.active'));
+            o.set('splitLongWords', $("#toolbox").find("button[data-action=splitlongwords]").is('.active'));
+            // todo: verticalalign
+            o.rotate(parseFloat($("#toolbox-textrotation").val()));
+            $("#toolbox-content-other").toggle($("#toolbox-content").val() === "other");
+            $("#toolbox-content-other-i18n").toggle($("#toolbox-content").val() === "other_i18n");
+            $("#toolbox-content-other-help").toggle($("#toolbox-content").val() === "other" || $("#toolbox-content").val() === "other_i18n");
+            o.content = $("#toolbox-content").val();
+            if ($("#toolbox-content").val() === "other") {
+                if (e.target.id === "toolbox-content") {
+                    // user used dropdown to switch content-type, update value with value from i18n textarea
+                    $("#toolbox-content-other").val($("#toolbox-content-other-i18n textarea").val());
+                }
+                o.set('text', $("#toolbox-content-other").val());
+            } else if ($("#toolbox-content").val() === "other_i18n") {
+                if (e.target.id === "toolbox-content") {
+                    // user used dropdown to switch content-type, update value with value from "other" textarea
+                    $("#toolbox-content-other-i18n textarea").val($("#toolbox-content-other").val());
+                }
+                o.text_i18n = {}
+                $("#toolbox-content-other-i18n textarea").each(function () {
+                    o.text_i18n[$(this).attr("lang")] = $(this).val();
+                });
+                o.set('text', $("#toolbox-content-other-i18n textarea").first().val());
+            } else {
+                o.set('text', editor._get_text_sample($("#toolbox-content").val()));
+            }
+            o.set('width', editor._mm2px($("#toolbox-width").val()));
+            o.set('height', editor._mm2px($("#toolbox-height").val()));
         } else if (o.type === "textarea" || o.type === "text") {
             o.set('fill', $("#toolbox-col").val());
             o.set('fontSize', editor._pt2px($("#toolbox-fontsize").val()));
@@ -651,6 +898,7 @@ var editor = {
 
     _update_toolbox: function () {
         var selected = editor.fabric.getActiveObjects();
+        $(".object-buttons button").prop("disabled", selected.length == 0);
         if (selected.length > 1) {
             $("#toolbox").attr("data-type", "group");
             $("#toolbox-heading").text(gettext("Group of objects"));
@@ -658,7 +906,9 @@ var editor = {
             var o = selected[0];
             $("#toolbox").attr("data-type", o.type);
             if (o.type === "textarea" || o.type === "text") {
-                $("#toolbox-heading").text(gettext("Text object"));
+                $("#toolbox-heading").text(gettext("Text object (deprecated)"));
+            } else if (o.type === "textarea" || o.type === "text" || o.type === "textcontainer") {
+                $("#toolbox-heading").text(gettext("Text box"));
             } else if (o.type === "barcodearea") {
                 $("#toolbox-heading").text(gettext("Barcode area"));
             } else if (o.type === "imagearea") {
@@ -673,7 +923,6 @@ var editor = {
             $("#toolbox-heading").text(gettext("Ticket design"));
             $("#pdf-info-width").val(editor._px2mm(editor.pdf_viewport.width).toFixed(2));
             $("#pdf-info-height").val(editor._px2mm(editor.pdf_viewport.height).toFixed(2));
-            editor._paper_size_warning();
         }
         editor._update_toolbox_values();
     },
@@ -727,6 +976,44 @@ var editor = {
         return rect;
     },
 
+    _add_textcontainer: function () {
+        var rect = new fabric.Textcontainer(editor._get_text_sample('event_name'), {
+            left: 100,
+            top: 100,
+            width: 300,
+            height: 29,
+            lockRotation: false,
+            fill: '#000',
+            content: 'event_name',
+            text: editor._get_text_sample('event_name'),
+            fontFamily: 'Open Sans',
+            fontStyle: 'normal',
+            lineHeight: 1,
+            editable: false,
+            fontSize: editor._pt2px(13),
+            verticalAlign: 'middle',
+            textAlign: 'left',
+            splitLongWords: true,
+            autoResize: true,
+            lockScalingFlip: true,
+        });
+        rect.setControlsVisibility({
+            'tr': true,
+            'tl': true,
+            'mt': true,
+            'br': true,
+            'bl': true,
+            'mb': true,
+            'mr': true,
+            'ml': true,
+            'mtr': true
+        });
+        editor.fabric.add(rect);
+        editor._create_savepoint();
+        $("#version-notice").show();
+        return rect;
+    },
+
     _add_imagearea: function () {
         var rect = new fabric.Imagearea({
             left: 100,
@@ -750,7 +1037,7 @@ var editor = {
             width: 100,
             height: 100,
             lockRotation: true,
-            fill: '#666',
+            fill: '#000',
             content: $(this).attr("data-content"),
             text: '',
             nowhitespace: true,
@@ -762,8 +1049,11 @@ var editor = {
     },
 
     _cut: function () {
-        editor._history_modification_in_progress = true;
         var thing = editor.fabric.getActiveObject();
+        if (!thing) {
+            return false;
+        }
+        editor._history_modification_in_progress = true;
         if (thing.type === "activeSelection") {
             editor.clipboard = editor.dump(thing._objects);
             thing.forEachObject(function (o) {
@@ -780,15 +1070,16 @@ var editor = {
     },
 
     _copy: function () {
-        editor._history_modification_in_progress = true;
         var thing = editor.fabric.getActiveObject();
+        if (!thing) {
+            return false;
+        }
         if (thing.type === "activeSelection") {
             editor.clipboard = editor.dump(thing._objects);
         } else {
             editor.clipboard = editor.dump([thing]);
         }
-        editor._history_modification_in_progress = false;
-        editor._create_savepoint();
+        return true;
     },
 
     _paste: function () {
@@ -812,8 +1103,19 @@ var editor = {
         editor._create_savepoint();
     },
 
+    _duplicate: function () {
+        var prevClipboad = editor.clipboard;
+        if (editor._copy()) {
+            editor._paste();
+            editor.clipboard = prevClipboad;
+        }
+    },
+
     _delete: function () {
         var thing = editor.fabric.getActiveObject();
+        if (!thing) {
+            return false;
+        }
         if (thing.type === "activeSelection") {
             thing.forEachObject(function (o) {
                 editor.fabric.remove(o);
@@ -828,69 +1130,84 @@ var editor = {
     },
 
     _on_keydown: function (e) {
-        var step = e.shiftKey ? editor._mm2px(10) : editor._mm2px(1);
+        var step = editor._mm2px(e.shiftKey ? 10 : (e.altKey ? 0.1 : 1));
         var thing = editor.fabric.getActiveObject();
         if ($("#source-container").is(':visible')) {
             return true;
         }
-        switch (e.keyCode) {
-            case 38:  /* Up arrow */
-                thing.set('top', thing.get('top') - step);
-                thing.setCoords();
-                editor._create_savepoint();
-                break;
-            case 40:  /* Down arrow */
-                thing.set('top', thing.get('top') + step);
-                thing.setCoords();
-                editor._create_savepoint();
-                break;
-            case 37:  /* Left arrow  */
-                thing.set('left', thing.get('left') - step);
-                thing.setCoords();
-                editor._create_savepoint();
-                break;
-            case 39:  /* Right arrow  */
-                thing.set('left', thing.get('left') + step);
-                thing.setCoords();
-                editor._create_savepoint();
-                break;
-            case 8:  /* Backspace */
-            case 46:  /* Delete */
-                editor._delete();
-                break;
-            case 65:  /* A */
-                if (e.ctrlKey || e.metaKey) {
+        if (e.ctrlKey || e.metaKey) {
+            switch (e.key) {
+                case "a":
                     editor._selectAll();
-                }
-                break;
-            case 89:  /* Y */
-                if (e.ctrlKey || e.metaKey) {
+                    break;
+                case "y":
                     editor._redo();
-                }
-                break;
-            case 90:  /* Z */
-                if (e.ctrlKey || e.metaKey) {
+                    break;
+                case "z":
                     editor._undo();
-                }
-                break;
-            case 88:  /* X */
-                if (e.ctrlKey || e.metaKey) {
+                    break;
+                case "x":
                     editor._cut();
-                }
-                break;
-            case 86:  /* V */
-                if (e.ctrlKey || e.metaKey) {
+                    break;
+                case "v":
                     editor._paste();
-                }
-                break;
-            case 67:  /* C */
-                if (e.ctrlKey || e.metaKey) {
+                    break;
+                case "c":
                     editor._copy();
-                }
-                break;
-            default:
-                return;
+                    break;
+                case "d":
+                    editor._duplicate();
+                    break;
+                default:
+                    return;
+            }
+        } else {
+            switch (e.key) {
+                case "ArrowUp":
+                    thing.set('top', thing.get('top') - step);
+                    thing.setCoords();
+                    editor._create_savepoint();
+                    break;
+                case "ArrowDown":
+                    thing.set('top', thing.get('top') + step);
+                    thing.setCoords();
+                    editor._create_savepoint();
+                    break;
+                case "ArrowLeft":
+                    thing.set('left', thing.get('left') - step);
+                    thing.setCoords();
+                    editor._create_savepoint();
+                    break;
+                case "ArrowRight":
+                    thing.set('left', thing.get('left') + step);
+                    thing.setCoords();
+                    editor._create_savepoint();
+                    break;
+                case "Backspace":
+                case "Del":
+                case "Delete":
+                    editor._delete();
+                    break;
+                case "Cut":
+                    editor._cut();
+                    break;
+                case "Copy":
+                    editor._copy();
+                    break;
+                case "Paste":
+                    editor._paste();
+                    break;
+                case "Redo":
+                    editor._redo();
+                    break;
+                case "Undo":
+                    editor._undo();
+                    break;
+                default:
+                    return;
+            }
         }
+
         e.preventDefault();
         editor.fabric.renderAll();
         editor._update_toolbox_values();
@@ -948,6 +1265,9 @@ var editor = {
         } else {
             $("#editor-save").addClass("btn-success").removeClass("btn-primary").find(".fa").attr("class", "fa fa-fw fa-check");
         }
+
+        $("#toolbox-undo").prop("disabled", editor._history_pos == editor.history.length-1);
+        $("#toolbox-redo").prop("disabled", editor._history_pos == 0);
     },
 
     _save: function () {
@@ -1063,6 +1383,7 @@ var editor = {
         editor._load_pdf();
         $("#editor-add-qrcode, #editor-add-qrcode-lead, #editor-add-qrcode-other").click(editor._add_qrcode);
         $("#editor-add-image").click(editor._add_imagearea);
+        $("#editor-add-textcontainer").click(editor._add_textcontainer);
         $("#editor-add-text").click(editor._add_text);
         $("#editor-add-poweredby").click(function() {editor._add_poweredby("dark")});
         editor.$cva.get(0).tabIndex = 1000;
@@ -1130,10 +1451,8 @@ var editor = {
             editor._create_savepoint();
         });
         $("#toolbox .colorpickerfield").bind('changeColor', editor._update_values_from_toolbox);
-        $("#toolbox-copy").bind('click', editor._copy);
-        $("#toolbox-cut").bind('click', editor._cut);
+        $("#toolbox-duplicate").bind('click', editor._duplicate);
         $("#toolbox-delete").bind('click', editor._delete);
-        $("#toolbox-paste").bind('click', editor._paste);
         $("#toolbox-undo").bind('click', editor._undo);
         $("#toolbox-redo").bind('click', editor._redo);
         $("#toolbox-source").bind('click', editor._source_show);

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -36,7 +36,9 @@ import time
 import traceback
 
 from django.conf import settings
+from django.core.cache import cache
 from django.core.management.base import BaseCommand
+from django.db import close_old_connections
 from django.dispatch.dispatcher import NO_RECEIVERS
 
 from pretix.helpers.periodic import SKIPPED
@@ -50,17 +52,23 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument('--tasks', action='store', type=str, help='Only execute the tasks with this name '
                                                                       '(dotted path, comma separation)')
+        parser.add_argument('--list-tasks', action='store_true', help='Only list all tasks')
         parser.add_argument('--exclude', action='store', type=str, help='Exclude the tasks with this name '
                                                                         '(dotted path, comma separation)')
 
     def handle(self, *args, **options):
         verbosity = int(options['verbosity'])
 
+        cache.set("pretix_runperiodic_executed", True, 3600 * 12)
+
         if not periodic_task.receivers or periodic_task.sender_receivers_cache.get(self) is NO_RECEIVERS:
             return
 
         for receiver in periodic_task._live_receivers(self):
             name = f'{receiver.__module__}.{receiver.__name__}'
+            if options['list_tasks']:
+                print(name)
+                continue
             if options.get('tasks'):
                 if name not in options.get('tasks').split(','):
                     continue
@@ -72,9 +80,11 @@ class Command(BaseCommand):
                 self.stdout.write(f'INFO Running {name}…')
             t0 = time.time()
             try:
+                # Check if the DB connection is still good, it might be closed if the previous task took too long.
+                close_old_connections()
                 r = receiver(signal=periodic_task, sender=self)
             except Exception as err:
-                if isinstance(Exception, KeyboardInterrupt):
+                if isinstance(err, KeyboardInterrupt):
                     raise err
                 if settings.SENTRY_ENABLED:
                     from sentry_sdk import capture_exception

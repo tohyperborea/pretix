@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -133,7 +133,8 @@ def test_card_detail_view_transact_revert_refund(organizer, admin_user, gift_car
             code='FOO', event=event, email='dummy@dummy.test',
             status=Order.STATUS_CANCELED,
             datetime=now(), expires=now() + timedelta(days=10),
-            total=14, locale='en'
+            total=14, locale='en',
+            sales_channel=event.organizer.sales_channels.get(identifier="web"),
         )
         o.payments.create(
             amount=o.total, provider='banktransfer', state=OrderPayment.PAYMENT_STATE_CONFIRMED

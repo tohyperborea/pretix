@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -59,11 +59,12 @@ from django.views.generic import (
 )
 from django_scopes import scopes_disabled
 
-from pretix.base.email import get_available_placeholders
 from pretix.base.models import (
     CartPosition, LogEntry, Voucher, WaitingListEntry,
 )
 from pretix.base.models.vouchers import generate_codes
+from pretix.base.services.mail import prefix_subject
+from pretix.base.services.placeholders import get_sample_context
 from pretix.base.services.vouchers import vouchers_send
 from pretix.base.templatetags.rich_text import markdown_compile_email
 from pretix.base.views.tasks import AsyncFormView
@@ -73,7 +74,7 @@ from pretix.control.permissions import EventPermissionRequiredMixin
 from pretix.control.signals import voucher_form_class
 from pretix.control.views import PaginationMixin
 from pretix.helpers.compat import CompatDeleteView
-from pretix.helpers.format import format_map
+from pretix.helpers.format import SafeFormatter, format_map
 from pretix.helpers.models import modelcopy
 from pretix.multidomain.urlreverse import build_absolute_uri
 
@@ -86,7 +87,7 @@ class VoucherList(PaginationMixin, EventPermissionRequiredMixin, ListView):
 
     @scopes_disabled()  # we have an event check here, and we can save some performance on subqueries
     def get_queryset(self):
-        qs = Voucher.annotate_budget_used_orders(self.request.event.vouchers.exclude(
+        qs = Voucher.annotate_budget_used(self.request.event.vouchers.exclude(
             Exists(WaitingListEntry.objects.filter(voucher_id=OuterRef('pk')))
         ).select_related(
             'item', 'variation', 'seat'
@@ -379,7 +380,7 @@ class VoucherCreate(EventPermissionRequiredMixin, CreateView):
         messages.success(self.request, mark_safe(_('The new voucher has been created: {code}').format(
             code=format_html('<a href="{url}">{code}</a>', url=url, code=self.object.code)
         )))
-        form.instance.log_action('pretix.voucher.added', data=dict(form.cleaned_data), user=self.request.user)
+        form.instance.log_action('pretix.voucher.added', data={**dict(form.cleaned_data), "source": "control"}, user=self.request.user)
         return ret
 
     @transaction.atomic
@@ -474,9 +475,9 @@ class VoucherBulkCreate(EventPermissionRequiredMixin, AsyncFormView):
                 data['bulk'] = True
                 del data['codes']
                 log_entries.append(
-                    v.log_action('pretix.voucher.added', data=data, user=self.request.user, save=False)
+                    v.log_action('pretix.voucher.added', data={**data, "source": "control_bulk"}, user=self.request.user, save=False)
                 )
-            LogEntry.objects.bulk_create(log_entries)
+            LogEntry.bulk_create_and_postprocess(log_entries)
             form.post_bulk_save(batch_vouchers)
             batch_vouchers.clear()
             set_progress(len(voucherids) / total_num * (50. if form.cleaned_data['send'] else 100.))
@@ -548,22 +549,10 @@ class VoucherBulkMailPreview(EventPermissionRequiredMixin, View):
 
     # get all supported placeholders with dummy values
     def placeholders(self, item):
-        ctx = {}
         base_ctx = ['event', 'name']
         if item == 'send_message':
             base_ctx += ['voucher_list']
-        for p in get_available_placeholders(self.request.event, base_ctx).values():
-            s = str(p.render_sample(self.request.event))
-            if s.strip().startswith('* ') or s.startswith('  '):
-                ctx[p.identifier] = '<div class="placeholder" title="{}">{}</div>'.format(
-                    _('This value will be replaced based on dynamic parameters.'),
-                    markdown_compile_email(s)
-                )
-            else:
-                ctx[p.identifier] = '<span class="placeholder" title="{}">{}</span>'.format(
-                    _('This value will be replaced based on dynamic parameters.'),
-                    s
-                )
+        ctx = get_sample_context(self.request.event, base_ctx)
         return self.SafeDict(ctx)
 
     def post(self, request, *args, **kwargs):
@@ -572,11 +561,16 @@ class VoucherBulkMailPreview(EventPermissionRequiredMixin, View):
             return HttpResponseBadRequest(_('invalid item'))
         msgs = {}
         if "subject" in preview_item:
-            msgs["all"] = format_map(bleach.clean(request.POST.get(preview_item, "")), self.placeholders(preview_item))
-        else:
-            msgs["all"] = markdown_compile_email(
-                format_map(request.POST.get(preview_item), self.placeholders(preview_item))
+            msgs["all"] = prefix_subject(
+                self.request.event,
+                format_map(bleach.clean(request.POST.get(preview_item, "")), self.placeholders(preview_item)),
+                highlight=True
             )
+        else:
+            placeholders = self.placeholders(preview_item)
+            msgs["all"] = format_map(markdown_compile_email(
+                format_map(request.POST.get(preview_item), placeholders)
+            ), placeholders, mode=SafeFormatter.MODE_RICH_TO_HTML)
 
         return JsonResponse({
             'item': preview_item,
@@ -625,19 +619,26 @@ class VoucherBulkAction(EventPermissionRequiredMixin, View):
                 'forbidden': self.objects.exclude(redeemed=0),
             })
         elif request.POST.get('action') == 'delete_confirm':
+            log_entries = []
+            to_delete = []
             for obj in self.objects:
                 if obj.allow_delete():
-                    obj.log_action('pretix.voucher.deleted', user=self.request.user)
-                    CartPosition.objects.filter(addon_to__voucher=obj).delete()
-                    obj.cartposition_set.all().delete()
-                    obj.delete()
+                    log_entries.append(obj.log_action('pretix.voucher.deleted', user=self.request.user, save=False))
+                    to_delete.append(obj.pk)
                 else:
-                    obj.log_action('pretix.voucher.changed', user=self.request.user, data={
+                    log_entries.append(obj.log_action('pretix.voucher.changed', user=self.request.user, data={
                         'max_usages': min(obj.redeemed, obj.max_usages),
                         'bulk': True
-                    })
+                    }, save=False))
                     obj.max_usages = min(obj.redeemed, obj.max_usages)
                     obj.save(update_fields=['max_usages'])
+
+            if to_delete:
+                CartPosition.objects.filter(addon_to__voucher_id__in=to_delete).delete()
+                CartPosition.objects.filter(voucher_id__in=to_delete).delete()
+                Voucher.objects.filter(pk__in=to_delete).delete()
+
+            LogEntry.bulk_create_and_postprocess(log_entries)
             messages.success(request, _('The selected vouchers have been deleted or disabled.'))
         return redirect(self.get_success_url())
 

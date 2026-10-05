@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -42,44 +42,53 @@ from importlib import import_module
 from urllib.parse import urlencode
 
 import isoweek
+from dateutil import parser
+from django import forms
 from django.conf import settings
+from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.db.models import (
     Count, Exists, IntegerField, OuterRef, Prefetch, Q, Value,
 )
 from django.db.models.lookups import Exact
 from django.http import Http404, HttpResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.decorators import method_decorator
 from django.utils.formats import get_format
 from django.utils.functional import SimpleLazyObject
-from django.utils.timezone import now
+from django.utils.http import url_has_allowed_host_and_scheme
+from django.utils.timezone import get_current_timezone, now
 from django.utils.translation import gettext_lazy as _, pgettext_lazy
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import TemplateView
 
-from pretix.base.channels import get_all_sales_channels
+from pretix.base.auth import has_event_access_permission
+from pretix.base.forms.widgets import SplitDateTimePickerWidget
 from pretix.base.models import (
-    ItemVariation, Quota, SeatCategoryMapping, Voucher,
+    ItemVariation, Quota, SalesChannel, SeatCategoryMapping, Voucher,
 )
 from pretix.base.models.event import Event, SubEvent
 from pretix.base.models.items import (
-    ItemAddOn, ItemBundle, SubEventItem, SubEventItemVariation,
+    Item, ItemAddOn, ItemBundle, SubEventItem, SubEventItemVariation,
 )
 from pretix.base.services.placeholders import PlaceholderContext
 from pretix.base.services.quotas import QuotaAvailability
+from pretix.base.timemachine import time_machine_now
 from pretix.helpers.compat import date_fromisocalendar
+from pretix.helpers.formats.en.formats import (
+    SHORT_MONTH_DAY_FORMAT, WEEK_FORMAT,
+)
+from pretix.helpers.http import redirect_to_url
 from pretix.multidomain.urlreverse import eventreverse
 from pretix.presale.ical import get_public_ical
-from pretix.presale.signals import item_description
+from pretix.presale.signals import item_description, seatingframe_html_head
 from pretix.presale.views.organizer import (
     EventListMixin, add_subevents_for_days, days_for_template,
-    filter_qs_by_attr, has_before_after, weeks_for_template,
+    filter_qs_by_attr, filter_subevents_with_plugins, has_before_after,
+    weeks_for_template,
 )
 
-from ...helpers.formats.en.formats import SHORT_MONTH_DAY_FORMAT, WEEK_FORMAT
-from ...helpers.http import redirect_to_url
 from . import (
     CartMixin, EventViewMixin, allow_frame_if_namespaced, get_cart,
     iframe_entry_view_wrapper,
@@ -102,7 +111,8 @@ def item_group_by_category(items):
     )
 
 
-def get_grouped_items(event, subevent=None, voucher=None, channel='web', require_seat=0, base_qs=None, allow_addons=False,
+def get_grouped_items(event, *, channel: SalesChannel, subevent=None, voucher=None, require_seat=0, base_qs=None,
+                      allow_addons=False, allow_cross_sell=False,
                       quota_cache=None, filter_items=None, filter_categories=None, memberships=None,
                       ignore_hide_sold_out_for_item_ids=None):
     base_qs_set = base_qs is not None
@@ -118,8 +128,8 @@ def get_grouped_items(event, subevent=None, voucher=None, channel='web', require
         requires_seat = Value(0, output_field=IntegerField())
 
     variation_q = (
-        Q(Q(available_from__isnull=True) | Q(available_from__lte=now()) | Q(available_from_mode='info')) &
-        Q(Q(available_until__isnull=True) | Q(available_until__gte=now()) | Q(available_until_mode='info'))
+        Q(Q(available_from__isnull=True) | Q(available_from__lte=time_machine_now()) | Q(available_from_mode='info')) &
+        Q(Q(available_until__isnull=True) | Q(available_until__gte=time_machine_now()) | Q(available_until_mode='info'))
     )
     if not voucher or not voucher.show_hidden_items:
         variation_q &= Q(hide_without_voucher=False)
@@ -136,16 +146,16 @@ def get_grouped_items(event, subevent=None, voucher=None, channel='web', require
             subevent_disabled=Exists(
                 SubEventItemVariation.objects.filter(
                     Q(disabled=True)
-                    | (Exact(OuterRef('available_from_mode'), 'hide') & Q(available_from__gt=now()))
-                    | (Exact(OuterRef('available_until_mode'), 'hide') & Q(available_until__lt=now())),
+                    | (Exact(OuterRef('available_from_mode'), 'hide') & Q(available_from__gt=time_machine_now()))
+                    | (Exact(OuterRef('available_until_mode'), 'hide') & Q(available_until__lt=time_machine_now())),
                     variation_id=OuterRef('pk'),
                     subevent=subevent,
                 )
             ),
         ).filter(
             variation_q,
+            Q(all_sales_channels=True) | Q(limit_sales_channels=channel),
             active=True,
-            sales_channels__contains=channel,
             quotas__isnull=False,
             subevent_disabled=False
         ).prefetch_related(
@@ -184,7 +194,9 @@ def get_grouped_items(event, subevent=None, voucher=None, channel='web', require
         )
     )
 
-    items = base_qs.using(settings.DATABASE_REPLICA).filter_available(channel=channel, voucher=voucher, allow_addons=allow_addons).select_related(
+    items = base_qs.using(settings.DATABASE_REPLICA).filter_available(
+        channel=channel.identifier, voucher=voucher, allow_addons=allow_addons, allow_cross_sell=allow_cross_sell
+    ).select_related(
         'category', 'tax_rule',  # for re-grouping
         'hidden_if_available',
     ).prefetch_related(
@@ -208,8 +220,8 @@ def get_grouped_items(event, subevent=None, voucher=None, channel='web', require
         subevent_disabled=Exists(
             SubEventItem.objects.filter(
                 Q(disabled=True)
-                | (Exact(OuterRef('available_from_mode'), 'hide') & Q(available_from__gt=now()))
-                | (Exact(OuterRef('available_until_mode'), 'hide') & Q(available_until__lt=now())),
+                | (Exact(OuterRef('available_from_mode'), 'hide') & Q(available_from__gt=time_machine_now()))
+                | (Exact(OuterRef('available_until_mode'), 'hide') & Q(available_until__lt=time_machine_now())),
                 item_id=OuterRef('pk'),
                 subevent=subevent,
             )
@@ -236,7 +248,7 @@ def get_grouped_items(event, subevent=None, voucher=None, channel='web', require
         items = items.filter(category_id__in=[a for a in filter_categories if a.isdigit()])
 
     display_add_to_cart = False
-    quota_cache_key = f'item_quota_cache:{subevent.id if subevent else 0}:{channel}:{bool(require_seat)}'
+    quota_cache_key = f'item_quota_cache:{subevent.id if subevent else 0}:{channel.identifier}:{bool(require_seat)}'
     quota_cache = quota_cache or event.cache.get(quota_cache_key) or {}
     quota_cache_existed = bool(quota_cache)
 
@@ -254,6 +266,8 @@ def get_grouped_items(event, subevent=None, voucher=None, channel='web', require
 
     quotas_to_compute = []
     for item in items:
+        assert item.event_id == event.pk
+        item.event = event  # save a database query if this is looked up
         if item.has_variations:
             for v in item.available_variations:
                 for q in v._subevent_quotas:
@@ -276,10 +290,12 @@ def get_grouped_items(event, subevent=None, voucher=None, channel='web', require
             item.available_variations = [v for v in item.available_variations
                                          if v.pk == voucher.variation_id]
 
-        if get_all_sales_channels()[channel].unlimited_items_per_order:
+        if channel.type_instance.unlimited_items_per_order:
             max_per_order = sys.maxsize
         else:
             max_per_order = item.max_per_order or int(event.settings.max_items_per_order)
+        if voucher:
+            max_per_order = min(max_per_order, voucher.max_usages - voucher.redeemed)
 
         if item.hidden_if_available:
             q = item.hidden_if_available.availability(_cache=quota_cache)
@@ -289,14 +305,15 @@ def get_grouped_items(event, subevent=None, voucher=None, channel='web', require
 
         if item.hidden_if_item_available:
             if item.hidden_if_item_available.has_variations:
-                dependency_available = any(
+                item._dependency_available = any(
                     var.check_quotas(subevent=subevent, _cache=quota_cache, include_bundled=True)[0] == Quota.AVAILABILITY_OK
                     for var in item.hidden_if_item_available.available_variations
                 )
             else:
                 q = item.hidden_if_item_available.check_quotas(subevent=subevent, _cache=quota_cache, include_bundled=True)
-                dependency_available = q[0] == Quota.AVAILABILITY_OK
-            if dependency_available:
+                time_available = item.hidden_if_item_available.is_available()
+                item._dependency_available = (q[0] == Quota.AVAILABILITY_OK) and time_available
+            if item._dependency_available and item.hidden_if_item_available_mode == Item.UNAVAIL_MODE_HIDDEN:
                 item._remove = True
                 continue
 
@@ -340,15 +357,17 @@ def get_grouped_items(event, subevent=None, voucher=None, channel='web', require
             )
 
             original_price = item_price_override.get(item.pk, item.default_price)
+            voucher_reduced = False
             if voucher:
                 price = voucher.calculate_price(original_price)
+                voucher_reduced = price < original_price
                 include_bundled = not voucher.all_bundles_included
             else:
                 price = original_price
                 include_bundled = True
 
             item.display_price = item.tax(price, currency=event.currency, include_bundled=include_bundled)
-            if item.free_price and item.free_price_suggestion is not None:
+            if item.free_price and item.free_price_suggestion is not None and not voucher_reduced:
                 item.suggested_price = item.tax(max(price, item.free_price_suggestion), currency=event.currency, include_bundled=include_bundled)
             else:
                 item.suggested_price = item.display_price
@@ -391,8 +410,10 @@ def get_grouped_items(event, subevent=None, voucher=None, channel='web', require
                 )
 
                 original_price = var_price_override.get(var.pk, var.price)
+                voucher_reduced = False
                 if voucher:
                     price = voucher.calculate_price(original_price)
+                    voucher_reduced = price < original_price
                     include_bundled = not voucher.all_bundles_included
                 else:
                     price = original_price
@@ -400,10 +421,10 @@ def get_grouped_items(event, subevent=None, voucher=None, channel='web', require
 
                 var.display_price = var.tax(price, currency=event.currency, include_bundled=include_bundled)
 
-                if item.free_price and var.free_price_suggestion is not None:
+                if item.free_price and var.free_price_suggestion is not None and not voucher_reduced:
                     var.suggested_price = item.tax(max(price, var.free_price_suggestion), currency=event.currency,
                                                    include_bundled=include_bundled)
-                elif item.free_price and item.free_price_suggestion is not None:
+                elif item.free_price and item.free_price_suggestion is not None and not voucher_reduced:
                     var.suggested_price = item.tax(max(price, item.free_price_suggestion), currency=event.currency,
                                                    include_bundled=include_bundled)
                 else:
@@ -417,9 +438,6 @@ def get_grouped_items(event, subevent=None, voucher=None, channel='web', require
                                 include_bundled=True,
                                 base_price_is='net' if event.settings.display_net_prices else 'gross')  # backwards-compat
                     ) if var.original_price or item.original_price else None
-
-                if not display_add_to_cart:
-                    display_add_to_cart = not item.requires_seat and var.order_max > 0
 
                 var.current_unavailability_reason = var.unavailability_reason(has_voucher=voucher, subevent=subevent)
 
@@ -451,6 +469,8 @@ def get_grouped_items(event, subevent=None, voucher=None, channel='web', require
                 item.best_variation_availability = max([v.cached_availability[0] for v in item.available_variations])
 
             item._remove = not bool(item.available_variations)
+            if not item._remove and not display_add_to_cart:
+                display_add_to_cart = not item.requires_seat and any(v.order_max > 0 for v in item.available_variations)
 
     if not quota_cache_existed and not voucher and not allow_addons and not base_qs_set and not filter_items and not filter_categories:
         event.cache.set(quota_cache_key, quota_cache, 5)
@@ -483,39 +503,43 @@ class EventIndex(EventViewMixin, EventListMixin, CartMixin, TemplateView):
 
         self.subevent = None
         utm_params = {k: v for k, v in request.GET.items() if k.startswith("utm_")}
+        pass_through_url_params = utm_params | \
+            {k: v for k, v in request.GET.items() if k in ("locale", "consent")} | \
+            ({"widget_data": request.GET.get('widget_data')} if len(self.request.GET.get('widget_data', '{}')) > 3 else {})
+
         if request.GET.get('src', '') == 'widget' and 'take_cart_id' in request.GET:
             # User has clicked "Open in a new tab" link in widget
             get_or_create_cart_id(request)
             return redirect_to_url(eventreverse(request.event, 'presale:event.index', kwargs=kwargs) + '?' + urlencode(utm_params))
-        elif request.GET.get('iframe', '') == '1' and 'take_cart_id' in request.GET:
-            # Widget just opened, a cart already exists. Let's to a stupid redirect to check if cookies are disabled
-            get_or_create_cart_id(request)
+        elif request.GET.get('iframe', '') == '1' and (
+                'take_cart_id' in request.GET or len(self.request.GET.get('widget_data', '{}')) > 3 or 'consent' in request.GET
+        ):
+            # Widget just opened, and a cart already exists or we have been passed widget_data.
+            # Let's do a stupid redirect to check if cookies are disabled.
             return redirect_to_url(eventreverse(request.event, 'presale:event.index', kwargs=kwargs) + '?' + urlencode({
                 'require_cookie': 'true',
-                'cart_id': request.GET.get('take_cart_id'),
-                **({"locale": request.GET.get('locale')} if request.GET.get('locale') else {}),
-                **utm_params,
+                'cart_id': get_or_create_cart_id(request),
+                **pass_through_url_params,
             }))
-        elif request.GET.get('iframe', '') == '1' and len(self.request.GET.get('widget_data', '{}')) > 3:
-            # We've been passed data from a widget, we need to create a cart session to store it.
-            get_or_create_cart_id(request)
         elif 'require_cookie' in request.GET and settings.SESSION_COOKIE_NAME not in request.COOKIES and \
                 '__Host-' + settings.SESSION_COOKIE_NAME not in self.request.COOKIES:
             # Cookies are in fact not supported
             r = render(request, 'pretixpresale/event/cookies.html', {
                 'url': eventreverse(
-                    request.event, "presale:event.index", kwargs={'cart_namespace': kwargs.get('cart_namespace') or ''}
+                    request.event, "presale:event.index", kwargs={
+                        'cart_namespace': kwargs.get('cart_namespace') or '',
+                        **({"subevent": kwargs['subevent']} if kwargs.get('subevent') else {}),
+                    }
                 ) + "?" + urlencode({
                     "src": "widget",
-                    **({"locale": request.GET.get('locale')} if request.GET.get('locale') else {}),
                     **({"take_cart_id": request.GET.get('cart_id')} if request.GET.get('cart_id') else {}),
-                    **utm_params,
+                    **pass_through_url_params,
                 })
             })
             r._csp_ignore = True
             return r
 
-        if request.sales_channel.identifier not in request.event.sales_channels:
+        if not request.event.all_sales_channels and request.sales_channel.identifier not in (s.identifier for s in request.event.limit_sales_channels.all()):
             raise Http404(_('Tickets for this event cannot be purchased on this sales channel.'))
 
         if request.event.has_subevents:
@@ -523,6 +547,12 @@ class EventIndex(EventViewMixin, EventListMixin, CartMixin, TemplateView):
                 self.subevent = request.event.subevents.using(settings.DATABASE_REPLICA).filter(pk=kwargs['subevent'], active=True).first()
                 if not self.subevent:
                     raise Http404()
+
+                # Prevent direct access to subevents that are hidden by a plugin
+                subevents = filter_subevents_with_plugins([self.subevent], self.request.sales_channel)
+                if self.subevent not in subevents:
+                    raise Http404()
+
                 return super().get(request, *args, **kwargs)
             else:
                 return super().get(request, *args, **kwargs)
@@ -537,6 +567,7 @@ class EventIndex(EventViewMixin, EventListMixin, CartMixin, TemplateView):
 
         context['ev'] = self.subevent or self.request.event
         context['subevent'] = self.subevent
+        context['subevent_list_foldable'] = self.subevent and "date" not in self.request.GET and "filtered" not in self.request.GET
 
         # Show voucher option if an event is selected and vouchers exist
         vouchers_exist = self.request.event.cache.get('vouchers_exist')
@@ -553,11 +584,12 @@ class EventIndex(EventViewMixin, EventListMixin, CartMixin, TemplateView):
         if not self.request.event.has_subevents or self.subevent:
             # Fetch all items
             items, display_add_to_cart = get_grouped_items(
-                self.request.event, self.subevent,
+                self.request.event,
+                subevent=self.subevent,
                 filter_items=self.request.GET.getlist('item'),
                 filter_categories=self.request.GET.getlist('category'),
                 require_seat=None,
-                channel=self.request.sales_channel.identifier,
+                channel=self.request.sales_channel,
                 memberships=(
                     self.request.customer.usable_memberships(
                         for_event=self.subevent or self.request.event,
@@ -613,7 +645,7 @@ class EventIndex(EventViewMixin, EventListMixin, CartMixin, TemplateView):
             context['subevent_list_cache_key'] = self._subevent_list_cachekey()
 
         context['show_cart'] = (
-            context['cart']['positions'] and (
+            (context['cart']['positions'] or context['cart'].get('current_selected_payments')) and (
                 self.request.event.has_subevents or self.request.event.presale_is_running
             )
         )
@@ -648,7 +680,7 @@ class EventIndex(EventViewMixin, EventListMixin, CartMixin, TemplateView):
 
         context = {}
         context['list_type'] = self.request.GET.get("style", self.request.event.settings.event_list_type)
-        if context['list_type'] not in ("calendar", "week") and self.request.event.subevents.filter(date_from__gt=now()).count() > 50:
+        if context['list_type'] not in ("calendar", "week") and self.request.event.subevents.filter(date_from__gt=time_machine_now()).count() > 50:
             if self.request.event.settings.event_list_type not in ("calendar", "week"):
                 self.request.event.settings.event_list_type = "calendar"
             context['list_type'] = "calendar"
@@ -657,11 +689,11 @@ class EventIndex(EventViewMixin, EventListMixin, CartMixin, TemplateView):
             self._set_month_year()
             tz = self.request.event.timezone
             _, ndays = calendar.monthrange(self.year, self.month)
-            before = datetime(self.year, self.month, 1, 0, 0, 0, tzinfo=tz) - timedelta(days=1)
+            before = datetime(self.year, self.month, 1, 23, 59, 59, tzinfo=tz) - timedelta(days=1)
             after = datetime(self.year, self.month, ndays, 0, 0, 0, tzinfo=tz) + timedelta(days=1)
 
             if self.request.event.settings.event_calendar_future_only:
-                limit_before = now().astimezone(tz)
+                limit_before = time_machine_now().astimezone(tz)
             else:
                 limit_before = before
 
@@ -673,14 +705,19 @@ class EventIndex(EventViewMixin, EventListMixin, CartMixin, TemplateView):
             add_subevents_for_days(
                 filter_qs_by_attr(
                     self.request.event.subevents_annotated(
-                        self.request.sales_channel.identifier,
+                        self.request.sales_channel,
                         voucher,
                     ).using(settings.DATABASE_REPLICA),
                     self.request
                 ),
-                limit_before, after, ebd, set(), self.request.event,
-                self.kwargs.get('cart_namespace'),
-                voucher,
+                before=limit_before,
+                after=after,
+                ebd=ebd,
+                timezones=set(),
+                event=self.request.event,
+                cart_namespace=self.kwargs.get('cart_namespace'),
+                voucher=voucher,
+                sales_channel=self.request.sales_channel,
             )
 
             # Hide names of subevents in event series where it is always the same.  No need to show the name of the museum thousands of times
@@ -695,9 +732,9 @@ class EventIndex(EventViewMixin, EventListMixin, CartMixin, TemplateView):
             context['weeks'] = weeks_for_template(ebd, self.year, self.month, future_only=self.request.event.settings.event_calendar_future_only)
             context['months'] = [date(self.year, i + 1, 1) for i in range(12)]
             if self.request.event.settings.event_calendar_future_only:
-                context['years'] = range(now().year, now().year + 3)
+                context['years'] = range(time_machine_now().year, time_machine_now().year + 3)
             else:
-                context['years'] = range(now().year - 2, now().year + 3)
+                context['years'] = range(time_machine_now().year - 2, time_machine_now().year + 3)
 
             context['has_before'], context['has_after'] = has_before_after(
                 Event.objects.none(),
@@ -713,14 +750,14 @@ class EventIndex(EventViewMixin, EventListMixin, CartMixin, TemplateView):
             tz = self.request.event.timezone
             week = isoweek.Week(self.year, self.week)
             before = datetime(
-                week.monday().year, week.monday().month, week.monday().day, 0, 0, 0, tzinfo=tz
+                week.monday().year, week.monday().month, week.monday().day, 23, 59, 59, tzinfo=tz
             ) - timedelta(days=1)
             after = datetime(
                 week.sunday().year, week.sunday().month, week.sunday().day, 0, 0, 0, tzinfo=tz
             ) + timedelta(days=1)
 
             if self.request.event.settings.event_calendar_future_only:
-                limit_before = now().astimezone(tz)
+                limit_before = time_machine_now().astimezone(tz)
             else:
                 limit_before = before
 
@@ -732,14 +769,19 @@ class EventIndex(EventViewMixin, EventListMixin, CartMixin, TemplateView):
             add_subevents_for_days(
                 filter_qs_by_attr(
                     self.request.event.subevents_annotated(
-                        self.request.sales_channel.identifier,
+                        self.request.sales_channel,
                         voucher=voucher,
                     ).using(settings.DATABASE_REPLICA),
                     self.request
                 ),
-                limit_before, after, ebd, set(), self.request.event,
-                self.kwargs.get('cart_namespace'),
-                voucher,
+                before=limit_before,
+                after=after,
+                ebd=ebd,
+                timezones=set(),
+                event=self.request.event,
+                cart_namespace=self.kwargs.get('cart_namespace'),
+                voucher=voucher,
+                sales_channel=self.request.sales_channel,
             )
 
             # Hide names of subevents in event series where it is always the same.  No need to show the name of the museum thousands of times
@@ -758,7 +800,7 @@ class EventIndex(EventViewMixin, EventListMixin, CartMixin, TemplateView):
                     (date_fromisocalendar(year, i + 1, 1), date_fromisocalendar(year, i + 1, 7))
                     for i in range(53 if date(year, 12, 31).isocalendar()[1] == 53 else 52)
                     if not self.request.event.settings.event_calendar_future_only or
-                    date_fromisocalendar(year, i + 1, 7) > now().astimezone(tz).replace(tzinfo=None)
+                    date_fromisocalendar(year, i + 1, 7) > time_machine_now().astimezone(tz).replace(tzinfo=None)
                 ]
             context['weeks'] = [[w for w in weeks if w[0].year == year] for year in years]
             context['week_format'] = get_format('WEEK_FORMAT')
@@ -778,20 +820,23 @@ class EventIndex(EventViewMixin, EventListMixin, CartMixin, TemplateView):
                 future_only=self.request.event.settings.event_calendar_future_only
             )
         else:
-            context['subevent_list'] = self.request.event.subevents_sorted(
+            subevents = self.request.event.subevents_sorted(
                 filter_qs_by_attr(
                     self.request.event.subevents_annotated(
-                        self.request.sales_channel.identifier,
+                        self.request.sales_channel,
                         voucher=voucher,
                     ).using(settings.DATABASE_REPLICA),
                     self.request
                 )
             )
+            subevents = filter_subevents_with_plugins(list(subevents), self.request.sales_channel)
+            context['subevent_list'] = subevents
             if self.request.event.settings.event_list_available_only and not voucher:
                 context['subevent_list'] = [
-                    se for se in context['subevent_list']
+                    se for se in subevents
                     if not se.presale_has_ended and (se.best_availability_state is None or se.best_availability_state >= Quota.AVAILABILITY_RESERVED)
                 ]
+            context['visible_events'] = len(subevents) > 0
         return context
 
 
@@ -837,6 +882,11 @@ class SeatingPlanView(EventViewMixin, TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+
+        _html_head = []
+        for receiver, response in seatingframe_html_head.send(self.request.event, request=self.request):
+            _html_head.append(response)
+        context['seatingframe_html_head'] = "".join(_html_head)
         context['subevent'] = self.subevent
         context['cart_redirect'] = eventreverse(self.request.event, 'presale:event.checkout.start',
                                                 kwargs={'cart_namespace': kwargs.get('cart_namespace') or ''})
@@ -913,8 +963,58 @@ class EventAuth(View):
         except:
             raise PermissionDenied(_('Please go back and try again.'))
         else:
-            if 'event_access' not in parentdata:
+            if 'child_session_{}'.format(request.event.pk) not in parentdata:
                 raise PermissionDenied(_('Please go back and try again.'))
 
         request.session['pretix_event_access_{}'.format(request.event.pk)] = parent
-        return redirect_to_url(eventreverse(request.event, 'presale:event.index'))
+
+        if "next" in self.request.GET and url_has_allowed_host_and_scheme(
+                url=self.request.GET.get("next"), allowed_hosts=request.host, require_https=True):
+            return redirect_to_url(self.request.GET.get('next'))
+        else:
+            return redirect_to_url(eventreverse(request.event, 'presale:event.index'))
+
+
+class TimemachineForm(forms.Form):
+    now_dt = forms.SplitDateTimeField(
+        label=_('Fake date time'),
+        widget=SplitDateTimePickerWidget(),
+        initial=lambda: now().astimezone(get_current_timezone()),
+    )
+
+
+class EventTimeMachine(EventViewMixin, TemplateView):
+    template_name = 'pretixpresale/event/timemachine.html'
+
+    def setup(self, request, *args, **kwargs):
+        super().setup(request, *args, **kwargs)
+        if not has_event_access_permission(request):
+            raise PermissionDenied(_('You are not allowed to access time machine mode.'))
+        if not request.event.testmode:
+            raise PermissionDenied(_('This feature is only available in test mode.'))
+        self.timemachine_form = TimemachineForm(
+            data=request.method == 'POST' and request.POST or None,
+            initial=(
+                {'now_dt': parser.parse(request.session.get(f'timemachine_now_dt:{request.event.pk}', None))}
+                if request.session.get(f'timemachine_now_dt:{request.event.pk}', None) else {}
+            )
+        )
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx['timemachine_form'] = self.timemachine_form
+        return ctx
+
+    def post(self, request, *args, **kwargs):
+        if request.POST.get("timemachine_disable"):
+            del request.session[f'timemachine_now_dt:{request.event.pk}']
+            messages.success(self.request, _('Time machine disabled!'))
+            return redirect(self.get_success_url())
+        elif self.timemachine_form.is_valid():
+            request.session[f'timemachine_now_dt:{request.event.pk}'] = str(self.timemachine_form.cleaned_data['now_dt'])
+            return redirect(eventreverse(request.event, "presale:event.index"))
+        else:
+            return self.get(request)
+
+    def get_success_url(self) -> str:
+        return eventreverse(self.request.event, 'presale:event.timemachine')

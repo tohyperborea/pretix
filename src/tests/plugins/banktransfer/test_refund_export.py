@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -35,7 +35,7 @@ from pretix.plugins.banktransfer.views import (
 
 @pytest.fixture
 def env():
-    o = Organizer.objects.create(name='Dummy', slug='dummy')
+    o = Organizer.objects.create(name='Dummy', slug='dummy', plugins='pretix.plugins.banktransfer')
     event = Event.objects.create(
         organizer=o, name='Dummy', slug='dummy',
         date_from=now(), plugins='pretix.plugins.banktransfer,pretix.plugins.paypal'
@@ -48,7 +48,8 @@ def env():
         code='1Z3AS', event=event, email='admin@localhost',
         status=Order.STATUS_PAID,
         datetime=now(), expires=now() + timedelta(days=10),
-        total=23
+        total=23,
+        sales_channel=o.sales_channels.get(identifier="web"),
     )
     refund = OrderRefund.objects.create(
         order=order,
@@ -74,7 +75,8 @@ def refund_huf(env):
         code='HUFFY', event=event, email='admin@localhost',
         status=Order.STATUS_PAID,
         datetime=now(), expires=now() + timedelta(days=10),
-        total=42
+        total=42,
+        sales_channel=env[0].organizer.sales_channels.get(identifier="web"),
     )
     refund = OrderRefund.objects.create(
         order=order,
@@ -183,6 +185,7 @@ def test_unite_transaction_rows():
             'iban': 'DE12345678901234567890',
             'bic': 'HARKE9000',
             'id': "ROLLA-R-1",
+            'locale': "en",
             'comment': None,
             'amount': Decimal("42.23"),
         },
@@ -191,6 +194,7 @@ def test_unite_transaction_rows():
             'iban': 'DE111111111111111111111',
             'bic': 'ikswez2020',
             'id': "PARTY-R-1",
+            'locale': "en",
             'comment': None,
             'amount': Decimal("6.50"),
         }
@@ -204,6 +208,7 @@ def test_unite_transaction_rows():
             'iban': 'DE12345678901234567890',
             'bic': 'HARKE9000',
             'id': "ROLLA-R-1",
+            'locale': "en",
             'comment': None,
             'amount': Decimal("7.77"),
         },
@@ -212,6 +217,7 @@ def test_unite_transaction_rows():
             'iban': 'DE111111111111111111111',
             'bic': 'ikswez2020',
             'id': "PARTY-R-2",
+            'locale': "en",
             'comment': None,
             'amount': Decimal("13.50"),
         }
@@ -223,6 +229,7 @@ def test_unite_transaction_rows():
             'iban': 'DE12345678901234567890',
             'bic': 'HARKE9000',
             'id': "ROLLA-R-1",
+            'locale': "en",
             'comment': None,
             'amount': Decimal("50.00"),
         },
@@ -231,6 +238,7 @@ def test_unite_transaction_rows():
             'iban': 'DE111111111111111111111',
             'bic': 'ikswez2020',
             'id': 'PARTY-R-1, PARTY-R-2',
+            'locale': "en",
             'comment': None,
             'amount': Decimal('20.00'),
         }], key=_row_key_func)

@@ -1,4 +1,5 @@
-@import "pretixbase/scss/_variables.scss";
+@import "pretixbase/scss/_theme_variables.scss";
+@import "pretixbase/scss/_bootstrap_vars.scss";
 @import "bootstrap/scss/_bootstrap.scss";
 @import "pretixbase/scss/_theme.scss";
 @import "fontawesome/scss/font-awesome.scss";
@@ -74,10 +75,10 @@ a.searchresult {
     align-items: center;
     font-size: 140%;
 
-    &.status-p {
+    &.status-p, &.status-pending_valid {
       background: $brand-success;
     }
-    &.status-c, &.status-e, &.status-n {
+    &.status-c, &.status-e, &.status-n, &.status-require_approval {
       background: $brand-danger;
     }
     &.status-redeemed {
@@ -90,6 +91,9 @@ a.searchresult, .check-result {
   .secret {
     word-break: break-word;
     color: $text-muted;
+  }
+  .addons {
+    white-space: pre-line;
   }
 }
 

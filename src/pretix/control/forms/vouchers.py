@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -41,7 +41,7 @@ from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.core.validators import EmailValidator
 from django.db.models.functions import Upper
 from django.urls import reverse
-from django.utils.translation import gettext_lazy as _, pgettext_lazy
+from django.utils.translation import gettext_lazy as _
 from django_scopes.forms import SafeModelChoiceField
 
 from pretix.base.email import get_available_placeholders
@@ -49,6 +49,7 @@ from pretix.base.forms import (
     I18nModelForm, MarkdownTextarea, PlaceholderValidator,
 )
 from pretix.base.forms.widgets import format_placeholders_help_text
+from pretix.base.i18n import language
 from pretix.base.models import Item, Voucher
 from pretix.control.forms import SplitDateTimeField, SplitDateTimePickerWidget
 from pretix.control.forms.widgets import Select2, Select2ItemVarQuota
@@ -90,8 +91,10 @@ class VoucherForm(I18nModelForm):
     def __init__(self, *args, **kwargs):
         instance = kwargs.get('instance')
         initial = kwargs.get('initial')
+        self.initial_instance_data = None
         if instance:
-            self.initial_instance_data = modelcopy(instance)
+            if instance.pk:
+                self.initial_instance_data = modelcopy(instance)
             try:
                 if instance.variation:
                     initial['itemvar'] = '%d-%d' % (instance.item.pk, instance.variation.pk)
@@ -101,8 +104,6 @@ class VoucherForm(I18nModelForm):
                     initial['itemvar'] = 'q-%d' % instance.quota.pk
             except Item.DoesNotExist:
                 pass
-        else:
-            self.initial_instance_data = None
         super().__init__(*args, **kwargs)
 
         if instance.event.has_subevents:
@@ -114,7 +115,6 @@ class VoucherForm(I18nModelForm):
                         'event': instance.event.slug,
                         'organizer': instance.event.organizer.slug,
                     }),
-                    'data-placeholder': pgettext_lazy('subevent', 'Date')
                 }
             )
             self.fields['subevent'].widget.choices = self.fields['subevent'].choices
@@ -207,12 +207,15 @@ class VoucherForm(I18nModelForm):
             if self.instance and self.instance.pk:
                 cnt -= self.instance.redeemed  # these do not need quota any more
 
-        Voucher.clean_item_properties(
-            data, self.instance.event,
-            self.instance.quota, self.instance.item, self.instance.variation,
-            seats_given=data.get('seat') or data.get('seats'),
-            block_quota=data.get('block_quota')
-        )
+        try:
+            Voucher.clean_item_properties(
+                data, self.instance.event,
+                self.instance.quota, self.instance.item, self.instance.variation,
+                seats_given=data.get('seat') or data.get('seats'),
+                block_quota=data.get('block_quota')
+            )
+        except ValidationError as e:
+            raise ValidationError({"itemvar": e.message})
         if not data.get('show_hidden_items') and (
             (self.instance.quota and all(i.hide_without_voucher for i in self.instance.quota.items.all()))
             or (self.instance.item and self.instance.item.hide_without_voucher)
@@ -223,10 +226,17 @@ class VoucherForm(I18nModelForm):
                       'them.')
                 ]
             })
-        Voucher.clean_subevent(
-            data, self.instance.event
-        )
-        Voucher.clean_max_usages(data, self.instance.redeemed)
+
+        try:
+            Voucher.clean_subevent(
+                data, self.instance.event
+            )
+        except ValidationError as e:
+            raise ValidationError({"subevent": e.message})
+        try:
+            Voucher.clean_max_usages(data, self.instance.redeemed)
+        except ValidationError as e:
+            raise ValidationError({"max_usages": e})
         check_quota = Voucher.clean_quota_needs_checking(
             data, self.initial_instance_data,
             item_changed=data.get('itemvar') != self.initial.get('itemvar'),
@@ -234,15 +244,18 @@ class VoucherForm(I18nModelForm):
         )
         if check_quota:
             Voucher.clean_quota_check(
-                data, cnt, self.initial_instance_data, self.instance.event,
-                self.instance.quota, self.instance.item, self.instance.variation
+                data, cnt, self.initial_instance_data,
+                self.instance.event, self.instance.quota, self.instance.item, self.instance.variation
             )
         Voucher.clean_voucher_code(data, self.instance.event, self.instance.pk)
-        if 'seat' in self.fields and data.get('seat'):
-            self.instance.seat = Voucher.clean_seat_id(
-                data, self.instance.item, self.instance.quota, self.instance.event, self.instance.pk
-            )
-            self.instance.item = self.instance.seat.product
+        if 'seat' in self.fields:
+            if data.get('seat'):
+                self.instance.seat = Voucher.clean_seat_id(
+                    data, self.instance.item, self.instance.quota, self.instance.event, self.instance.pk
+                )
+                self.instance.item = self.instance.seat.product
+            else:
+                self.instance.seat = None
 
         voucher_form_validation.send(sender=self.instance.event, form=self, data=data)
 
@@ -289,13 +302,14 @@ class VoucherBulkForm(VoucherForm):
             )
         }),
         required=False,
-        help_text=_('You can either supply a list of email addresses with one email address per line, or a CSV file with a title column '
-                    'and one or more of the columns "email", "number", "name", or "tag".')
+        help_text=_('You can either supply a list of email addresses with one email address per line, or the contents '
+                    'of a CSV file with a title row and one or more of the columns "email", "number", "name", '
+                    'or "tag".')
     )
     Recipient = namedtuple('Recipient', 'email number name tag')
 
-    def _set_field_placeholders(self, fn, base_parameters):
-        placeholders = get_available_placeholders(self.instance.event, base_parameters)
+    def _set_field_placeholders(self, fn, base_parameters, rich=False):
+        placeholders = get_available_placeholders(self.instance.event, base_parameters, rich=rich)
         ht = format_placeholders_help_text(placeholders, self.instance.event)
 
         if self.fields[fn].help_text:
@@ -331,7 +345,12 @@ class VoucherBulkForm(VoucherForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._set_field_placeholders('send_subject', ['event', 'name'])
-        self._set_field_placeholders('send_message', ['event', 'voucher_list', 'name'])
+        self._set_field_placeholders('send_message', ['event', 'voucher_list', 'name'], rich=True)
+
+        with language(self.instance.event.settings.locale, self.instance.event.settings.region):
+            for f in ("send_subject", "send_message"):
+                self.fields[f].initial = str(self.fields[f].initial)
+
         if 'seat' in self.fields:
             self.fields['seats'] = forms.CharField(
                 label=_("Specific seat IDs"),
@@ -366,14 +385,14 @@ class VoucherBulkForm(VoucherForm):
                 raise ValidationError(_('CSV input contains an unknown field with the header "{header}".').format(header=unknown_fields[0]))
             for i, row in enumerate(reader):
                 try:
-                    EmailValidator()(row['email'])
+                    EmailValidator()(row['email'].strip())
                 except ValidationError as err:
-                    raise ValidationError(_('{value} is not a valid email address.').format(value=row['email'])) from err
+                    raise ValidationError(_('{value} is not a valid email address.').format(value=row['email'].strip())) from err
                 try:
                     res.append(self.Recipient(
                         name=row.get('name', ''),
                         email=row['email'].strip(),
-                        number=int(row.get('number', 1)),
+                        number=int(row.get('number', 1) or ""),
                         tag=row.get('tag', None)
                     ))
                 except ValueError as err:

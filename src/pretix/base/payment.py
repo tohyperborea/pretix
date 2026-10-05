@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -38,12 +38,12 @@ import json
 import logging
 from collections import OrderedDict
 from decimal import ROUND_HALF_UP, Decimal
+from functools import cached_property
 from typing import Any, Dict, Union
 from zoneinfo import ZoneInfo
 
 from django import forms
 from django.conf import settings
-from django.contrib import messages
 from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.db import transaction
 from django.dispatch import receiver
@@ -56,23 +56,23 @@ from django.utils.translation import gettext_lazy as _, pgettext_lazy
 from i18nfield.forms import I18nFormField, I18nTextarea, I18nTextInput
 from i18nfield.strings import LazyI18nString
 
-from pretix.base.channels import get_all_sales_channels
 from pretix.base.forms import I18nMarkdownTextarea, PlaceholderValidator
 from pretix.base.models import (
-    CartPosition, Event, GiftCard, InvoiceAddress, Order, OrderPayment,
-    OrderRefund, Quota, TaxRule,
+    CartPosition, Customer, Event, GiftCard, InvoiceAddress, Order,
+    OrderPayment, OrderRefund, Quota, TaxRule,
 )
 from pretix.base.reldate import RelativeDateField, RelativeDateWrapper
 from pretix.base.settings import SettingsSandbox
 from pretix.base.signals import register_payment_providers
 from pretix.base.templatetags.money import money_filter
 from pretix.base.templatetags.rich_text import rich_text
+from pretix.base.timemachine import time_machine_now
 from pretix.helpers import OF_SELF
 from pretix.helpers.countries import CachedCountries
 from pretix.helpers.format import format_map
 from pretix.helpers.money import DecimalTextInput
 from pretix.multidomain.urlreverse import build_absolute_uri
-from pretix.presale.views import get_cart, get_cart_total
+from pretix.presale.views import get_cart
 from pretix.presale.views.cart import cart_session, get_or_create_cart_id
 
 logger = logging.getLogger(__name__)
@@ -93,8 +93,66 @@ class PaymentProviderForm(Form):
         cleaned_data = super().clean()
         for k, v in self.fields.items():
             val = cleaned_data.get(k)
-            if v._required and not val:
+            if hasattr(v, '_required') and v._required and not val:
                 self.add_error(k, _('This field is required.'))
+        return cleaned_data
+
+
+class GiftCardPaymentForm(PaymentProviderForm):
+    def __init__(self, *args, **kwargs):
+        self.customer_gift_cards = kwargs.pop('customer_gift_cards') if 'customer_gift_cards' in kwargs else None
+        self.event = kwargs.pop('event')
+        self.testmode = kwargs.pop('testmode')
+        self.positions = kwargs.pop('positions')
+        self.used_cards = kwargs.pop('used_cards')
+        super().__init__(*args, **kwargs)
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if "code" not in cleaned_data:
+            return cleaned_data
+
+        code = cleaned_data["code"].strip()
+        msg = ""
+        for p in self.positions:
+            if p.item.issue_giftcard:
+                msg = _("You cannot pay with gift cards when buying a gift card.")
+                self.add_error('code', msg)
+                return cleaned_data
+        try:
+            event = self.event
+            gc = event.organizer.accepted_gift_cards.get(
+                secret=code
+            )
+            if gc.currency != event.currency:
+                msg = _("This gift card does not support this currency.")
+            elif gc.testmode and not self.testmode:
+                msg = _("This gift card can only be used in test mode.")
+            elif not gc.testmode and self.testmode:
+                msg = _("Only test gift cards can be used in test mode.")
+            elif gc.expires and gc.expires < time_machine_now():
+                msg = _("This gift card is no longer valid.")
+            elif gc.value <= Decimal("0.00"):
+                msg = _("All credit on this gift card has been used.")
+
+            if msg:
+                self.add_error('code', msg)
+                return cleaned_data
+
+            if gc.pk in self.used_cards:
+                self.add_error('code', _("This gift card is already used for your payment."))
+                return cleaned_data
+        except GiftCard.DoesNotExist:
+            if event.vouchers.filter(code__iexact=code).exists():
+                msg = _("You entered a voucher instead of a gift card. Vouchers can only be entered on the first page of the shop below "
+                        "the product selection.")
+                self.add_error('code', msg)
+            else:
+                msg = _("This gift card is not known.")
+                self.add_error('code', msg)
+        except GiftCard.MultipleObjectsReturned:
+            msg = _("This gift card can not be redeemed since its code is not unique. Please contact the organizer of this event.")
+            self.add_error('code', msg)
         return cleaned_data
 
 
@@ -102,6 +160,7 @@ class BasePaymentProvider:
     """
     This is the base class for all payment providers.
     """
+    payment_form_template_name = 'pretixpresale/event/checkout_payment_form_default.html'
 
     def __init__(self, event: Event):
         self.event = event
@@ -330,16 +389,16 @@ class BasePaymentProvider:
                  label=_('Enable payment method'),
                  required=False,
              )),
-            ('_availability_date',
-             RelativeDateField(
-                 label=_('Available until'),
-                 help_text=_('Users will not be able to choose this payment provider after the given date.'),
-                 required=False,
-             )),
             ('_availability_start',
              RelativeDateField(
                  label=_('Available from'),
                  help_text=_('Users will not be able to choose this payment provider before the given date.'),
+                 required=False,
+             )),
+            ('_availability_date',
+             RelativeDateField(
+                 label=_('Available until'),
+                 help_text=_('Users will not be able to choose this payment provider after the given date.'),
                  required=False,
              )),
             ('_total_min',
@@ -416,8 +475,8 @@ class BasePaymentProvider:
              forms.MultipleChoiceField(
                  label=_('Restrict to specific sales channels'),
                  choices=(
-                     (c.identifier, c.verbose_name) for c in get_all_sales_channels().values()
-                     if c.payment_restrictions_supported
+                     (c.identifier, c.label) for c in self.event.organizer.sales_channels.all()
+                     if c.type_instance.payment_restrictions_supported
                  ),
                  initial=['web'],
                  widget=forms.CheckboxSelectMultiple,
@@ -587,7 +646,7 @@ class BasePaymentProvider:
             return rel_date.datetime(self.event).date()
 
     def _is_available_by_time(self, now_dt=None, cart_id=None, order=None):
-        now_dt = now_dt or now()
+        now_dt = now_dt or time_machine_now()
         tz = ZoneInfo(self.event.settings.timezone)
 
         try:
@@ -632,11 +691,6 @@ class BasePaymentProvider:
         the ``_restrict_countries`` and ``_restrict_to_sales_channels`` setting.
 
         :param total: The total value without the payment method fee, after taxes.
-
-        .. versionchanged:: 1.17.0
-
-           The ``total`` parameter has been added. For backwards compatibility, this method is called again
-           without this parameter if it raises a ``TypeError`` on first try.
         """
         timing = self._is_available_by_time(cart_id=get_or_create_cart_id(request))
         pricing = True
@@ -694,7 +748,7 @@ class BasePaymentProvider:
         :param order: Only set when this is a change to a new payment method for an existing order.
         """
         form = self.payment_form(request)
-        template = get_template('pretixpresale/event/checkout_payment_form_default.html')
+        template = get_template(self.payment_form_template_name)
         ctx = {'request': request, 'form': form}
         return template.render(ctx)
 
@@ -852,7 +906,7 @@ class BasePaymentProvider:
                 if str(ia.country) != '' and str(ia.country) not in restricted_countries:
                     return False
 
-        if order.sales_channel not in self.settings.get('_restrict_to_sales_channels', as_type=list, default=['web']):
+        if order.sales_channel.identifier not in self.settings.get('_restrict_to_sales_channels', as_type=list, default=['web']):
             return False
 
         return self._is_available_by_time(order=order)
@@ -957,12 +1011,19 @@ class BasePaymentProvider:
 
     def cancel_payment(self, payment: OrderPayment):
         """
-        Will be called to cancel a payment. The default implementation just sets the payment state to canceled,
-        but in some cases you might want to notify an external provider.
+        Will be called to cancel a payment. The default implementation fails if the payment is
+        ``OrderPayment.PAYMENT_STATE_PENDING`` and ``abort_pending_allowed`` is false. Otherwise, it just sets the
+        payment state to canceled. In some cases you might want to modify this behaviour to notify the external provider
+        of the cancellation.
 
         On success, you should set ``payment.state = OrderPayment.PAYMENT_STATE_CANCELED`` (or call the super method).
         On failure, you should raise a PaymentException.
         """
+        if payment.state == OrderPayment.PAYMENT_STATE_PENDING and not self.abort_pending_allowed:
+            raise PaymentException(_(
+                "This payment is already being processed and can not be canceled any more."
+            ))
+
         payment.state = OrderPayment.PAYMENT_STATE_CANCELED
         payment.save(update_fields=['state'])
 
@@ -1088,12 +1149,16 @@ class FreeOrderProvider(BasePaymentProvider):
         from .services.cart import get_fees
 
         cart = get_cart(request)
-        total = get_cart_total(request)
+
         try:
-            total += sum([f.value for f in get_fees(self.event, request, total, None, None, cart)])
+            fees = get_fees(event=request.event, request=request,
+                            invoice_address=None,
+                            payments=None, positions=cart)
         except TaxRule.SaleNotAllowed:
             # ignore for now, will fail on order creation
-            pass
+            fees = []
+        total = sum([c.price for c in cart]) + sum([f.value for f in fees])
+
         return total == 0
 
     def order_change_allowed(self, order: Order) -> bool:
@@ -1166,8 +1231,8 @@ class ManualPayment(BasePaymentProvider):
     def is_allowed(self, request: HttpRequest, total: Decimal=None):
         return 'pretix.plugins.manualpayment' in self.event.plugins and super().is_allowed(request, total)
 
-    def order_change_allowed(self, order: Order):
-        return 'pretix.plugins.manualpayment' in self.event.plugins and super().order_change_allowed(order)
+    def order_change_allowed(self, order: Order, request=None):
+        return 'pretix.plugins.manualpayment' in self.event.plugins and super().order_change_allowed(order, request)
 
     @property
     def public_name(self):
@@ -1301,6 +1366,9 @@ class OffsettingProvider(BasePaymentProvider):
     def payment_control_render(self, request: HttpRequest, payment: OrderPayment) -> str:
         return _('Balanced against orders: %s' % ', '.join(payment.info_data['orders']))
 
+    def refund_control_render(self, request: HttpRequest, payment: OrderPayment) -> str:
+        return self.payment_control_render(request, payment)
+
 
 class GiftCardPayment(BasePaymentProvider):
     identifier = "giftcard"
@@ -1308,6 +1376,78 @@ class GiftCardPayment(BasePaymentProvider):
     multi_use_supported = True
     execute_payment_needs_user = False
     verbose_name = _("Gift card")
+    payment_form_class = GiftCardPaymentForm
+    payment_form_template_name = 'pretixpresale/giftcard/checkout.html'
+
+    @cached_property
+    def customer_gift_cards(self):
+        if not self.request:
+            return None
+        if not self.used_cards:
+            self.used_cards = []
+        cs = None
+        if 'checkout' in self.request.resolver_match.url_name:
+            cs = cart_session(self.request)
+        customer = getattr(self.request, "customer", None)
+        if customer:
+            return customer.usable_gift_cards(self.used_cards)
+        elif cs and cs.get('customer_mode', 'guest') == 'login':
+            try:
+                customer = self.request.organizer.customers.get(pk=cs["customer"])
+                return customer.usable_gift_cards(self.used_cards)
+            except Customer.DoesNotExist:
+                return None
+
+    def payment_form_render(self, request: HttpRequest, total: Decimal, order: Order = None) -> str:
+        form = self.payment_form(request)
+        template = get_template(self.payment_form_template_name)
+        ctx = {'request': request, 'form': form, 'customer_gift_cards': form.customer_gift_cards, }
+        return template.render(ctx)
+
+    def payment_form(self, request: HttpRequest) -> Form:
+        # Unfortunately, in payment_form we do not know if we're in checkout
+        # or in an existing order. But we need to do the validation logic in the
+        # form to get the error messages in the right places for accessbility :-(
+        if 'checkout' in request.resolver_match.url_name:
+            cs = cart_session(request)
+            used_cards = [
+                p.get('info_data', {}).get('gift_card')
+                for p in cs.get('payments', [])
+                if p.get('info_data', {}).get('gift_card')
+            ]
+            positions = get_cart(request)
+            testmode = self.event.testmode
+        else:
+            used_cards = []
+            order = self.event.orders.get(code=request.resolver_match.kwargs["order"])
+            positions = order.positions.all()
+            testmode = order.testmode
+
+        self.request = request
+        self.used_cards = used_cards
+
+        form = self.payment_form_class(
+            event=self.event,
+            customer_gift_cards=self.customer_gift_cards,
+            used_cards=used_cards,
+            positions=positions,
+            testmode=testmode,
+            data=(request.POST if request.method == 'POST' and request.POST.get("payment") == self.identifier else None),
+            prefix='payment_%s' % self.identifier,
+            initial={
+                k.replace('payment_%s_' % self.identifier, ''): v
+                for k, v in request.session.items()
+                if k.startswith('payment_%s_' % self.identifier)
+            }
+        )
+        form.fields = self.payment_form_fields
+
+        for k, v in form.fields.items():
+            v._required = v.required
+            v.required = False
+            v.widget.is_required = False
+
+        return form
 
     @property
     def public_name(self) -> str:
@@ -1341,6 +1481,19 @@ class GiftCardPayment(BasePaymentProvider):
         return f
 
     @property
+    def payment_form_fields(self):
+        fields = [
+            (
+                "code",
+                forms.CharField(
+                    label=_("Gift card code"),
+                    required=True,
+                ),
+            ),
+        ]
+        return OrderedDict(fields)
+
+    @property
     def test_mode_message(self) -> str:
         return _("In test mode, only test cards will work.")
 
@@ -1350,13 +1503,8 @@ class GiftCardPayment(BasePaymentProvider):
     def order_change_allowed(self, order: Order) -> bool:
         return super().order_change_allowed(order) and self.event.organizer.has_gift_cards
 
-    def payment_form_render(self, request: HttpRequest, total: Decimal) -> str:
-        return get_template('pretixcontrol/giftcards/checkout.html').render({
-            'request': request,
-        })
-
     def checkout_confirm_render(self, request, order=None, info_data=None) -> str:
-        return get_template('pretixcontrol/giftcards/checkout_confirm.html').render({
+        return get_template('pretixpresale/giftcard/checkout_confirm.html').render({
             'info_data': info_data,
         })
 
@@ -1419,101 +1567,46 @@ class GiftCardPayment(BasePaymentProvider):
     def payment_refund_supported(self, payment: OrderPayment) -> bool:
         return True
 
-    def checkout_prepare(self, request: HttpRequest, cart: Dict[str, Any]) -> Union[bool, str, None]:
-        from pretix.base.services.cart import add_payment_to_cart
+    def _add_giftcard_to_cart(self, cs, gc):
+        from pretix.base.services.cart import add_payment_to_cart_session
 
-        for p in get_cart(request):
-            if p.item.issue_giftcard:
-                messages.error(request, _("You cannot pay with gift cards when buying a gift card."))
-                return
-
-        cs = cart_session(request)
-        try:
-            gc = self.event.organizer.accepted_gift_cards.get(
-                secret=request.POST.get("giftcard").strip()
-            )
-            if gc.currency != self.event.currency:
-                messages.error(request, _("This gift card does not support this currency."))
-                return
-            if gc.testmode and not self.event.testmode:
-                messages.error(request, _("This gift card can only be used in test mode."))
-                return
-            if not gc.testmode and self.event.testmode:
-                messages.error(request, _("Only test gift cards can be used in test mode."))
-                return
-            if gc.expires and gc.expires < now():
-                messages.error(request, _("This gift card is no longer valid."))
-                return
-            if gc.value <= Decimal("0.00"):
-                messages.error(request, _("All credit on this gift card has been used."))
-                return
-
-            for p in cs.get('payments', []):
-                if p['provider'] == self.identifier and p['info_data']['gift_card'] == gc.pk:
-                    messages.error(request, _("This gift card is already used for your payment."))
-                    return
-
-            add_payment_to_cart(
-                request,
-                self,
-                max_value=gc.value,
-                info_data={
-                    'gift_card': gc.pk,
-                    'gift_card_secret': gc.secret,
-                }
-            )
-            return True
-        except GiftCard.DoesNotExist:
-            if self.event.vouchers.filter(code__iexact=request.POST.get("giftcard")).exists():
-                messages.warning(request, _("You entered a voucher instead of a gift card. Vouchers can only be entered on the first page of the shop below "
-                                            "the product selection."))
-            else:
-                messages.error(request, _("This gift card is not known."))
-        except GiftCard.MultipleObjectsReturned:
-            messages.error(request, _("This gift card can not be redeemed since its code is not unique. Please contact the organizer of this event."))
-
-    def payment_prepare(self, request: HttpRequest, payment: OrderPayment) -> Union[bool, str, None]:
-        for p in payment.order.positions.all():
-            if p.item.issue_giftcard:
-                messages.error(request, _("You cannot pay with gift cards when buying a gift card."))
-                return
-
-        try:
-            gc = self.event.organizer.accepted_gift_cards.get(
-                secret=request.POST.get("giftcard").strip()
-            )
-            if gc.currency != self.event.currency:
-                messages.error(request, _("This gift card does not support this currency."))
-                return
-            if gc.testmode and not payment.order.testmode:
-                messages.error(request, _("This gift card can only be used in test mode."))
-                return
-            if not gc.testmode and payment.order.testmode:
-                messages.error(request, _("Only test gift cards can be used in test mode."))
-                return
-            if gc.expires and gc.expires < now():
-                messages.error(request, _("This gift card is no longer valid."))
-                return
-            if gc.value <= Decimal("0.00"):
-                messages.error(request, _("All credit on this gift card has been used."))
-                return
-            payment.info_data = {
+        add_payment_to_cart_session(
+            cs,
+            self,
+            max_value=gc.value,
+            info_data={
                 'gift_card': gc.pk,
                 'gift_card_secret': gc.secret,
-                'retry': True
             }
-            payment.amount = min(payment.amount, gc.value)
-            payment.save()
+        )
 
-            return True
-        except GiftCard.DoesNotExist:
-            if self.event.vouchers.filter(code__iexact=request.POST.get("giftcard").strip()).exists():
-                messages.warning(request, _("You entered a voucher instead of a gift card. Vouchers can only be entered on the first page of the shop below "
-                                            "the product selection."))
-            else:
-                messages.error(request, _("This gift card is not known."))
-        except GiftCard.MultipleObjectsReturned:
-            messages.error(request, _("This gift card can not be redeemed since its code is not unique. Please contact the organizer of this event."))
+    def checkout_prepare(self, request: HttpRequest, cart: Dict[str, Any]) -> Union[bool, str, None]:
+        form = self.payment_form(request)
+        if not form.is_valid():
+            return False
+
+        gc = self.event.organizer.accepted_gift_cards.get(
+            secret=form.cleaned_data["code"]
+        )
+        cs = cart_session(request)
+        self._add_giftcard_to_cart(cs, gc)
+        return True
+
+    def payment_prepare(self, request: HttpRequest, payment: OrderPayment) -> Union[bool, str, None]:
+        form = self.payment_form(request)
+        if not form.is_valid():
+            return False
+        gc = self.event.organizer.accepted_gift_cards.get(
+            secret=form.cleaned_data["code"]
+        )
+        payment.info_data = {
+            'gift_card': gc.pk,
+            'gift_card_secret': gc.secret,
+            'retry': True
+        }
+        payment.amount = min(payment.amount, gc.value)
+        payment.save()
+        return True
 
     def execute_payment(self, request: HttpRequest, payment: OrderPayment, is_early_special_case=False) -> str:
         for p in payment.order.positions.all():
@@ -1539,7 +1632,7 @@ class GiftCardPayment(BasePaymentProvider):
                     raise PaymentException(_("This gift card can only be used in test mode."))
                 if not gc.testmode and payment.order.testmode:
                     raise PaymentException(_("Only test gift cards can be used in test mode."))
-                if gc.expires and gc.expires < now():
+                if gc.expires and gc.expires < time_machine_now():
                     raise PaymentException(_("This gift card is no longer valid."))
 
                 trans = gc.transactions.create(
@@ -1553,6 +1646,14 @@ class GiftCardPayment(BasePaymentProvider):
                     'transaction_id': trans.pk,
                 }
                 payment.confirm(send_mail=not is_early_special_case, generate_invoice=not is_early_special_case)
+                gc.log_action(
+                    action='pretix.giftcards.transaction.payment',
+                    data={
+                        'value': trans.value,
+                        'acceptor_id': self.event.organizer.id,
+                        'acceptor_slug': self.event.organizer.slug
+                    }
+                )
         except PaymentException as e:
             payment.fail(info={'error': str(e)})
             raise e
@@ -1569,6 +1670,7 @@ class GiftCardPayment(BasePaymentProvider):
             order=refund.order,
             refund=refund,
             acceptor=self.event.organizer,
+            text=refund.comment,
         )
         refund.info_data = {
             'gift_card': gc.pk,
@@ -1576,6 +1678,15 @@ class GiftCardPayment(BasePaymentProvider):
             'transaction_id': trans.pk,
         }
         refund.done()
+        gc.log_action(
+            action='pretix.giftcards.transaction.refund',
+            data={
+                'value': refund.amount,
+                'acceptor_id': self.event.organizer.id,
+                'acceptor_slug': self.event.organizer.slug,
+                'text': refund.comment,
+            }
+        )
 
 
 @receiver(register_payment_providers, dispatch_uid="payment_free")

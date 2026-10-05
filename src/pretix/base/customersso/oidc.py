@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -24,7 +24,7 @@ import hashlib
 import logging
 import time
 from datetime import datetime
-from urllib.parse import urlencode, urljoin
+from urllib.parse import parse_qsl, urlencode, urljoin
 
 import jwt
 import requests
@@ -45,6 +45,8 @@ logger = logging.getLogger(__name__)
 This module contains utilities for implementing OpenID Connect for customer authentication both as a receiving party (RP)
 as well as an OpenID Provider (OP).
 """
+
+pretix_token_endpoint_auth_methods = ['client_secret_basic', 'client_secret_post']
 
 
 def _urljoin(base, path):
@@ -110,28 +112,26 @@ def oidc_validate_and_complete_config(config):
                 scope="openid",
             ))
 
-    for scope in config["scope"].split(" "):
-        if scope not in provider_config.get("scopes_supported", []):
-            raise ValidationError(_('You are requesting scope "{scope}" but provider only supports these: {scopes}.').format(
-                scope=scope,
-                scopes=", ".join(provider_config.get("scopes_supported", []))
-            ))
+    if "token_endpoint_auth_methods_supported" in provider_config:
+        token_endpoint_auth_methods_supported = provider_config.get("token_endpoint_auth_methods_supported",
+                                                                    ["client_secret_basic"])
+        if not any(x in pretix_token_endpoint_auth_methods for x in token_endpoint_auth_methods_supported):
+            raise ValidationError(
+                _(f'No supported Token Endpoint Auth Methods supported: {token_endpoint_auth_methods_supported}').format(
+                    token_endpoint_auth_methods_supported=", ".join(token_endpoint_auth_methods_supported)
+                )
+            )
 
-    if "claims_supported" in provider_config:
-        claims_supported = provider_config.get("claims_supported", [])
-        for k, v in config.items():
-            if k.endswith('_field') and v:
-                if v not in claims_supported:  # https://openid.net/specs/openid-connect-core-1_0.html#UserInfo
-                    raise ValidationError(_('You are requesting field "{field}" but provider only supports these: {fields}.').format(
-                        field=v,
-                        fields=", ".join(provider_config.get("claims_supported", []))
-                    ))
+    if "query_parameters" in config and config["query_parameters"]:
+        config["query_parameters"] = urlencode(
+            parse_qsl(config["query_parameters"])
+        )
 
     config['provider_config'] = provider_config
     return config
 
 
-def oidc_authorize_url(provider, state, redirect_uri):
+def oidc_authorize_url(provider, state, redirect_uri, pkce_code_verifier):
     endpoint = provider.configuration['provider_config']['authorization_endpoint']
     params = {
         # https://datatracker.ietf.org/doc/html/rfc6749#section-4.1.1
@@ -142,11 +142,31 @@ def oidc_authorize_url(provider, state, redirect_uri):
         'state': state,
         'redirect_uri': redirect_uri,
     }
+
+    if "query_parameters" in provider.configuration and provider.configuration["query_parameters"]:
+        params.update(parse_qsl(provider.configuration["query_parameters"]))
+
+    if pkce_code_verifier and "S256" in provider.configuration['provider_config'].get('code_challenge_methods_supported', []):
+        params["code_challenge"] = base64.urlsafe_b64encode(hashlib.sha256(pkce_code_verifier.encode()).digest()).decode().rstrip("=")
+        params["code_challenge_method"] = "S256"
+
     return endpoint + '?' + urlencode(params)
 
 
-def oidc_validate_authorization(provider, code, redirect_uri):
+def oidc_validate_authorization(provider, code, redirect_uri, pkce_code_verifier):
     endpoint = provider.configuration['provider_config']['token_endpoint']
+
+    # Wall of shame and RFC ignorant IDPs
+    if endpoint == 'https://www.linkedin.com/oauth/v2/accessToken':
+        token_endpoint_auth_method = 'client_secret_post'
+    else:
+        token_endpoint_auth_methods = provider.configuration['provider_config'].get(
+            'token_endpoint_auth_methods_supported', ['client_secret_basic']
+        )
+        token_endpoint_auth_method = [
+            x for x in pretix_token_endpoint_auth_methods if x in token_endpoint_auth_methods
+        ][0]
+
     params = {
         # https://datatracker.ietf.org/doc/html/rfc6749#section-4.1.3
         # https://openid.net/specs/openid-connect-core-1_0.html#TokenEndpoint
@@ -154,6 +174,15 @@ def oidc_validate_authorization(provider, code, redirect_uri):
         'code': code,
         'redirect_uri': redirect_uri,
     }
+
+    if pkce_code_verifier and "S256" in provider.configuration['provider_config'].get('code_challenge_methods_supported', []):
+        params["code_verifier"] = pkce_code_verifier
+
+    if token_endpoint_auth_method == 'client_secret_post':
+        params['client_id'] = provider.configuration['client_id']
+        params['client_secret'] = provider.configuration['client_secret']
+
+    resp = None
     try:
         resp = requests.post(
             endpoint,
@@ -161,12 +190,18 @@ def oidc_validate_authorization(provider, code, redirect_uri):
             headers={
                 'Accept': 'application/json',
             },
-            auth=(provider.configuration['client_id'], provider.configuration['client_secret']),
+            auth=(
+                provider.configuration['client_id'],
+                provider.configuration['client_secret']
+            ) if token_endpoint_auth_method == 'client_secret_basic' else None,
         )
         resp.raise_for_status()
         data = resp.json()
     except RequestException:
-        logger.exception('Could not retrieve authorization token')
+        if resp:
+            logger.exception(f'Could not retrieve authorization token. Response: {resp.text}')
+        else:
+            logger.exception('Could not retrieve authorization token')
         raise ValidationError(
             _('Login was not successful. Error message: "{error}".').format(
                 error='could not reach login provider',
@@ -174,6 +209,7 @@ def oidc_validate_authorization(provider, code, redirect_uri):
         )
 
     if 'access_token' not in data:
+        logger.error(f'Could not find access token. Response: {data}')
         raise ValidationError(
             _('Login was not successful. Error message: "{error}".').format(
                 error='access token missing',
@@ -181,6 +217,7 @@ def oidc_validate_authorization(provider, code, redirect_uri):
         )
 
     endpoint = provider.configuration['provider_config']['userinfo_endpoint']
+    resp = None
     try:
         # https://openid.net/specs/openid-connect-core-1_0.html#UserInfo
         resp = requests.get(
@@ -192,7 +229,10 @@ def oidc_validate_authorization(provider, code, redirect_uri):
         resp.raise_for_status()
         userinfo = resp.json()
     except RequestException:
-        logger.exception('Could not retrieve user info')
+        if resp:
+            logger.exception(f'Could not retrieve user info. Response: {resp.text}')
+        else:
+            logger.exception('Could not retrieve user info')
         raise ValidationError(
             _('Login was not successful. Error message: "{error}".').format(
                 error='could not fetch user info',

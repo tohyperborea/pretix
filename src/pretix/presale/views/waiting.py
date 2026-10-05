@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -27,6 +27,7 @@ from django.db import transaction
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.decorators import method_decorator
+from django.utils.functional import cached_property
 from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _, pgettext_lazy
 from django.views.generic import FormView, TemplateView
@@ -44,6 +45,7 @@ from ...base.i18n import get_language_without_region
 from ...base.models import Voucher, WaitingListEntry
 from ..forms.waitinglist import WaitingListForm
 from . import allow_frame_if_namespaced
+from .event import get_grouped_items
 
 
 @method_decorator(allow_frame_if_namespaced, 'dispatch')
@@ -65,6 +67,39 @@ class WaitingView(EventViewMixin, FormView):
                 return [response]
         return [self.template_name]
 
+    @cached_property
+    def itemvars(self):
+        customer = getattr(self.request, 'customer', None)
+        items, display_add_to_cart = get_grouped_items(
+            self.request.event,
+            subevent=self.subevent,
+            require_seat=None,
+            channel=self.request.organizer.sales_channels.get(identifier="web"),
+            memberships=(
+                customer.usable_memberships(
+                    for_event=self.subevent or self.request.event,
+                    testmode=self.request.event.testmode
+                )
+                if customer else None
+            ),
+        )
+        choices = []
+        for i in items:
+            if not i.allow_waitinglist:
+                continue
+
+            if i.has_variations:
+                for v in i.available_variations:
+                    if v.cached_availability[0] == Quota.AVAILABILITY_OK:
+                        continue
+                    choices.append((f'{i.pk}-{v.pk}', f'{i.name} – {v.value}'))
+
+            else:
+                if i.cached_availability[0] == Quota.AVAILABILITY_OK:
+                    continue
+                choices.append((f'{i.pk}', f'{i.name}'))
+        return choices
+
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
         kwargs['request'] = self.request
@@ -73,8 +108,7 @@ class WaitingView(EventViewMixin, FormView):
             event=self.request.event, locale=get_language_without_region(),
             subevent=self.subevent
         )
-        kwargs['channel'] = self.request.sales_channel.identifier
-        kwargs['customer'] = getattr(self.request, 'customer', None)
+        kwargs['itemvars'] = self.itemvars
         kwargs.setdefault('initial', {})
         if 'var' in self.request.GET:
             kwargs['initial']['itemvar'] = f'{self.request.GET.get("item")}-{self.request.GET.get("var")}'
@@ -105,6 +139,11 @@ class WaitingView(EventViewMixin, FormView):
             })
             r._csp_ignore = True
             return r
+
+        if not self.itemvars:
+            messages.info(request, _("No ticket types are available for the waiting list, have a look at the "
+                                     "ticket shop instead."))
+            return redirect(self.get_index_url())
 
         return super().get(request, *args, **kwargs)
 

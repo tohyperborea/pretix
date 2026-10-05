@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -41,15 +41,18 @@ from django.contrib.auth.tokens import (
     PasswordResetTokenGenerator, default_token_generator,
 )
 from django.core import mail as djmail
-from django.test import TestCase, override_settings
+from django.test import RequestFactory, TestCase, override_settings
+from django.utils.crypto import get_random_string
 from django.utils.timezone import now
 from django_otp.oath import TOTP
+from django_otp.plugins.otp_static.models import StaticDevice
 from django_otp.plugins.otp_totp.models import TOTPDevice
 from webauthn.authentication.verify_authentication_response import (
     VerifiedAuthentication,
 )
 
 from pretix.base.models import Organizer, Team, U2FDevice, User
+from pretix.control.views.auth import process_login
 from pretix.helpers import security
 
 
@@ -337,7 +340,7 @@ class RegistrationFormTest(TestCase):
 
         response = self.client.post('/control/register', {
             'email': 'dummy@dummy.dummy',
-            'password': 'foobarbar',
+            'password': 'f00barbarbar',
             'password_repeat': ''
         })
         self.assertEqual(response.status_code, 200)
@@ -347,8 +350,8 @@ class RegistrationFormTest(TestCase):
         self.user = User.objects.create_user('dummy@dummy.dummy', 'dummy')
         response = self.client.post('/control/register', {
             'email': 'dummy@dummy.dummy',
-            'password': 'foobarbar',
-            'password_repeat': 'foobarbar'
+            'password': 'f00barbarbar',
+            'password_repeat': 'f00barbarbar'
         })
         self.assertEqual(response.status_code, 200)
 
@@ -356,8 +359,8 @@ class RegistrationFormTest(TestCase):
     def test_success(self):
         response = self.client.post('/control/register', {
             'email': 'dummy@dummy.dummy',
-            'password': 'foobarbar',
-            'password_repeat': 'foobarbar'
+            'password': 'f00barbarbar',
+            'password_repeat': 'f00barbarbar'
         })
         self.assertEqual(response.status_code, 302)
         assert time.time() - self.client.session['pretix_auth_login_time'] < 60
@@ -367,8 +370,8 @@ class RegistrationFormTest(TestCase):
     def test_disabled(self):
         response = self.client.post('/control/register', {
             'email': 'dummy@dummy.dummy',
-            'password': 'foobarbar',
-            'password_repeat': 'foobarbar'
+            'password': 'f00barbarbar',
+            'password_repeat': 'f00barbarbar'
         })
         self.assertEqual(response.status_code, 403)
 
@@ -376,8 +379,8 @@ class RegistrationFormTest(TestCase):
     def test_no_native_auth(self):
         response = self.client.post('/control/register', {
             'email': 'dummy@dummy.dummy',
-            'password': 'foobarbar',
-            'password_repeat': 'foobarbar'
+            'password': 'f00barbarbar',
+            'password_repeat': 'f00barbarbar'
         })
         self.assertEqual(response.status_code, 403)
 
@@ -491,6 +494,20 @@ class Login2FAFormTest(TestCase):
 
         m.undo()
 
+    def test_recovery_code_valid(self):
+        djmail.outbox = []
+        d, __ = StaticDevice.objects.get_or_create(user=self.user, name='emergency')
+        token = d.token_set.create(token=get_random_string(length=12, allowed_chars='1234567890'))
+
+        response = self.client.get('/control/login/2fa')
+        assert 'token' in response.content.decode()
+        response = self.client.post('/control/login/2fa', {
+            'token': token.token,
+        })
+        self.assertEqual(response.status_code, 302)
+        self.assertIn('/control/', response['Location'])
+        assert "recovery code" in djmail.outbox[0].body
+
 
 class FakeRedis(object):
     def get_redis_connection(self, connection_string):
@@ -593,8 +610,8 @@ class PasswordRecoveryFormTest(TestCase):
         response = self.client.post(
             '/control/forgot/recover?id=%d&token=foo' % self.user.id,
             {
-                'password': 'foobarbar',
-                'password_repeat': 'foobarbar'
+                'password': 'f00barbarbar',
+                'password_repeat': 'f00barbarbar'
             }
         )
         self.assertEqual(response.status_code, 302)
@@ -615,8 +632,8 @@ class PasswordRecoveryFormTest(TestCase):
         response = self.client.post(
             '/control/forgot/recover?id=%d&token=%s' % (self.user.id, token),
             {
-                'password': 'foobarbar',
-                'password_repeat': 'foobarbar'
+                'password': 'f00barbarbar',
+                'password_repeat': 'f00barbarbar'
             }
         )
         self.assertEqual(response.status_code, 302)
@@ -630,13 +647,13 @@ class PasswordRecoveryFormTest(TestCase):
         response = self.client.post(
             '/control/forgot/recover?id=%d&token=%s' % (self.user.id, token),
             {
-                'password': 'foobarbar',
-                'password_repeat': 'foobarbar'
+                'password': 'f00barbarbar',
+                'password_repeat': 'f00barbarbar'
             }
         )
         self.assertEqual(response.status_code, 302)
         self.user = User.objects.get(id=self.user.id)
-        self.assertTrue(self.user.check_password('foobarbar'))
+        self.assertTrue(self.user.check_password('f00barbarbar'))
 
     def test_recovery_valid_token_empty_passwords(self):
         token = default_token_generator.make_token(self.user)
@@ -645,7 +662,7 @@ class PasswordRecoveryFormTest(TestCase):
         response = self.client.post(
             '/control/forgot/recover?id=%d&token=%s' % (self.user.id, token),
             {
-                'password': 'foobarbar',
+                'password': 'f00barbarbar',
                 'password_repeat': ''
             }
         )
@@ -660,7 +677,7 @@ class PasswordRecoveryFormTest(TestCase):
             '/control/forgot/recover?id=%d&token=%s' % (self.user.id, token),
             {
                 'password': '',
-                'password_repeat': 'foobarbar'
+                'password_repeat': 'f00barbarbar'
             }
         )
         self.assertEqual(response.status_code, 200)
@@ -697,6 +714,48 @@ class PasswordRecoveryFormTest(TestCase):
         self.user = User.objects.get(id=self.user.id)
         self.assertTrue(self.user.check_password('demo'))
 
+    def test_recovery_valid_token_password_reuse(self):
+        self.user.set_password("GsvdU4gGZDb4J9WgIhLNcZT9PO7CZ3")
+        self.user.save()
+        self.user.set_password("hLPqPpuZIjouGBk9xTLu1aXYqjpRYS")
+        self.user.save()
+        self.user.set_password("Jn2nQSa25ZJAc5GUI1HblrneWCXotD")
+        self.user.save()
+        self.user.set_password("cboaBj3yIfgnQeKClDgvKNvWC69cV1")
+        self.user.save()
+        self.user.set_password("Kkj8f3kGXbXmbgcwHBgf3WKmzkUOhM")
+        self.user.save()
+
+        assert self.user.historic_passwords.count() == 4
+
+        token = default_token_generator.make_token(self.user)
+        response = self.client.get('/control/forgot/recover?id=%d&token=%s' % (self.user.id, token))
+        self.assertEqual(response.status_code, 200)
+        response = self.client.post(
+            '/control/forgot/recover?id=%d&token=%s' % (self.user.id, token),
+            {
+                'password': 'cboaBj3yIfgnQeKClDgvKNvWC69cV1',
+                'password_repeat': 'cboaBj3yIfgnQeKClDgvKNvWC69cV1'
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        self.user = User.objects.get(id=self.user.id)
+        self.assertTrue(self.user.check_password('Kkj8f3kGXbXmbgcwHBgf3WKmzkUOhM'))
+
+        token = default_token_generator.make_token(self.user)
+        response = self.client.get('/control/forgot/recover?id=%d&token=%s' % (self.user.id, token))
+        self.assertEqual(response.status_code, 200)
+        response = self.client.post(
+            '/control/forgot/recover?id=%d&token=%s' % (self.user.id, token),
+            {
+                'password': 'GsvdU4gGZDb4J9WgIhLNcZT9PO7CZ3',
+                'password_repeat': 'GsvdU4gGZDb4J9WgIhLNcZT9PO7CZ3'
+            }
+        )
+        self.assertEqual(response.status_code, 302)
+        self.user = User.objects.get(id=self.user.id)
+        self.assertTrue(self.user.check_password('GsvdU4gGZDb4J9WgIhLNcZT9PO7CZ3'))
+
     def test_recovery_valid_token_short_passwords(self):
         token = default_token_generator.make_token(self.user)
         response = self.client.get('/control/forgot/recover?id=%d&token=%s' % (self.user.id, token))
@@ -704,8 +763,8 @@ class PasswordRecoveryFormTest(TestCase):
         response = self.client.post(
             '/control/forgot/recover?id=%d&token=%s' % (self.user.id, token),
             {
-                'password': 'foobar',
-                'password_repeat': 'foobar'
+                'password': 'foobarfooba',
+                'password_repeat': 'foobarfooba'
             }
         )
         self.assertEqual(response.status_code, 200)
@@ -849,6 +908,19 @@ class SessionTimeOutTest(TestCase):
         self.client.get('/control/reauth/?next=/control/')
         response = self.client.get('/control/')
         self.assertEqual(response.status_code, 302)
+
+    def test_plugin_auth_updates_auth_last_used(self):
+        session = self.client.session
+        session['pretix_auth_long_session'] = True
+        session['pretix_auth_login_time'] = int(time.time()) - 3600 * 5
+        session['pretix_auth_last_used'] = int(time.time()) - 3600 * 3 - 60
+        session.save()
+
+        request = RequestFactory().get("/")
+        request.session = self.client.session
+        process_login(request, self.user, keep_logged_in=True)
+
+        assert request.session['pretix_auth_last_used'] >= int(time.time()) - 60
 
     def test_update_session_activity(self):
         t1 = int(time.time()) - 5
@@ -1078,7 +1150,7 @@ class PasswordChangeRequiredTest(TestCase):
         super().setUp()
         self.user = User.objects.create_user('dummy@dummy.dummy', 'dummy')
 
-    def test_redirect_to_settings(self):
+    def test_redirect_to_password_change(self):
         self.user.needs_password_change = True
         self.user.save()
         self.client.login(email='dummy@dummy.dummy', password='dummy')
@@ -1087,9 +1159,9 @@ class PasswordChangeRequiredTest(TestCase):
 
         self.assertEqual(response.status_code, 302)
         assert self.user.needs_password_change is True
-        self.assertIn('/control/settings?next=/control/events/', response['Location'])
+        self.assertIn('/control/settings/password/change?next=/control/events/', response['Location'])
 
-    def test_redirect_to_2fa_to_settings(self):
+    def test_redirect_to_2fa_to_password_change(self):
         self.user.require_2fa = True
         self.user.needs_password_change = True
         self.user.save()
@@ -1112,4 +1184,4 @@ class PasswordChangeRequiredTest(TestCase):
         response = self.client.get('/control/events/')
 
         self.assertEqual(response.status_code, 302)
-        self.assertIn('/control/settings?next=/control/events/', response['Location'])
+        self.assertIn('/control/settings/password/change?next=/control/events/', response['Location'])

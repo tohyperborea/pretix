@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -93,34 +93,34 @@ class MarkdownTextarea(forms.Textarea):
             '<div class="i18n-form-group">%s<div class="i18n-field-markdown-note">%s</div></div>' % (
                 super()._render(template_name, context, renderer=None),
                 _("You can use {markup_name} in this field.").format(
-                    markup_name='<a href="https://docs.pretix.eu/en/latest/user/markdown.html" target="_blank">Markdown</a>'
+                    markup_name='<a href="https://docs.pretix.eu/guides/markdown/" target="_blank">Markdown</a>'
                 )
             )
         )
 
 
 class I18nMarkdownTextarea(i18nfield.forms.I18nTextarea):
-    def format_output(self, rendered_widgets) -> str:
+    def format_output(self, rendered_widgets, id_) -> str:
         rendered_widgets = rendered_widgets + [
             '<div class="i18n-field-markdown-note">%s</div>' % (
                 _("You can use {markup_name} in this field.").format(
-                    markup_name='<a href="https://docs.pretix.eu/en/latest/user/markdown.html" target="_blank">Markdown</a>'
+                    markup_name='<a href="https://docs.pretix.eu/guides/markdown/" target="_blank">Markdown</a>'
                 )
             )
         ]
-        return super().format_output(rendered_widgets)
+        return super().format_output(rendered_widgets, id_)
 
 
 class I18nMarkdownTextInput(i18nfield.forms.I18nTextInput):
-    def format_output(self, rendered_widgets) -> str:
+    def format_output(self, rendered_widgets, id_) -> str:
         rendered_widgets = rendered_widgets + [
             '<div class="i18n-field-markdown-note">%s</div>' % (
                 _("You can use {markup_name} in this field.").format(
-                    markup_name='<a href="https://docs.pretix.eu/en/latest/user/markdown.html" target="_blank">Markdown</a>'
+                    markup_name='<a href="https://docs.pretix.eu/guides/markdown/" target="_blank">Markdown</a>'
                 )
             )
         ]
-        return super().format_output(rendered_widgets)
+        return super().format_output(rendered_widgets, id_)
 
 
 SECRET_REDACTED = '*****'

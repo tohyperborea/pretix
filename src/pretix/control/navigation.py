@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -59,7 +59,7 @@ def get_event_navigation(request: HttpRequest):
                     'event': request.event.slug,
                     'organizer': request.event.organizer.slug,
                 }),
-                'active': url.url_name == 'event.settings.payment',
+                'active': url.url_name in ('event.settings.payment', 'event.settings.payment.provider'),
             },
             {
                 'label': _('Plugins'),
@@ -78,7 +78,7 @@ def get_event_navigation(request: HttpRequest):
                 'active': url.url_name == 'event.settings.tickets',
             },
             {
-                'label': _('E-mail'),
+                'label': _('Email'),
                 'url': reverse('control:event.settings.mail', kwargs={
                     'event': request.event.slug,
                     'organizer': request.event.organizer.slug,
@@ -86,7 +86,7 @@ def get_event_navigation(request: HttpRequest):
                 'active': url.url_name == 'event.settings.mail',
             },
             {
-                'label': _('Tax rules'),
+                'label': _('Taxes'),
                 'url': reverse('control:event.settings.tax', kwargs={
                     'event': request.event.slug,
                     'organizer': request.event.organizer.slug,
@@ -132,16 +132,6 @@ def get_event_navigation(request: HttpRequest):
             'icon': 'wrench',
             'children': event_settings
         })
-        if request.event.has_subevents:
-            nav.append({
-                'label': pgettext_lazy('subevent', 'Dates'),
-                'url': reverse('control:event.subevents', kwargs={
-                    'event': request.event.slug,
-                    'organizer': request.event.organizer.slug,
-                }),
-                'active': ('event.subevent' in url.url_name),
-                'icon': 'calendar',
-            })
 
     if 'can_change_items' in request.eventpermset:
         nav.append({
@@ -196,6 +186,18 @@ def get_event_navigation(request: HttpRequest):
                 },
             ]
         })
+
+    if 'can_change_event_settings' in request.eventpermset:
+        if request.event.has_subevents:
+            nav.append({
+                'label': pgettext_lazy('subevent', 'Dates'),
+                'url': reverse('control:event.subevents', kwargs={
+                    'event': request.event.slug,
+                    'organizer': request.event.organizer.slug,
+                }),
+                'active': ('event.subevent' in url.url_name),
+                'icon': 'calendar',
+            })
 
     if 'can_view_orders' in request.eventpermset:
         children = [
@@ -444,6 +446,16 @@ def get_global_navigation(request):
                     'url': reverse('control:global.license'),
                     'active': (url.url_name == 'global.license'),
                 },
+                {
+                    'label': _('System report'),
+                    'url': reverse('control:global.sysreport'),
+                    'active': (url.url_name == 'global.sysreport'),
+                },
+                {
+                    'label': _('Data sync problems'),
+                    'url': reverse('control:global.datasync.failedjobs'),
+                    'active': (url.url_name == 'global.datasync.failedjobs'),
+                },
             ]
         })
 
@@ -484,6 +496,13 @@ def get_organizer_navigation(request):
                     'active': url.url_name == 'organizer.edit',
                 },
                 {
+                    'label': _('Plugins'),
+                    'url': reverse('control:organizer.settings.plugins', kwargs={
+                        'organizer': request.organizer.slug,
+                    }),
+                    'active': url.url_name == 'organizer.settings.plugins' or url.url_name == 'organizer.settings.plugin-events',
+                },
+                {
                     'label': _('Event metadata'),
                     'url': reverse('control:organizer.properties', kwargs={
                         'organizer': request.organizer.slug
@@ -491,11 +510,18 @@ def get_organizer_navigation(request):
                     'active': url.url_name.startswith('organizer.propert'),
                 },
                 {
-                    'label': _('E-mail'),
+                    'label': _('Email'),
                     'url': reverse('control:organizer.settings.mail', kwargs={
                         'organizer': request.organizer.slug,
                     }),
                     'active': url.url_name == 'organizer.settings.mail',
+                },
+                {
+                    'label': _('Sales channels'),
+                    'url': reverse('control:organizer.channels', kwargs={
+                        'organizer': request.organizer.slug
+                    }),
+                    'active': url.url_name.startswith('organizer.channel'),
                 },
                 {
                     'label': _('Webhooks'),
@@ -640,6 +666,27 @@ def get_organizer_navigation(request):
         'active': 'organizer.export' in url.url_name,
         'icon': 'download',
     })
+
+    if 'can_change_organizer_settings' in request.orgapermset:
+        merge_in(nav, [{
+            'parent': reverse('control:organizer.export', kwargs={
+                'organizer': request.organizer.slug,
+            }),
+            'label': _('Data sync problems'),
+            'url': reverse('control:organizer.datasync.failedjobs', kwargs={
+                'organizer': request.organizer.slug,
+            }),
+            'active': (url.url_name == 'organizer.datasync.failedjobs'),
+        }])
+
+        nav.append({
+            'label': _('Outgoing emails'),
+            'url': reverse('control:organizer.outgoingmails', kwargs={
+                'organizer': request.organizer.slug,
+            }),
+            'active': 'organizer.outgoingmail' in url.url_name,
+            'icon': 'send',
+        })
 
     merge_in(nav, sorted(
         sum((list(a[1]) for a in nav_organizer.send(request.organizer, request=request, organizer=request.organizer)),

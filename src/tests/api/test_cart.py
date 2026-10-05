@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -685,6 +685,7 @@ def seat(event, organizer, item):
 @pytest.mark.django_db
 def test_cartpos_create_with_seat(token_client, organizer, event, item, quota, seat, question):
     res = copy.deepcopy(CARTPOS_CREATE_PAYLOAD)
+    res['expires'] = now() + datetime.timedelta(hours=1)
     res['item'] = item.pk
     res['seat'] = seat.seat_guid
     resp = token_client.post(
@@ -696,6 +697,14 @@ def test_cartpos_create_with_seat(token_client, organizer, event, item, quota, s
     with scopes_disabled():
         p = CartPosition.objects.get(pk=resp.data['id'])
     assert p.seat == seat
+
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/seats/{}/'.format(organizer.slug, event.slug, seat.pk))
+    assert resp.status_code == 200
+    assert resp.data['cartposition'] == p.pk
+
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/seats/{}/?expand=cartposition'.format(organizer.slug, event.slug, seat.pk))
+    assert resp.status_code == 200
+    assert resp.data['cartposition']['id'] == p.pk
 
 
 @pytest.mark.django_db

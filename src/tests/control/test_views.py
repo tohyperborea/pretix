@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -70,6 +70,7 @@ def order(item):
     o = Order.objects.create(event=item.event, status=Order.STATUS_PENDING,
                              expires=now() + datetime.timedelta(hours=1),
                              total=13, code='DUMMY', email='dummy@dummy.test',
+                             sales_channel=item.event.organizer.sales_channels.get(identifier="web"),
                              datetime=now())
     OrderPosition.objects.create(order=o, item=item, price=13)
     p1 = o.payments.create(

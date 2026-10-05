@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -34,7 +34,7 @@ from pretix.base.models import (
 
 @pytest.fixture
 def env():
-    o = Organizer.objects.create(name='Dummy', slug='dummy')
+    o = Organizer.objects.create(name='Dummy', slug='dummy', plugins='pretix.plugins.banktransfer')
     event = Event.objects.create(
         organizer=o, name='Dummy', slug='dummy',
         date_from=now(), plugins='pretix.plugins.banktransfer,pretix.plugins.paypal'
@@ -47,6 +47,7 @@ def env():
         code='1Z3AS', event=event, email='admin@localhost',
         status=Order.STATUS_PAID,
         datetime=now(), expires=now() + timedelta(days=10),
+        sales_channel=o.sales_channels.get(identifier="web"),
         total=23
     )
     payment = OrderPayment.objects.create(
@@ -72,6 +73,7 @@ def test_perform_refund(client, env):
     r = client.post(url, {
         f"refund-{payment.id}": "23.00",
         "start-mode": "full",
+        "last_known_refund_id": 0,
         "perform": True,
     })
     assert r.status_code == 302
@@ -102,6 +104,7 @@ def test_cannot_perform_refund_with_invalid_iban(client, env):
     r = client.post(url, {
         f"refund-{payment.id}": "23.00",
         "start-mode": "full",
+        "last_known_refund_id": 0,
         "perform": True,
     })
     assert r.status_code == 200  # no successfull POST

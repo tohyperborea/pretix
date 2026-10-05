@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -32,14 +32,17 @@
 # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations under the License.
 import importlib_metadata as metadata
+from django.conf import settings
 from django.contrib import messages
-from django.http import JsonResponse
+from django.db import transaction
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, reverse
 from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
 from django.views import View
 from django.views.generic import FormView, TemplateView
 
+from pretix.base.i18n import language
 from pretix.base.models import LogEntry, OrderPayment, OrderRefund
 from pretix.base.services.update_check import check_result_table, update_check
 from pretix.base.settings import GlobalSettingsObject
@@ -49,12 +52,14 @@ from pretix.control.forms.global_settings import (
 from pretix.control.permissions import (
     AdministratorPermissionRequiredMixin, StaffMemberRequiredMixin,
 )
+from pretix.control.sysreport import SysReport
 
 
 class GlobalSettingsView(AdministratorPermissionRequiredMixin, FormView):
     template_name = 'pretixcontrol/global_settings.html'
     form_class = GlobalSettingsForm
 
+    @transaction.atomic
     def form_valid(self, form):
         form.save()
         messages.success(self.request, _('Your changes have been saved.'))
@@ -105,7 +110,18 @@ class MessageView(TemplateView):
 class LogDetailView(AdministratorPermissionRequiredMixin, View):
     def get(self, request, *args, **kwargs):
         le = get_object_or_404(LogEntry, pk=request.GET.get('pk'))
-        return JsonResponse({'data': le.parsed_data})
+        try:
+            object_repr = repr(le.content_object)
+        except Exception as e:
+            object_repr = 'Error: ' + str(e)
+        return JsonResponse({
+            'datetime': le.datetime.isoformat(),
+            'action_type': le.action_type,
+            'content_type': str(le.content_type),
+            'object_id': le.object_id,
+            'object_repr': object_repr,
+            'data': le.parsed_data,
+        })
 
 
 class PaymentDetailView(AdministratorPermissionRequiredMixin, View):
@@ -172,6 +188,8 @@ class LicenseCheckView(StaffMemberRequiredMixin, FormView):
             return None, None
         try:
             for k, v in pkg.metadata.items():
+                if k == "License-Expression":
+                    license = v
                 if k == "License":
                     license = v
                 if k == "Home-page":
@@ -262,3 +280,25 @@ class LicenseCheckView(StaffMemberRequiredMixin, FormView):
                 ))
 
         return res
+
+
+class SysReportView(AdministratorPermissionRequiredMixin, TemplateView):
+    template_name = 'pretixcontrol/global_sysreport.html'
+
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+    def post(self, request, *args, **kwargs):
+        with language("en"):
+            try:
+                month = int(request.POST.get("month"))
+            except ValueError:
+                return super().get(request, *args, **kwargs)
+            if month < 1 or month > 12:
+                return super().get(request, *args, **kwargs)
+            name, mime, data = SysReport(month, settings.TIME_ZONE).render()
+            resp = HttpResponse(data)
+            resp['Content-Type'] = mime
+            resp['Content-Disposition'] = 'inline; filename="{}"'.format(name)
+            resp._csp_ignore = True
+            return resp

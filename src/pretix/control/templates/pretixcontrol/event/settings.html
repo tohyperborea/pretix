@@ -22,7 +22,7 @@
                 {% bootstrap_field form.name layout="control" %}
                 {% bootstrap_field form.slug layout="control" %}
                 {% if form.domain %}
-                    {% bootstrap_field form.domain layout="control" %}
+                    {% bootstrap_field form.domain layout="horizontal" %}
                 {% endif %}
                 {% bootstrap_field form.date_from layout="control" %}
                 {% bootstrap_field form.date_to layout="control" %}
@@ -32,7 +32,8 @@
                 {% bootstrap_field sform.contact_mail layout="control" %}
                 {% bootstrap_field sform.imprint_url layout="control" %}
                 {% bootstrap_field form.is_public layout="control" %}
-                {% bootstrap_field form.sales_channels layout="control" %}
+                {% bootstrap_field form.all_sales_channels layout="control" %}
+                {% bootstrap_field form.limit_sales_channels layout="control" %}
 
                 {% if meta_forms %}
                     <div class="form-group metadata-group">
@@ -60,13 +61,14 @@
                 {% bootstrap_field sform.locale layout="control" %}
                 {% bootstrap_field sform.timezone layout="control" %}
                 {% bootstrap_field sform.region layout="control" %}
+                {% bootstrap_field form.is_remote layout="control" %}
             </fieldset>
             <fieldset>
                 <legend>{% trans "Customer and attendee data" %}</legend>
                 <h4>{% trans "Customer data (once per order)" %}</h4>
                 <div class="form-group">
                     <label class="control-label col-md-3">
-                        {% trans "E-mail" %}
+                        {% trans "Email" %}
                     </label>
                     <div class="col-md-9">
                         <div class="checkbox">
@@ -113,10 +115,17 @@
                 </div>
                 {% bootstrap_field sform.attendee_data_explanation_text layout="control" %}
 
-                <h4>{% trans "Other settings" %}</h4>
+                <h4>{% trans "Form settings" %}</h4>
                 {% bootstrap_field sform.name_scheme layout="control" %}
                 {% bootstrap_field sform.name_scheme_titles layout="control" %}
                 {% bootstrap_field sform.checkout_show_copy_answers_button layout="control" %}
+
+                <h4>{% trans "Changes to existing orders" %}</h4>
+                {% bootstrap_field sform.allow_modifications layout="control" %}
+                <div data-display-dependency='#id_settings-allow_modifications_0' data-inverse>
+                    {% bootstrap_field sform.last_order_modification_date layout="control" %}
+                    {% bootstrap_field sform.allow_modifications_after_checkin layout="control" %}
+                </div>
             </fieldset>
             <fieldset>
                 <legend>{% trans "Texts" %}</legend>
@@ -225,21 +234,57 @@
                 {% bootstrap_field sform.presale_start_show_date layout="control" %}
                 {% bootstrap_field form.presale_end layout="control" %}
                 {% bootstrap_field sform.show_items_outside_presale_period layout="control" %}
-                {% bootstrap_field sform.last_order_modification_date layout="control" %}
-                {% bootstrap_field sform.allow_modifications_after_checkin layout="control" %}
-                {% bootstrap_field sform.show_checkin_number_user layout="control" %}
             </fieldset>
             <fieldset>
                 <legend>{% trans "Display" %}</legend>
+                <h4>{% trans "Date and time" %}</h4>
                 {% bootstrap_field sform.show_dates_on_frontpage layout="control" %}
                 {% bootstrap_field sform.show_date_to layout="control" %}
                 {% bootstrap_field sform.show_times layout="control" %}
+                <h4>{% trans "Product list" %}</h4>
                 {% bootstrap_field sform.show_quota_left layout="control" %}
-                {% bootstrap_field sform.display_net_prices layout="control" %}
-                {% bootstrap_field sform.hide_prices_from_attendees layout="control" %}
                 {% bootstrap_field sform.show_variations_expanded layout="control" %}
                 {% bootstrap_field sform.hide_sold_out layout="control" %}
 
+                <div data-display-dependency="#id_settings-waiting_list_enabled">
+                    <div data-display-dependency="#id_settings-hide_sold_out">
+                        <div class="alert alert-danger dynamic">
+                            <h4>{% trans "Incompatible settings" %}</h4>
+                            {% blocktrans trimmed %}
+                                Customers won't be able to add themselves to the waiting list, because "Hide all products that are sold out" is enabled.
+                            {% endblocktrans %}
+                        </div>
+                    </div>
+                </div>
+
+                <h4>{% trans "Calendar and list views" context "subevents" %}</h4>
+                {% if sform.frontpage_subevent_ordering %}
+                    {% bootstrap_field sform.frontpage_subevent_ordering layout="control" %}
+                {% endif %}
+                {% if sform.event_list_type %}
+                    {% bootstrap_field sform.event_list_type layout="control" %}
+                {% endif %}
+                {% if sform.event_list_available_only %}
+                    {% bootstrap_field sform.event_list_available_only layout="control" %}
+                {% endif %}
+                {% if sform.event_list_filters %}
+                    {% bootstrap_field sform.event_list_filters layout="control" %}
+                {% endif %}
+                {% if sform.event_calendar_future_only %}
+                    {% bootstrap_field sform.event_calendar_future_only layout="control" %}
+                {% endif %}
+                {% bootstrap_field sform.low_availability_percentage layout="control" addon_after="%" %}
+
+
+                <h4>{% trans "Order details" %}</h4>
+                {% bootstrap_field sform.hide_prices_from_attendees layout="control" %}
+                {% bootstrap_field sform.show_checkin_number_user layout="control" %}
+
+                <h4>{% trans "Other settings" %}</h4>
+                {% url "control:organizer.edit" organizer=request.organizer.slug as org_url %}
+                {% propagated request.event org_url "meta_noindex" %}
+                    {% bootstrap_field sform.meta_noindex layout="control" %}
+                {% endpropagated %}
                 <div class="form-group">
                     <label class="col-md-3 control-label">
                         {% trans "Footer links" %}<br>
@@ -306,28 +351,6 @@
                         </div>
                     </div>
                 </div>
-                
-                {% if sform.frontpage_subevent_ordering %}
-                    {% bootstrap_field sform.frontpage_subevent_ordering layout="control" %}
-                {% endif %}
-                {% if sform.event_list_type %}
-                    {% bootstrap_field sform.event_list_type layout="control" %}
-                {% endif %}
-                {% if sform.event_list_available_only %}
-                    {% bootstrap_field sform.event_list_available_only layout="control" %}
-                {% endif %}
-                {% if sform.event_list_filters %}
-                    {% bootstrap_field sform.event_list_filters layout="control" %}
-                {% endif %}
-                {% if sform.event_calendar_future_only %}
-                    {% bootstrap_field sform.event_calendar_future_only layout="control" %}
-                {% endif %}
-                {% bootstrap_field sform.low_availability_percentage layout="control" addon_after="%" %}
-
-                {% url "control:organizer.edit" organizer=request.organizer.slug as org_url %}
-                {% propagated request.event org_url "meta_noindex" %}
-                    {% bootstrap_field sform.meta_noindex layout="control" %}
-                {% endpropagated %}
             </fieldset>
             <fieldset>
                 <legend>{% trans "Cart" %}</legend>
@@ -359,7 +382,30 @@
                     </strong>
                 </div>
                 {% bootstrap_field sform.waiting_list_enabled layout="control" %}
+                <div data-display-dependency="#id_settings-hide_sold_out">
+                    <div data-display-dependency="#id_settings-waiting_list_enabled">
+                        <div class="alert alert-danger dynamic">
+                            <h4>{% trans "Incompatible settings" %}</h4>
+                            {% blocktrans trimmed %}
+                                Customers won't be able to add themselves to the waiting list, because "Hide all products that are sold out" is enabled.
+                            {% endblocktrans %}
+                        </div>
+                    </div>
+                </div>
                 {% bootstrap_field sform.waiting_list_auto layout="control" %}
+                <div class="form-group">
+                    <label class="control-label col-md-3">
+                        {% trans "Waiting customers" %}
+                    </label>
+                    <div class="col-md-9 static-form-row">
+                        <p>
+                            <a href="{% url "control:event.orders.waitinglist" event=request.event.slug organizer=request.organizer.slug %}#tab-0-1-open"
+                               target="_blank">
+                                {% trans "Manage waiting list" %}
+                            </a>
+                        </p>
+                    </div>
+                </div>
                 {% bootstrap_field sform.waiting_list_hours layout="control" %}
                 {% bootstrap_field sform.waiting_list_auto_disable layout="control" %}
                 {% bootstrap_field sform.waiting_list_names_asked_required layout="control" %}

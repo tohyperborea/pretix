@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -32,13 +32,11 @@
 # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations under the License.
 
-import hashlib
 import json
 import logging
 import urllib.parse
 
 import requests
-import stripe
 from django.contrib import messages
 from django.core import signing
 from django.db import transaction
@@ -69,7 +67,6 @@ from pretix.helpers.http import redirect_to_url
 from pretix.multidomain.urlreverse import build_absolute_uri, eventreverse
 from pretix.plugins.stripe.forms import OrganizerStripeSettingsForm
 from pretix.plugins.stripe.models import ReferencedStripeObject
-from pretix.plugins.stripe.payment import StripeCC, StripeSettingsHolder
 from pretix.plugins.stripe.tasks import (
     get_domain_for_event, stripe_verify_domain,
 )
@@ -101,6 +98,8 @@ def redirect_view(request, *args, **kwargs):
 
 @scopes_disabled()
 def oauth_return(request, *args, **kwargs):
+    import stripe
+
     if 'payment_stripe_oauth_event' not in request.session:
         messages.error(request, _('An error occurred during connecting with Stripe, please try again.'))
         return redirect('control:index')
@@ -269,6 +268,10 @@ SOURCE_TYPES = {
 
 
 def charge_webhook(event, event_json, charge_id, rso):
+    import stripe
+
+    from pretix.plugins.stripe.payment import StripeCC
+
     prov = StripeCC(event)
     prov._init_api()
 
@@ -372,6 +375,10 @@ def charge_webhook(event, event_json, charge_id, rso):
 
 
 def source_webhook(event, event_json, source_id, rso):
+    import stripe
+
+    from pretix.plugins.stripe.payment import StripeCC
+
     prov = StripeCC(event)
     prov._init_api()
     try:
@@ -441,6 +448,10 @@ def source_webhook(event, event_json, source_id, rso):
 
 
 def paymentintent_webhook(event, event_json, paymentintent_id, rso):
+    import stripe
+
+    from pretix.plugins.stripe.payment import StripeCC
+
     prov = StripeCC(event)
     prov._init_api()
 
@@ -486,15 +497,11 @@ def oauth_disconnect(request, **kwargs):
 class StripeOrderView:
     def dispatch(self, request, *args, **kwargs):
         try:
-            self.order = request.event.orders.get(code=kwargs['order'])
-            if hashlib.sha1(self.order.secret.lower().encode()).hexdigest() != kwargs['hash'].lower():
-                raise Http404('')
+            self.order = request.event.orders.get_with_secret_check(
+                code=kwargs['order'], received_secret=kwargs['hash'].lower(), tag='plugins:stripe'
+            )
         except Order.DoesNotExist:
-            # Do a hash comparison as well to harden timing attacks
-            if 'abcdefghijklmnopq'.lower() == hashlib.sha1('abcdefghijklmnopq'.encode()).hexdigest():
-                raise Http404('')
-            else:
-                raise Http404('')
+            raise Http404('Unknown order')
         self.payment = get_object_or_404(
             self.order.payments,
             pk=self.kwargs['payment'],
@@ -521,6 +528,8 @@ class StripeOrderView:
 @method_decorator(xframe_options_exempt, 'dispatch')
 class ReturnView(StripeOrderView, View):
     def get(self, request, *args, **kwargs):
+        import stripe
+
         prov = self.pprov
         prov._init_api()
         try:
@@ -573,6 +582,10 @@ class ReturnView(StripeOrderView, View):
 class ScaView(StripeOrderView, View):
 
     def get(self, request, *args, **kwargs):
+        import stripe
+
+        from pretix.plugins.stripe.payment import StripeSettingsHolder
+
         prov = self.pprov
         prov._init_api()
 
@@ -599,7 +612,8 @@ class ScaView(StripeOrderView, View):
             return self._redirect_to_order()
 
         if intent.status == 'requires_action' and intent.next_action.type in [
-            'use_stripe_sdk', 'redirect_to_url', 'alipay_handle_redirect', 'wechat_pay_display_qr_code'
+            'use_stripe_sdk', 'redirect_to_url', 'alipay_handle_redirect', 'wechat_pay_display_qr_code',
+            'swish_handle_redirect_or_display_qr_code', 'multibanco_display_details', 'promptpay_display_qr_code',
         ]:
             ctx = {
                 'order': self.order,
@@ -611,6 +625,14 @@ class ScaView(StripeOrderView, View):
             elif intent.next_action.type == 'redirect_to_url':
                 ctx['payment_intent_next_action_redirect_url'] = intent.next_action.redirect_to_url['url']
                 ctx['payment_intent_redirect_action_handling'] = prov.redirect_action_handling
+            elif intent.next_action.type == 'swish_handle_redirect_or_display_qr_code':
+                ctx['payment_intent_next_action_redirect_url'] = intent.next_action.swish_handle_redirect_or_display_qr_code['hosted_instructions_url']
+                ctx['payment_intent_redirect_action_handling'] = 'iframe'
+            elif intent.next_action.type == 'multibanco_display_details':
+                ctx['payment_intent_next_action_redirect_url'] = intent.next_action.multibanco_display_details['hosted_voucher_url']
+                ctx['payment_intent_redirect_action_handling'] = 'iframe'
+            elif intent.next_action.type == 'promptpay_display_qr_code':
+                ctx['payment_intent_promptpay_image_url'] = intent.next_action.promptpay_display_qr_code['image_url_svg']
 
             r = render(request, 'pretixplugins/stripe/sca.html', ctx)
             r._csp_ignore = True

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -44,12 +44,13 @@ from django_countries.fields import Country
 from django_scopes import scopes_disabled
 from tests.const import SAMPLE_PNG
 
-from pretix.base.channels import get_all_sales_channels
 from pretix.base.models import (
     CartPosition, InvoiceAddress, Item, ItemAddOn, ItemBundle, ItemCategory,
-    ItemVariation, Order, OrderPosition, Question, QuestionOption, Quota,
+    ItemProgramTime, ItemVariation, Order, OrderPosition, Question,
+    QuestionOption, Quota,
 )
 from pretix.base.models.orders import OrderFee
+from pretix.testutils.queries import assert_num_queries
 
 
 @pytest.fixture
@@ -81,6 +82,7 @@ def order(event, item, taxrule):
             status=Order.STATUS_PENDING, secret="k24fiuwvu8kxz3y1",
             datetime=datetime(2017, 12, 1, 10, 0, 0, tzinfo=timezone.utc),
             expires=datetime(2017, 12, 10, 10, 0, 0, tzinfo=timezone.utc),
+            sales_channel=event.organizer.sales_channels.get(identifier="web"),
             total=23, locale='en'
         )
         o.fees.create(fee_type=OrderFee.FEE_TYPE_PAYMENT, value=Decimal('0.25'), tax_rate=Decimal('19.00'),
@@ -128,7 +130,10 @@ TEST_CATEGORY_RES = {
     "description": {"en": ""},
     "internal_name": None,
     "position": 0,
-    "is_addon": False
+    "is_addon": False,
+    "cross_selling_mode": None,
+    "cross_selling_condition": None,
+    "cross_selling_match_products": [],
 }
 
 
@@ -212,6 +217,44 @@ def test_category_update(token_client, organizer, event, team, category):
 
 
 @pytest.mark.django_db
+def test_category_update_cross_selling_options(token_client, organizer, event, team, category):
+    resp = token_client.patch(
+        '/api/v1/organizers/{}/events/{}/categories/{}/'.format(organizer.slug, event.slug, category.pk),
+        {
+            "cross_selling_mode": "both",
+        },
+        format='json'
+    )
+    assert resp.status_code == 200
+    with scopes_disabled():
+        assert ItemCategory.objects.get(pk=category.pk).cross_selling_mode == 'both'
+
+    resp = token_client.patch(
+        '/api/v1/organizers/{}/events/{}/categories/{}/'.format(organizer.slug, event.slug, category.pk),
+        {
+            "cross_selling_mode": "something",
+        },
+        format='json'
+    )
+    assert resp.status_code == 400
+    with scopes_disabled():
+        assert ItemCategory.objects.get(pk=category.pk).cross_selling_mode == 'both'
+
+    resp = token_client.patch(
+        '/api/v1/organizers/{}/events/{}/categories/{}/'.format(organizer.slug, event.slug, category.pk),
+        {
+            "is_addon": True,
+        },
+        format='json'
+    )
+    assert resp.status_code == 400
+    assert 'mutually exclusive' in str(resp.data)
+    with scopes_disabled():
+        assert ItemCategory.objects.get(pk=category.pk).cross_selling_mode == 'both'
+        assert ItemCategory.objects.get(pk=category.pk).is_addon is False
+
+
+@pytest.mark.django_db
 def test_category_update_wrong_event(token_client, organizer, event2, category):
     resp = token_client.patch(
         '/api/v1/organizers/{}/events/{}/categories/{}/'.format(organizer.slug, event2.slug, category.pk),
@@ -254,7 +297,9 @@ TEST_ITEM_RES = {
     "name": {"en": "Budget Ticket"},
     "internal_name": None,
     "default_price": "23.00",
-    "sales_channels": ["web"],
+    "sales_channels": ["bar", "baz", "web"],
+    "all_sales_channels": True,
+    "limit_sales_channels": [],
     "category": None,
     "active": True,
     "description": None,
@@ -280,6 +325,7 @@ TEST_ITEM_RES = {
     "max_per_order": None,
     "hidden_if_available": None,
     "hidden_if_item_available": None,
+    "hidden_if_item_available_mode": "hide",
     "checkin_attention": False,
     "checkin_text": None,
     "has_variations": False,
@@ -287,6 +333,7 @@ TEST_ITEM_RES = {
     "variations": [],
     "addons": [],
     "bundles": [],
+    "program_times": [],
     "show_quota_left": None,
     "original_price": None,
     "free_price_suggestion": None,
@@ -368,6 +415,20 @@ def test_item_list(token_client, organizer, event, team, item):
     assert resp.status_code == 200
     assert [] == resp.data['results']
 
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/items/?search=Budget'.format(organizer.slug, event.slug))
+    assert resp.status_code == 200
+    assert [res] == resp.data['results']
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/items/?search=Free'.format(organizer.slug, event.slug))
+    assert resp.status_code == 200
+    assert [] == resp.data['results']
+
+
+@pytest.mark.django_db
+def test_item_list_queries(token_client, organizer, event, team, item, item3):
+    with assert_num_queries(18):
+        resp = token_client.get('/api/v1/organizers/{}/events/{}/items/'.format(organizer.slug, event.slug))
+        assert resp.status_code == 200
+
 
 @pytest.mark.django_db
 def test_item_detail(token_client, organizer, event, team, item):
@@ -383,32 +444,34 @@ def test_item_detail(token_client, organizer, event, team, item):
 def test_item_detail_variations(token_client, organizer, event, team, item):
     with scopes_disabled():
         var = item.variations.create(value="Children")
-    res = dict(TEST_ITEM_RES)
-    res["id"] = item.pk
-    res["variations"] = [{
-        "id": var.pk,
-        "value": {"en": "Children"},
-        "default_price": None,
-        "free_price_suggestion": None,
-        "price": "23.00",
-        "active": True,
-        "description": None,
-        "position": 0,
-        "checkin_attention": False,
-        "checkin_text": None,
-        "require_approval": False,
-        "require_membership": False,
-        "require_membership_hidden": False,
-        "require_membership_types": [],
-        "sales_channels": list(get_all_sales_channels().keys()),
-        "available_from": None,
-        "available_until": None,
-        "available_from_mode": "hide",
-        "available_until_mode": "hide",
-        "hide_without_voucher": False,
-        "original_price": None,
-        "meta_data": {}
-    }]
+        res = dict(TEST_ITEM_RES)
+        res["id"] = item.pk
+        res["variations"] = [{
+            "id": var.pk,
+            "value": {"en": "Children"},
+            "default_price": None,
+            "free_price_suggestion": None,
+            "price": "23.00",
+            "active": True,
+            "description": None,
+            "position": 0,
+            "checkin_attention": False,
+            "checkin_text": None,
+            "require_approval": False,
+            "require_membership": False,
+            "require_membership_hidden": False,
+            "require_membership_types": [],
+            "sales_channels": sorted(organizer.sales_channels.values_list("identifier", flat=True)),
+            "all_sales_channels": True,
+            "limit_sales_channels": [],
+            "available_from": None,
+            "available_until": None,
+            "available_from_mode": "hide",
+            "available_until_mode": "hide",
+            "hide_without_voucher": False,
+            "original_price": None,
+            "meta_data": {}
+        }]
     res["has_variations"] = True
     resp = token_client.get('/api/v1/organizers/{}/events/{}/items/{}/'.format(organizer.slug, event.slug,
                                                                                item.pk))
@@ -457,6 +520,24 @@ def test_item_detail_bundles(token_client, organizer, event, team, item, categor
 
 
 @pytest.mark.django_db
+def test_item_detail_program_times(token_client, organizer, event, team, item, category):
+    with scopes_disabled():
+        item.program_times.create(item=item, start=datetime(2017, 12, 27, 0, 0, 0, tzinfo=timezone.utc),
+                                  end=datetime(2017, 12, 28, 0, 0, 0, tzinfo=timezone.utc))
+    res = dict(TEST_ITEM_RES)
+
+    res["id"] = item.pk
+    res["program_times"] = [{
+        "start": "2017-12-27T00:00:00Z",
+        "end": "2017-12-28T00:00:00Z",
+    }]
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/items/{}/'.format(organizer.slug, event.slug,
+                                                                               item.pk))
+    assert resp.status_code == 200
+    assert res == resp.data
+
+
+@pytest.mark.django_db
 def test_item_create(token_client, organizer, event, item, category, taxrule, membership_type):
     resp = token_client.post(
         '/api/v1/organizers/{}/events/{}/items/'.format(organizer.slug, event.slug),
@@ -466,7 +547,7 @@ def test_item_create(token_client, organizer, event, item, category, taxrule, me
                 "en": "Ticket"
             },
             "active": True,
-            "sales_channels": ["web", "pretixpos"],
+            "sales_channels": ["web", "bar"],
             "description": None,
             "default_price": "23.00",
             "free_price": False,
@@ -496,7 +577,8 @@ def test_item_create(token_client, organizer, event, item, category, taxrule, me
     assert resp.status_code == 201
     with scopes_disabled():
         i = Item.objects.get(pk=resp.data['id'])
-        assert i.sales_channels == ["web", "pretixpos"]
+        assert not i.all_sales_channels
+        assert sorted(i.limit_sales_channels.values_list("identifier", flat=True)) == ["bar", "web"]
         assert i.meta_data == {'day': 'Wednesday'}
         assert i.require_membership_types.count() == 1
         assert i.personalized is True  # auto-set for backwards-compatibility
@@ -585,7 +667,28 @@ def test_item_create_with_variation(token_client, organizer, event, item, catego
                     "meta_data": {
                         "day": "Wednesday",
                     },
-                }
+                },
+                {
+                    "value": {
+                        "de": "web",
+                        "en": "web"
+                    },
+                    "active": True,
+                    "require_approval": True,
+                    "checkin_attention": False,
+                    "checkin_text": None,
+                    "require_membership": False,
+                    "require_membership_hidden": False,
+                    "require_membership_types": [],
+                    "description": None,
+                    "position": 0,
+                    "default_price": None,
+                    "sales_channels": ["web"],
+                    "price": "23.00",
+                    "meta_data": {
+                        "day": "Wednesday",
+                    },
+                },
             ]
         },
         format='json'
@@ -596,8 +699,11 @@ def test_item_create_with_variation(token_client, organizer, event, item, catego
         assert new_item.variations.first().value.localize('de') == "Kommentar"
         assert new_item.variations.first().value.localize('en') == "Comment"
         assert new_item.variations.first().require_approval is True
-        assert set(new_item.variations.first().sales_channels) == set(get_all_sales_channels().keys())
+        assert new_item.variations.first().all_sales_channels is True
+        assert not new_item.variations.first().limit_sales_channels.exists()
         assert new_item.variations.first().meta_data == {"day": "Wednesday"}
+        assert new_item.variations.last().all_sales_channels is False
+        assert new_item.variations.last().limit_sales_channels.exists()
 
 
 @pytest.mark.django_db
@@ -994,6 +1100,57 @@ def test_item_create_with_bundle(token_client, organizer, event, item, category,
     assert resp.content.decode() == '{"bundles":["The chosen variation does not belong to this item."]}'
 
 
+@pytest.mark.django_db
+def test_item_create_with_product_time(token_client, organizer, event, item, category, taxrule):
+    resp = token_client.post(
+        '/api/v1/organizers/{}/events/{}/items/'.format(organizer.slug, event.slug),
+        {
+            "category": category.pk,
+            "name": {
+                "en": "Ticket"
+            },
+            "active": True,
+            "description": None,
+            "default_price": "23.00",
+            "free_price": False,
+            "tax_rate": "19.00",
+            "tax_rule": taxrule.pk,
+            "admission": True,
+            "issue_giftcard": False,
+            "position": 0,
+            "picture": None,
+            "available_from": None,
+            "available_until": None,
+            "require_voucher": False,
+            "hide_without_voucher": False,
+            "allow_cancel": True,
+            "min_per_order": None,
+            "max_per_order": None,
+            "checkin_attention": False,
+            "checkin_text": None,
+            "has_variations": False,
+            "program_times": [
+                {
+                    "start": "2017-12-27T00:00:00Z",
+                    "end": "2017-12-28T00:00:00Z",
+                },
+                {
+                    "start": "2017-12-29T00:00:00Z",
+                    "end": "2017-12-30T00:00:00Z",
+                }
+            ]
+        },
+        format='json'
+    )
+    assert resp.status_code == 201
+    with scopes_disabled():
+        new_item = Item.objects.get(pk=resp.data['id'])
+        assert new_item.program_times.first().start == datetime(2017, 12, 27, 0, 0, 0, tzinfo=timezone.utc)
+        assert new_item.program_times.first().end == datetime(2017, 12, 28, 0, 0, 0, tzinfo=timezone.utc)
+        assert new_item.program_times.last().start == datetime(2017, 12, 29, 0, 0, 0, tzinfo=timezone.utc)
+        assert new_item.program_times.last().end == datetime(2017, 12, 30, 0, 0, 0, tzinfo=timezone.utc)
+
+
 @pytest.mark.django_db(transaction=True)
 def test_item_update(token_client, organizer, event, item, category, item2, category2, taxrule2):
     resp = token_client.patch(
@@ -1069,8 +1226,8 @@ def test_item_update(token_client, organizer, event, item, category, item2, cate
         format='json'
     )
     assert resp.status_code == 400
-    assert resp.content.decode() == '{"non_field_errors":["Updating add-ons, bundles, or variations via PATCH/PUT is not supported. Please use ' \
-                                    'the dedicated nested endpoint."]}'
+    assert resp.content.decode() == '{"non_field_errors":["Updating add-ons, bundles, program times or variations via ' \
+                                    'PATCH/PUT is not supported. Please use the dedicated nested endpoint."]}'
 
     resp = token_client.patch(
         '/api/v1/organizers/{}/events/{}/items/{}/'.format(organizer.slug, event.slug, item.pk),
@@ -1087,8 +1244,8 @@ def test_item_update(token_client, organizer, event, item, category, item2, cate
         format='json'
     )
     assert resp.status_code == 400
-    assert resp.content.decode() == '{"non_field_errors":["Updating add-ons, bundles, or variations via PATCH/PUT is not supported. Please use ' \
-                                    'the dedicated nested endpoint."]}'
+    assert resp.content.decode() == '{"non_field_errors":["Updating add-ons, bundles, program times or variations via ' \
+                                    'PATCH/PUT is not supported. Please use the dedicated nested endpoint."]}'
 
     item.personalized = True
     item.admission = True
@@ -1192,7 +1349,7 @@ def test_item_file_upload(token_client, organizer, event, item):
                 "en": "Ticket"
             },
             "active": True,
-            "sales_channels": ["web", "pretixpos"],
+            "sales_channels": ["web"],
             "picture": file_id_png,
             "description": None,
             "default_price": "23.00",
@@ -1244,8 +1401,8 @@ def test_item_update_with_variation(token_client, organizer, event, item):
         format='json'
     )
     assert resp.status_code == 400
-    assert resp.content.decode() == '{"non_field_errors":["Updating add-ons, bundles, or variations via PATCH/PUT is not supported. Please use ' \
-                                    'the dedicated nested endpoint."]}'
+    assert resp.content.decode() == '{"non_field_errors":["Updating add-ons, bundles, program times or variations via ' \
+                                    'PATCH/PUT is not supported. Please use the dedicated nested endpoint."]}'
 
 
 @pytest.mark.django_db
@@ -1267,8 +1424,8 @@ def test_item_update_with_addon(token_client, organizer, event, item, category):
         format='json'
     )
     assert resp.status_code == 400
-    assert resp.content.decode() == '{"non_field_errors":["Updating add-ons, bundles, or variations via PATCH/PUT is not supported. Please use ' \
-                                    'the dedicated nested endpoint."]}'
+    assert resp.content.decode() == '{"non_field_errors":["Updating add-ons, bundles, program times or variations via ' \
+                                    'PATCH/PUT is not supported. Please use the dedicated nested endpoint."]}'
 
 
 @pytest.mark.django_db
@@ -1331,7 +1488,8 @@ TEST_VARIATIONS_RES = {
     "require_membership": False,
     "require_membership_hidden": False,
     "require_membership_types": [],
-    "sales_channels": list(get_all_sales_channels().keys()),
+    "all_sales_channels": True,
+    "limit_sales_channels": [],
     "available_from": None,
     "available_until": None,
     "available_from_mode": "hide",
@@ -1357,6 +1515,8 @@ TEST_VARIATIONS_UPDATE = {
     "require_membership_hidden": False,
     "require_membership_types": [],
     "sales_channels": ["web"],
+    "all_sales_channels": False,
+    "limit_sales_channels": ["web"],
     "available_from": None,
     "available_until": None,
     "available_from_mode": "hide",
@@ -1372,17 +1532,36 @@ TEST_VARIATIONS_UPDATE = {
 def test_variations_list(token_client, organizer, event, item, variation):
     res = dict(TEST_VARIATIONS_RES)
     res["id"] = variation.pk
+    with scopes_disabled():
+        res["sales_channels"] = sorted(organizer.sales_channels.values_list("identifier", flat=True))
     resp = token_client.get('/api/v1/organizers/{}/events/{}/items/{}/variations/'.format(organizer.slug, event.slug, item.pk))
     assert resp.status_code == 200
     assert res['value'] == resp.data['results'][0]['value']
     assert res['position'] == resp.data['results'][0]['position']
     assert res['price'] == resp.data['results'][0]['price']
 
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/items/{}/variations/?active=true'.format(organizer.slug, event.slug, item.pk))
+    assert resp.status_code == 200
+    assert res['value'] == resp.data['results'][0]['value']
+    resp = token_client.get(
+        '/api/v1/organizers/{}/events/{}/items/{}/variations/?active=false'.format(organizer.slug, event.slug, item.pk))
+    assert resp.status_code == 200
+    assert [] == resp.data['results']
+
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/items/{}/variations/?search=Child'.format(organizer.slug, event.slug, item.pk))
+    assert resp.status_code == 200
+    assert res['value'] == resp.data['results'][0]['value']
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/items/{}/variations/?search=Incorrect'.format(organizer.slug, event.slug, item.pk))
+    assert resp.status_code == 200
+    assert [] == resp.data['results']
+
 
 @pytest.mark.django_db
 def test_variations_detail(token_client, organizer, event, item, variation):
     res = dict(TEST_VARIATIONS_RES)
     res["id"] = variation.pk
+    with scopes_disabled():
+        res["sales_channels"] = sorted(organizer.sales_channels.values_list("identifier", flat=True))
     resp = token_client.get('/api/v1/organizers/{}/events/{}/items/{}/variations/{}/'.format(organizer.slug, event.slug, item.pk, variation.pk))
     assert resp.status_code == 200
     assert res == resp.data
@@ -1413,7 +1592,9 @@ def test_variations_create(token_client, organizer, event, item, variation):
         var = ItemVariation.objects.get(pk=resp.data['id'])
     assert var.position == 1
     assert var.price == 23.0
-    assert set(var.sales_channels) == set(get_all_sales_channels().keys())
+    assert var.all_sales_channels
+    with scopes_disabled():
+        assert not var.limit_sales_channels.exists()
     assert var.meta_data == {"day": "Wednesday"}
 
 
@@ -1780,6 +1961,123 @@ def test_addons_delete(token_client, organizer, event, item, addon):
 
 
 @pytest.fixture
+def program_time(item, category):
+    return item.program_times.create(start=datetime(2017, 12, 27, 0, 0, 0, tzinfo=timezone.utc),
+                                     end=datetime(2017, 12, 28, 0, 0, 0, tzinfo=timezone.utc))
+
+
+@pytest.fixture
+def program_time2(item, category):
+    return item.program_times.create(start=datetime(2017, 12, 29, 0, 0, 0, tzinfo=timezone.utc),
+                                     end=datetime(2017, 12, 30, 0, 0, 0, tzinfo=timezone.utc))
+
+
+TEST_PROGRAM_TIMES_RES = {
+    0: {
+        "start": "2017-12-27T00:00:00Z",
+        "end": "2017-12-28T00:00:00Z",
+    },
+    1: {
+        "start": "2017-12-29T00:00:00Z",
+        "end": "2017-12-30T00:00:00Z",
+    }
+}
+
+
+@pytest.mark.django_db
+def test_program_times_list(token_client, organizer, event, item, program_time, program_time2):
+    res = dict(TEST_PROGRAM_TIMES_RES)
+    res[0]["id"] = program_time.pk
+    res[1]["id"] = program_time2.pk
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/items/{}/program_times/'.format(organizer.slug, event.slug,
+                                                                                             item.pk))
+    assert resp.status_code == 200
+    assert res[0]['start'] == resp.data['results'][0]['start']
+    assert res[0]['end'] == resp.data['results'][0]['end']
+    assert res[0]['id'] == resp.data['results'][0]['id']
+    assert res[1]['start'] == resp.data['results'][1]['start']
+    assert res[1]['end'] == resp.data['results'][1]['end']
+    assert res[1]['id'] == resp.data['results'][1]['id']
+
+
+@pytest.mark.django_db
+def test_program_times_detail(token_client, organizer, event, item, program_time):
+    res = dict(TEST_PROGRAM_TIMES_RES)
+    res[0]["id"] = program_time.pk
+    resp = token_client.get(
+        '/api/v1/organizers/{}/events/{}/items/{}/program_times/{}/'.format(organizer.slug, event.slug,
+                                                                            item.pk, program_time.pk))
+    assert resp.status_code == 200
+    assert res[0] == resp.data
+
+
+@pytest.mark.django_db
+def test_program_times_create(token_client, organizer, event, item):
+    resp = token_client.post(
+        '/api/v1/organizers/{}/events/{}/items/{}/program_times/'.format(organizer.slug, event.slug, item.pk),
+        {
+            "start": "2017-12-27T00:00:00Z",
+            "end": "2017-12-28T00:00:00Z"
+        },
+        format='json'
+    )
+    assert resp.status_code == 201
+    with scopes_disabled():
+        program_time = ItemProgramTime.objects.get(pk=resp.data['id'])
+    assert datetime(2017, 12, 27, 0, 0, 0, tzinfo=timezone.utc) == program_time.start
+    assert datetime(2017, 12, 28, 0, 0, 0, tzinfo=timezone.utc) == program_time.end
+
+    resp = token_client.post(
+        '/api/v1/organizers/{}/events/{}/items/{}/program_times/'.format(organizer.slug, event.slug, item.pk),
+        {
+            "start": "2017-12-28T00:00:00Z",
+            "end": "2017-12-27T00:00:00Z"
+        },
+        format='json'
+    )
+    assert resp.status_code == 400
+    assert resp.content.decode() == '{"non_field_errors":["The program end must not be before the program start."]}'
+
+
+@pytest.mark.django_db
+def test_program_times_update(token_client, organizer, event, item, program_time):
+    resp = token_client.patch(
+        '/api/v1/organizers/{}/events/{}/items/{}/program_times/{}/'.format(organizer.slug, event.slug, item.pk,
+                                                                            program_time.pk),
+        {
+            "start": "2017-12-26T00:00:00Z"
+        },
+        format='json'
+    )
+    assert resp.status_code == 200
+    with scopes_disabled():
+        program_time = ItemProgramTime.objects.get(pk=resp.data['id'])
+    assert datetime(2017, 12, 26, 0, 0, 0, tzinfo=timezone.utc) == program_time.start
+    assert datetime(2017, 12, 28, 0, 0, 0, tzinfo=timezone.utc) == program_time.end
+
+    resp = token_client.patch(
+        '/api/v1/organizers/{}/events/{}/items/{}/program_times/{}/'.format(organizer.slug, event.slug, item.pk,
+                                                                            program_time.pk),
+        {
+            "start": "2017-12-30T00:00:00Z"
+        },
+        format='json'
+    )
+    assert resp.status_code == 400
+    assert resp.content.decode() == '{"non_field_errors":["The program end must not be before the program start."]}'
+
+
+@pytest.mark.django_db
+def test_program_times_delete(token_client, organizer, event, item, program_time):
+    resp = token_client.delete(
+        '/api/v1/organizers/{}/events/{}/items/{}/program_times/{}/'.format(organizer.slug, event.slug,
+                                                                            item.pk, program_time.pk))
+    assert resp.status_code == 204
+    with scopes_disabled():
+        assert not item.program_times.filter(pk=program_time.id).exists()
+
+
+@pytest.fixture
 def quota(event, item):
     q = event.quotas.create(name="Budget Quota", size=200)
     q.items.add(item)
@@ -1794,15 +2092,17 @@ TEST_QUOTA_RES = {
     "subevent": None,
     "close_when_sold_out": False,
     "release_after_exit": False,
-    "closed": False
+    "closed": False,
+    "ignore_for_event_availability": False,
 }
 
 
 @pytest.mark.django_db
-def test_quota_list(token_client, organizer, event, quota, item, subevent):
+def test_quota_list(token_client, organizer, event, quota, item, item3, subevent):
+    quota.items.add(item3)
     res = dict(TEST_QUOTA_RES)
     res["id"] = quota.pk
-    res["items"] = [item.pk]
+    res["items"] = [item.pk, item3.pk]
 
     resp = token_client.get('/api/v1/organizers/{}/events/{}/quotas/'.format(organizer.slug, event.slug))
     assert resp.status_code == 200
@@ -1818,6 +2118,13 @@ def test_quota_list(token_client, organizer, event, quota, item, subevent):
         se2 = event.subevents.create(name="Foobar", date_from=datetime(2017, 12, 27, 10, 0, 0, tzinfo=timezone.utc))
     resp = token_client.get(
         '/api/v1/organizers/{}/events/{}/quotas/?subevent={}'.format(organizer.slug, event.slug, se2.pk))
+    assert [] == resp.data['results']
+
+    resp = token_client.get(
+        '/api/v1/organizers/{}/events/{}/quotas/?items__in={},{},0'.format(organizer.slug, event.slug, item.pk, item3.pk))
+    assert [res] == resp.data['results']
+    resp = token_client.get(
+        '/api/v1/organizers/{}/events/{}/quotas/?items__in=0'.format(organizer.slug, event.slug))
     assert [] == resp.data['results']
 
 
@@ -2316,6 +2623,45 @@ def test_question_update(token_client, organizer, event, question):
         question = Question.objects.get(pk=resp.data['id'])
     assert question.question == "What's your shoe size?"
     assert question.type == "N"
+
+
+@pytest.mark.django_db
+def test_question_update_type_changes(token_client, organizer, event, question):
+    # Allowed because no answers exist
+    resp = token_client.patch(
+        '/api/v1/organizers/{}/events/{}/questions/{}/'.format(organizer.slug, event.slug, question.pk),
+        {
+            "type": "B",
+        },
+        format='json'
+    )
+    assert resp.status_code == 200
+
+    with scopes_disabled():
+        question.answers.create(answer="12")
+
+    # Allowed change
+    resp = token_client.patch(
+        '/api/v1/organizers/{}/events/{}/questions/{}/'.format(organizer.slug, event.slug, question.pk),
+        {
+            "type": "S",
+        },
+        format='json'
+    )
+    assert resp.status_code == 200
+
+    # Forbidden change
+    resp = token_client.patch(
+        '/api/v1/organizers/{}/events/{}/questions/{}/'.format(organizer.slug, event.slug, question.pk),
+        {
+            "type": "B",
+        },
+        format='json'
+    )
+    assert resp.status_code == 400
+    assert resp.content.decode() == ('{"type":["The system already contains answers to this question that are not '
+                                     'compatible with changing the type of question without data loss. Consider hiding '
+                                     'this question and creating a new one instead."]}')
 
 
 @pytest.mark.django_db

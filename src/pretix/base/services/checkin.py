@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -57,7 +57,7 @@ from pretix.base.models import (
     Checkin, CheckinList, Device, Event, Gate, Item, ItemVariation, Order,
     OrderPosition, QuestionOption,
 )
-from pretix.base.signals import checkin_created, order_placed, periodic_task
+from pretix.base.signals import checkin_created, periodic_task
 from pretix.helpers import OF_SELF
 from pretix.helpers.jsonlogic import Logic
 from pretix.helpers.jsonlogic_boolalg import convert_to_dnf
@@ -1154,24 +1154,7 @@ def perform_checkin(op: OrderPosition, clist: CheckinList, given_answers: dict, 
             )
 
 
-@receiver(order_placed, dispatch_uid="autocheckin_order_placed")
-def order_placed(sender, **kwargs):
-    order = kwargs['order']
-    event = sender
-
-    cls = list(event.checkin_lists.filter(auto_checkin_sales_channels__contains=order.sales_channel).prefetch_related(
-        'limit_products'))
-    if not cls:
-        return
-    for op in order.positions.all():
-        for cl in cls:
-            if cl.all_products or op.item_id in {i.pk for i in cl.limit_products.all()}:
-                if not cl.subevent_id or cl.subevent_id == op.subevent_id:
-                    ci = Checkin.objects.create(position=op, list=cl, auto_checked_in=True, type=Checkin.TYPE_ENTRY)
-                    checkin_created.send(event, checkin=ci)
-
-
-@receiver(periodic_task, dispatch_uid="autocheckin_exit_all")
+@receiver(periodic_task, dispatch_uid="autocheckout_exit_all")
 @scopes_disabled()
 def process_exit_all(sender, **kwargs):
     qs = CheckinList.objects.filter(
@@ -1182,10 +1165,11 @@ def process_exit_all(sender, **kwargs):
         positions = cl.positions_inside_query(ignore_status=True, at_time=cl.exit_all_at)
         for p in positions:
             with scope(organizer=cl.event.organizer):
-                ci = Checkin.objects.create(
+                ci, created = Checkin.objects.get_or_create(
                     position=p, list=cl, auto_checked_in=True, type=Checkin.TYPE_EXIT, datetime=cl.exit_all_at
                 )
-                checkin_created.send(cl.event, checkin=ci)
+                if created:
+                    checkin_created.send(cl.event, checkin=ci)
         d = cl.exit_all_at.astimezone(cl.event.timezone)
         if cl.event.settings.get(f'autocheckin_dst_hack_{cl.pk}'):  # move time back if yesterday was DST switch
             d -= timedelta(hours=1)

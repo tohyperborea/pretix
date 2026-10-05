@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -36,21 +36,22 @@ import sys
 from importlib import import_module
 
 from django.conf import settings
+from django.core.cache import cache
 from django.db.models import Q
 from django.urls import Resolver404, get_script_prefix, resolve
 from django.utils.translation import get_language
 from django_scopes import scope
 
 from pretix.base.models.auth import StaffSession
-from pretix.base.settings import GlobalSettingsObject
+from pretix.base.settings import COUNTRY_STATE_LABEL, GlobalSettingsObject
 from pretix.control.navigation import (
     get_event_navigation, get_global_navigation, get_organizer_navigation,
 )
-
-from ..helpers.i18n import (
+from pretix.helpers.i18n import (
     get_javascript_format, get_javascript_output_format, get_moment_locale,
 )
-from ..multidomain.urlreverse import get_event_domain
+from pretix.multidomain.urlreverse import get_event_domain
+
 from .signals import html_head, nav_topbar
 
 SessionStore = import_module(settings.SESSION_ENGINE).SessionStore
@@ -80,13 +81,13 @@ def _default_context(request):
         'DEBUG': settings.DEBUG,
     }
     _html_head = []
-    if hasattr(request, 'event') and request.user.is_authenticated:
+    if getattr(request, 'event', None) and request.user.is_authenticated:
         for receiver, response in html_head.send(request.event, request=request):
             _html_head.append(response)
     ctx['html_head'] = "".join(_html_head)
 
     _js_payment_weekdays_disabled = '[]'
-    if getattr(request, 'event', None) and hasattr(request, 'organizer') and request.user.is_authenticated:
+    if getattr(request, 'event', None) and getattr(request, 'organizer', None) and request.user.is_authenticated:
         ctx['nav_items'] = get_event_navigation(request)
 
         if request.event.settings.get('payment_term_weekdays'):
@@ -106,7 +107,7 @@ def _default_context(request):
         else:
             ctx['complain_testmode_orders'] = False
 
-        if not request.event.live and ctx['has_domain']:
+        if (request.event.testmode or not request.event.live) and ctx['has_domain']:
             child_sess = request.session.get('child_session_{}'.format(request.event.pk))
             s = SessionStore()
             if not child_sess or not s.exists(child_sess):
@@ -114,10 +115,8 @@ def _default_context(request):
                 s.create()
                 ctx['new_session'] = s.session_key
                 request.session['child_session_{}'.format(request.event.pk)] = s.session_key
-                request.session['event_access'] = True
             else:
                 ctx['new_session'] = child_sess
-                request.session['event_access'] = True
 
         if request.GET.get('subevent', ''):
             # Do not use .get() for lazy evaluation
@@ -141,6 +140,7 @@ def _default_context(request):
     ctx['js_time_format'] = get_javascript_format('TIME_INPUT_FORMATS')
     ctx['js_locale'] = get_moment_locale()
     ctx['select2locale'] = get_language()[:2]
+    ctx['COUNTRY_STATE_LABEL'] = COUNTRY_STATE_LABEL
 
     ctx['warning_update_available'] = False
     ctx['warning_update_check_active'] = False
@@ -154,6 +154,8 @@ def _default_context(request):
             ctx['warning_update_available'] = True
         if not gs.settings.update_check_ack and 'runserver' not in sys.argv:
             ctx['warning_update_check_active'] = True
+        if not cache.get('pretix_runperiodic_executed') and not settings.DEBUG:
+            ctx['warning_cronjob'] = True
 
     ctx['ie_deprecation_warning'] = 'MSIE' in request.headers.get('User-Agent', '') or 'Trident/' in request.headers.get('User-Agent', '')
 

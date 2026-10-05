@@ -8,7 +8,7 @@ class ReadOnlyEmailMixin:
     """
 
     def __init__(self, *args, **kwargs):
-        customer = kwargs.get("customer")
+        customer = getattr(kwargs.get("request"), "customer", None)
         super().__init__(*args, **kwargs)
         if customer:
             self.fields["email"].disabled = True

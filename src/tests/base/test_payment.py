@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -220,6 +220,7 @@ def test_availability_date_order_relative_subevents(event):
         status=Order.STATUS_PENDING,
         datetime=now(), expires=now() + datetime.timedelta(days=10),
         total=Decimal('46.00'),
+        sales_channel=event.organizer.sales_channels.get(identifier="web"),
     )
     OrderPosition.objects.create(
         order=order, item=ticket, variation=None, subevent=se1,

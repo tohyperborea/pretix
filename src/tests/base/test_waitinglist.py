@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -193,6 +193,26 @@ class WaitingListTestCase(TestCase):
         with scope(organizer=self.o):
             assert WaitingListEntry.objects.filter(voucher__isnull=True).count() == 10
             assert Voucher.objects.count() == 10
+
+    def test_send_auto_no_seat(self):
+        with scope(organizer=self.o):
+            self.quota.items.add(self.item1)
+            self.quota.size = 10
+            self.quota.save()
+            self.event.seat_category_mappings.create(
+                layout_category='Stalls', product=self.item1
+            )
+            self.event.seats.create(seat_number="Foo", product=self.item1, seat_guid="Foo", blocked=True)
+            self.event.seats.create(seat_number="Bar", product=self.item1, seat_guid="Bar", blocked=True)
+            self.event.seats.create(seat_number="Baz", product=self.item1, seat_guid="Baz", blocked=True)
+            WaitingListEntry.objects.create(
+                event=self.event, item=self.item1, email='foo@bar.com'
+            )
+            assign_automatically.apply(args=(self.event.pk,))
+            assert Voucher.objects.count() == 0
+            self.event.seats.create(seat_number="Baz", product=self.item1, seat_guid="Baz", blocked=False)
+            assign_automatically.apply(args=(self.event.pk,))
+            assert Voucher.objects.count() == 1
 
     def test_send_periodic_event_over(self):
         self.event.settings.set('waiting_list_enabled', True)

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -36,6 +36,9 @@ class ReturnURLApp(AppConfig):
         category = 'API'
         description = _("This plugin allows to link to payments and redirect back afterwards. This is useful in "
                         "combination with our API.")
+        settings_links = [
+            ((_("Settings"), _("Redirection")), "plugins:returnurl:settings", {}),
+        ]
 
     def ready(self):
         from . import signals  # NOQA

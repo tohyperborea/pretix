@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -39,7 +39,7 @@ from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.db.models import Exists, Max, OuterRef, Prefetch, Q, Subquery
-from django.http import Http404, HttpResponseRedirect
+from django.http import Http404, HttpResponseNotAllowed, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
 from django.utils.functional import cached_property
@@ -49,16 +49,17 @@ from django.views.generic import FormView, ListView, TemplateView
 from i18nfield.strings import LazyI18nString
 
 from pretix.api.views.checkin import _redeem_process
-from pretix.base.channels import get_all_sales_channels
-from pretix.base.models import Checkin, Order, OrderPosition
+from pretix.base.media import MEDIA_TYPES
+from pretix.base.models import Checkin, LogEntry, Order, OrderPosition
 from pretix.base.models.checkin import CheckinList
+from pretix.base.models.orders import PrintLog
 from pretix.base.services.checkin import (
     LazyRuleVars, _logic_annotate_for_graphic_explain,
 )
 from pretix.base.signals import checkin_created
-from pretix.base.views.tasks import AsyncPostView
+from pretix.base.views.tasks import AsyncFormView, AsyncPostView
 from pretix.control.forms.checkin import (
-    CheckinListForm, CheckinListSimulatorForm,
+    CheckinListForm, CheckinListSimulatorForm, CheckinResetForm,
 )
 from pretix.control.forms.filter import (
     CheckinFilterForm, CheckinListAttendeeFilterForm, CheckinListFilterForm,
@@ -82,9 +83,7 @@ class CheckInListQueryMixin:
             position_id=OuterRef('pk'),
             list_id=self.list.pk,
             type=Checkin.TYPE_ENTRY
-        ).order_by().values('position_id').annotate(
-            m=Max('datetime')
-        ).values('m')
+        ).order_by('-datetime').values('position_id')
         cqs_exit = Checkin.objects.filter(
             position_id=OuterRef('pk'),
             list_id=self.list.pk,
@@ -104,7 +103,7 @@ class CheckInListQueryMixin:
             status_q,
             order__event=self.request.event,
         ).annotate(
-            last_entry=Subquery(cqs),
+            last_entry=Subquery(cqs[:1].values('datetime')),
             last_exit=Subquery(cqs_exit),
             auto_checked_in=Exists(
                 Checkin.objects.filter(
@@ -113,7 +112,8 @@ class CheckInListQueryMixin:
                     list_id=self.list.pk,
                     auto_checked_in=True
                 )
-            )
+            ),
+            last_entry_source_type=Subquery(cqs[:1].values('raw_source_type'))
         ).select_related(
             'item', 'variation', 'order', 'addon_to'
         ).prefetch_related(
@@ -158,6 +158,7 @@ class CheckInListShow(EventPermissionRequiredMixin, PaginationMixin, CheckInList
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
+        ctx['media_types'] = MEDIA_TYPES
         ctx['checkinlist'] = self.list
         if self.request.event.has_subevents:
             ctx['seats'] = (
@@ -193,6 +194,9 @@ class CheckInListShow(EventPermissionRequiredMixin, PaginationMixin, CheckInList
 
 class CheckInListBulkRevertConfirmView(CheckInListQueryMixin, EventPermissionRequiredMixin, TemplateView):
     template_name = "pretixcontrol/checkin/bulk_revert_confirm.html"
+
+    def get(self, request, *args, **kwargs):
+        return HttpResponseNotAllowed(permitted_methods=["POST"])
 
     def post(self, request, *args, **kwargs):
         self.list = get_object_or_404(self.request.event.checkin_lists.all(), pk=kwargs.get("list"))
@@ -296,7 +300,9 @@ class CheckinListList(EventPermissionRequiredMixin, PaginationMixin, ListView):
     ordering = ('subevent__date_from', 'name', 'pk')
 
     def get_queryset(self):
-        qs = self.request.event.checkin_lists.select_related('subevent').prefetch_related("limit_products")
+        qs = self.request.event.checkin_lists.select_related('subevent').prefetch_related(
+            "limit_products",
+        )
 
         if self.filter_form.is_valid():
             qs = self.filter_form.filter_qs(qs)
@@ -305,12 +311,10 @@ class CheckinListList(EventPermissionRequiredMixin, PaginationMixin, ListView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         clists = list(ctx['checkinlists'])
-        sales_channels = get_all_sales_channels()
 
         for cl in clists:
             if cl.subevent:
                 cl.subevent.event = self.request.event  # re-use same event object to make sure settings are cached
-            cl.auto_checkin_sales_channels = [sales_channels[channel] for channel in cl.auto_checkin_sales_channels]
         ctx['checkinlists'] = clists
 
         ctx['can_change_organizer_settings'] = self.request.user.has_organizer_permission(
@@ -495,6 +499,7 @@ class CheckinListView(EventPermissionRequiredMixin, PaginationMixin, ListView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data()
         ctx['filter_form'] = self.filter_form
+        ctx['media_types'] = MEDIA_TYPES
         return ctx
 
 
@@ -566,3 +571,55 @@ class CheckInListSimulator(EventPermissionRequiredMixin, FormView):
             for q in self.result["questions"]:
                 q["question"] = LazyI18nString(q["question"])
         return self.get(self.request, self.args, self.kwargs)
+
+
+class CheckInResetView(CheckInListQueryMixin, EventPermissionRequiredMixin, AsyncFormView):
+    form_class = CheckinResetForm
+    permission = "can_change_orders"
+    template_name = "pretixcontrol/checkin/reset.html"
+
+    def get_error_url(self, *args):
+        return reverse(
+            "control:event.orders.checkinlists",
+            kwargs={
+                "event": self.request.event.slug,
+                "organizer": self.request.organizer.slug,
+            },
+        )
+
+    def get_success_url(self, *args):
+        return reverse(
+            "control:event.orders.checkinlists",
+            kwargs={
+                "event": self.request.event.slug,
+                "organizer": self.request.organizer.slug,
+            },
+        )
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx['checkins'] = Checkin.all.filter(list__event=self.request.event).count()
+        ctx['printlogs'] = PrintLog.objects.filter(position__order__event=self.request.event).count()
+        return ctx
+
+    def async_form_valid(self, task, form):
+        with transaction.atomic():
+            qs = Checkin.all.filter(list__event=self.request.event).select_related("position", "position__order")
+            logentries = []
+            for ci in qs:
+                if ci.position:
+                    logentries.append(ci.position.order.log_action('pretix.event.checkin.reverted', data={
+                        'position': ci.position.id,
+                        'positionid': ci.position.positionid,
+                        'list': ci.list_id,
+                        'web': True
+                    }, user=self.request.user, save=False))
+
+            Order.objects.filter(pk__in=qs.values_list("position__order_id", flat=True)).update(last_modified=now())
+            qs.delete()
+            LogEntry.objects.bulk_create(logentries)
+
+            pl = PrintLog.objects.filter(position__order__event=self.request.event)
+            pl.delete()
+            self.request.event.log_action('pretix.event.checkin.reset', user=self.request.user)
+            self.request.event.cache.clear()

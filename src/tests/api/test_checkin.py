@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -65,7 +65,8 @@ def order(event, item, other_item, taxrule):
             status=Order.STATUS_PAID, secret="k24fiuwvu8kxz3y1",
             datetime=datetime.datetime(2017, 12, 1, 10, 0, 0, tzinfo=datetime.timezone.utc),
             expires=datetime.datetime(2017, 12, 10, 10, 0, 0, tzinfo=datetime.timezone.utc),
-            total=46, locale='en'
+            total=46, locale='en',
+            sales_channel=event.organizer.sales_channels.get(identifier="web"),
         )
         InvoiceAddress.objects.create(order=o, company="Sample company", country=Country('NZ'))
         op1 = OrderPosition.objects.create(
@@ -105,6 +106,9 @@ TEST_ORDERPOSITION1_RES = {
     "id": 1,
     "require_attention": False,
     "order__status": "p",
+    "order__require_approval": False,
+    "order__valid_if_pending": False,
+    "order__locale": "en",
     "order": "FOO",
     "positionid": 1,
     "item": 1,
@@ -120,6 +124,7 @@ TEST_ORDERPOSITION1_RES = {
     "secret": "z3fsn8jyufm5kpk768q69gkbyr5f4h6w",
     "addon_to": None,
     "checkins": [],
+    "print_logs": [],
     "downloads": [],
     "answers": [],
     "seat": None,
@@ -140,6 +145,9 @@ TEST_ORDERPOSITION2_RES = {
     "id": 2,
     "require_attention": False,
     "order__status": "p",
+    "order__require_approval": False,
+    "order__valid_if_pending": False,
+    "order__locale": "en",
     "order": "FOO",
     "positionid": 2,
     "item": 1,
@@ -155,6 +163,7 @@ TEST_ORDERPOSITION2_RES = {
     "secret": "sf4HZG73fU6kwddgjg2QOusFbYZwVKpK",
     "addon_to": None,
     "checkins": [],
+    "print_logs": [],
     "downloads": [],
     "answers": [],
     "seat": None,
@@ -175,6 +184,9 @@ TEST_ORDERPOSITION3_RES = {
     "id": 3,
     "require_attention": False,
     "order__status": "p",
+    "order__require_approval": False,
+    "order__valid_if_pending": False,
+    "order__locale": "en",
     "order": "FOO",
     "positionid": 3,
     "item": 1,
@@ -190,6 +202,7 @@ TEST_ORDERPOSITION3_RES = {
     "secret": "3u4ez6vrrbgb3wvezxhq446p548dt2wn",
     "addon_to": None,
     "checkins": [],
+    "print_logs": [],
     "downloads": [],
     "answers": [],
     "seat": None,
@@ -223,6 +236,21 @@ TEST_LIST_RES = {
     "rules": {}
 }
 
+TEST_HISTORY_RES = {
+    "successful": True,
+    "error_reason": None,
+    "error_explanation": None,
+    "position": 1234,
+    "datetime": "2017-12-25T12:45:23Z",
+    "created": "2017-12-25T12:45:23Z",
+    "list": 2,
+    "auto_checked_in": False,
+    "gate": None,
+    "device": None,
+    "device_id": None,
+    "type": "entry",
+}
+
 
 @pytest.fixture
 def clist(event, item):
@@ -242,7 +270,6 @@ def test_list_list(token_client, organizer, event, clist, item, subevent, django
     res = dict(TEST_LIST_RES)
     res["id"] = clist.pk
     res["limit_products"] = [item.pk]
-    res["auto_checkin_sales_channels"] = []
 
     with django_assert_num_queries(11):
         resp = token_client.get('/api/v1/organizers/{}/events/{}/checkinlists/'.format(organizer.slug, event.slug))
@@ -282,7 +309,6 @@ def test_list_detail(token_client, organizer, event, clist, item):
 
     res["id"] = clist.pk
     res["limit_products"] = [item.pk]
-    res["auto_checkin_sales_channels"] = []
     resp = token_client.get('/api/v1/organizers/{}/events/{}/checkinlists/{}/'.format(organizer.slug, event.slug,
                                                                                       clist.pk))
     assert resp.status_code == 200
@@ -317,9 +343,6 @@ def test_list_create(token_client, organizer, event, item, item_on_wrong_event):
             "limit_products": [item.pk],
             "all_products": False,
             "subevent": None,
-            "auto_checkin_sales_channels": [
-                "web"
-            ]
         },
         format='json'
     )
@@ -329,7 +352,6 @@ def test_list_create(token_client, organizer, event, item, item_on_wrong_event):
         assert cl.name == "VIP"
         assert cl.limit_products.count() == 1
         assert not cl.all_products
-        assert "web" in cl.auto_checkin_sales_channels
 
     resp = token_client.post(
         '/api/v1/organizers/{}/events/{}/checkinlists/'.format(organizer.slug, event.slug),
@@ -358,24 +380,6 @@ def test_list_create_with_subevent(token_client, organizer, event, event3, item,
         format='json'
     )
     assert resp.status_code == 201
-
-    resp = token_client.post(
-        '/api/v1/organizers/{}/events/{}/checkinlists/'.format(organizer.slug, event.slug),
-        {
-            "name": "VIP",
-            "limit_products": [item.pk],
-            "all_products": True,
-            "subevent": subevent.pk,
-            "auto_checkin_sales_channels": [
-                "web"
-            ]
-        },
-        format='json'
-    )
-    assert resp.status_code == 201
-    with scopes_disabled():
-        cl = CheckinList.objects.get(pk=resp.data['id'])
-        assert "web" in cl.auto_checkin_sales_channels
 
     resp = token_client.post(
         '/api/v1/organizers/{}/events/{}/checkinlists/'.format(organizer.slug, event.slug),
@@ -430,20 +434,6 @@ def test_list_update(token_client, organizer, event, clist):
         cl = CheckinList.objects.get(pk=resp.data['id'])
     assert cl.name == "VIP"
 
-    resp = token_client.patch(
-        '/api/v1/organizers/{}/events/{}/checkinlists/{}/'.format(organizer.slug, event.slug, clist.pk),
-        {
-            "auto_checkin_sales_channels": [
-                "web"
-            ],
-        },
-        format='json'
-    )
-    assert resp.status_code == 200
-    with scopes_disabled():
-        cl = CheckinList.objects.get(pk=resp.data['id'])
-        assert "web" in cl.auto_checkin_sales_channels
-
 
 @pytest.mark.django_db
 def test_list_all_items_positions(token_client, organizer, event, clist, clist_all, item, other_item, order, django_assert_num_queries):
@@ -460,7 +450,7 @@ def test_list_all_items_positions(token_client, organizer, event, clist, clist_a
         p3["addon_to"] = p1["id"]
 
     # All items
-    with django_assert_num_queries(23):
+    with django_assert_num_queries(24):
         resp = token_client.get('/api/v1/organizers/{}/events/{}/checkinlists/{}/positions/?ordering=positionid'.format(
             organizer.slug, event.slug, clist_all.pk
         ))
@@ -491,6 +481,7 @@ def test_list_all_items_positions(token_client, organizer, event, clist, clist_a
             'datetime': c.datetime.isoformat().replace('+00:00', 'Z'),
             'auto_checked_in': False,
             'device': None,
+            'device_id': None,
             'gate': None,
             'type': 'entry',
         }
@@ -533,6 +524,7 @@ def test_list_all_items_positions(token_client, organizer, event, clist, clist_a
             'datetime': c.datetime.isoformat().replace('+00:00', 'Z'),
             'auto_checked_in': False,
             'device': None,
+            'device_id': None,
             'gate': None,
             'type': 'entry',
         }
@@ -1186,6 +1178,30 @@ def test_store_failed(token_client, organizer, clist, event, order):
 
 
 @pytest.mark.django_db
+def test_store_failed_after_success(token_client, organizer, clist, event, order):
+    with scopes_disabled():
+        p = order.positions.first()
+        p.all_checkins.create(
+            type=Checkin.TYPE_ENTRY,
+            nonce='foobar',
+            successful=True,
+            list=clist,
+            raw_barcode=p.secret
+        )
+    resp = token_client.post('/api/v1/organizers/{}/events/{}/checkinlists/{}/failed_checkins/'.format(
+        organizer.slug, event.slug, clist.pk,
+    ), {
+        'raw_barcode': p.secret,
+        'nonce': 'foobar',
+        'position': p.pk,
+        'error_reason': 'unpaid'
+    }, format='json')
+    assert resp.status_code == 201
+    with scopes_disabled():
+        assert Checkin.all.filter(position=p).count() == 2
+
+
+@pytest.mark.django_db
 def test_redeem_unknown(token_client, organizer, clist, event, order):
     resp = _redeem(token_client, organizer, clist, 'unknown_secret', {'force': True})
     assert resp.status_code == 404
@@ -1350,7 +1366,7 @@ def test_search(token_client, organizer, event, clist, clist_all, item, other_it
         p1["id"] = order.positions.get(positionid=1).pk
         p1["item"] = item.pk
 
-    with django_assert_max_num_queries(17):
+    with django_assert_max_num_queries(18):
         resp = token_client.get('/api/v1/organizers/{}/events/{}/checkinlists/{}/positions/?search=z3fsn8jyu'.format(
             organizer.slug, event.slug, clist_all.pk
         ))
@@ -1374,3 +1390,72 @@ def test_checkin_pdf_data_requires_permission(token_client, event, team, organiz
         organizer.slug, event.slug, clist_all.pk
     ))
     assert not resp.data['results'][0].get('pdf_data')
+
+
+@pytest.mark.django_db
+def test_expand(token_client, organizer, event, clist, clist_all, item, other_item, order, django_assert_max_num_queries):
+    with scopes_disabled():
+        op = order.positions.first()
+        var1 = item.variations.create(value="XS")
+        op.variation = var1
+        op.save()
+
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/checkinlists/{}/positions/?search=z3fsn8jyu&expand=variation'.format(
+        organizer.slug, event.slug, clist_all.pk
+    ))
+    assert resp.status_code == 200
+    assert 'value' in resp.data['results'][0]['variation']
+
+
+@pytest.mark.django_db
+def test_history(token_client, organizer, event, clist, order):
+    with scopes_disabled():
+        ci = order.positions.first().checkins.create(list=clist, type=Checkin.TYPE_ENTRY, datetime=now())
+    res = dict(TEST_HISTORY_RES)
+    res["id"] = ci.pk
+    res["datetime"] = ci.datetime.isoformat().replace('+00:00', 'Z')
+    res["created"] = ci.created.isoformat().replace('+00:00', 'Z')
+    res["list"] = clist.pk
+    res["position"] = ci.position_id
+
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/checkins/'.format(
+        organizer.slug, event.slug,
+    ))
+    assert resp.status_code == 200
+    assert res == resp.data['results'][0]
+
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/checkins/?auto_checked_in=false'.format(
+        organizer.slug, event.slug,
+    ))
+    assert len(resp.data['results']) == 1
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/checkins/?auto_checked_in=true'.format(
+        organizer.slug, event.slug,
+    ))
+    assert len(resp.data['results']) == 0
+
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/checkins/?successful=true'.format(
+        organizer.slug, event.slug,
+    ))
+    assert len(resp.data['results']) == 1
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/checkins/?successful=false'.format(
+        organizer.slug, event.slug,
+    ))
+    assert len(resp.data['results']) == 0
+
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/checkins/?type=entry'.format(
+        organizer.slug, event.slug,
+    ))
+    assert len(resp.data['results']) == 1
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/checkins/?type=exit'.format(
+        organizer.slug, event.slug,
+    ))
+    assert len(resp.data['results']) == 0
+
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/checkins/?created_before=2099-01-01T00:00:00Z'.format(
+        organizer.slug, event.slug,
+    ))
+    assert len(resp.data['results']) == 1
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/checkins/?created_before=2017-01-01T00:00:00Z'.format(
+        organizer.slug, event.slug,
+    ))
+    assert len(resp.data['results']) == 0

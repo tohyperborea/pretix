@@ -28,7 +28,6 @@ def presale_copy_env():
             now().year + 1, 12, 26, 14, 0, tzinfo=datetime.timezone.utc
         ),
         live=True,
-        sales_channels=["web", "bar"],
         plugins="pretix_sideburn_lottery",
     )
     event.settings.set("waiting_list_enabled", True)

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -20,8 +20,10 @@
 # <https://www.gnu.org/licenses/>.
 #
 import inspect
+import os
 
 import pytest
+from django.core.cache import cache
 from django.test import override_settings
 from django.utils import translation
 from django_scopes import scopes_disabled
@@ -36,8 +38,8 @@ CRASHED_ITEMS = set()
 @pytest.hookimpl(trylast=True)
 def pytest_configure(config):
     """
-    Somehow, somewhere, our test suite causes a segfault in SQLite, but only when run
-    on Travis CI in full. Therefore, we monkeypatch pytest-xdist to retry segfaulted
+    Somehow, somewhere, our test suite causes a segfault in SQLite in the past, but only when run
+    on CI in full. Therefore, we monkeypatch pytest-xdist to retry segfaulted
     tests and keep fingers crossed that this doesn't turn into an infinite loop.
     """
 
@@ -82,34 +84,50 @@ def reset_locale():
 
 @pytest.fixture
 def fakeredis_client(monkeypatch):
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+    if worker_id and worker_id.startswith("gw"):
+        redis_port = 1000 + int(worker_id.replace("gw", ""))
+    else:
+        redis_port = 1000
     with override_settings(
         HAS_REDIS=True,
         REAL_CACHE_USED=True,
         CACHES={
             'redis': {
                 'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-                'LOCATION': 'redis://127.0.0.1',
+                'LOCATION': f'redis://127.0.0.1:{redis_port}',
                 'OPTIONS': {
                     'connection_class': FakeConnection
                 }
             },
             'redis_session': {
                 'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-                'LOCATION': 'redis://127.0.0.1',
+                'LOCATION': f'redis://127.0.0.1:{redis_port}',
                 'OPTIONS': {
                     'connection_class': FakeConnection
                 }
             },
             'default': {
                 'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-                'LOCATION': 'redis://127.0.0.1',
+                'LOCATION': f'redis://127.0.0.1:{redis_port}',
                 'OPTIONS': {
                     'connection_class': FakeConnection
                 }
             },
         }
     ):
+        cache.clear()
         redis = get_redis_connection("default", True)
         redis.flushall()
         monkeypatch.setattr('django_redis.get_redis_connection', get_redis_connection, raising=False)
         yield redis
+
+
+@pytest.fixture(autouse=True)
+def set_lock_namespaces(request):
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER")
+    if worker_id and worker_id.startswith("gw"):
+        with override_settings(DATABASE_ADVISORY_LOCK_INDEX=int(worker_id.replace("gw", ""))):
+            yield
+    else:
+        yield

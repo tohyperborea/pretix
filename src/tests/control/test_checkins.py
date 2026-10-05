@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -74,7 +74,8 @@ def dashboard_env():
         code='FOO', event=event, email='dummy@dummy.test',
         status=Order.STATUS_PAID,
         datetime=now(), expires=now() + timedelta(days=10),
-        total=33, locale='en'
+        total=33, locale='en',
+        sales_channel=event.organizer.sales_channels.get(identifier="web"),
     )
     OrderPosition.objects.create(
         order=order_paid,
@@ -108,7 +109,8 @@ def test_dashboard_pending_not_count(dashboard_env):
         code='BAR', event=dashboard_env[0], email='dummy@dummy.test',
         status=Order.STATUS_PENDING,
         datetime=now(), expires=now() + timedelta(days=10),
-        total=23, locale='en'
+        total=23, locale='en',
+        sales_channel=dashboard_env[0].organizer.sales_channels.get(identifier="web"),
     )
     OrderPosition.objects.create(
         order=order_pending,
@@ -161,25 +163,29 @@ def checkin_list_env():
         code='PENDING', event=event, email='dummy@dummy.test',
         status=Order.STATUS_PENDING,
         datetime=now(), expires=now() + timedelta(days=10),
-        total=23, locale='en'
+        total=23, locale='en',
+        sales_channel=orga.sales_channels.get(identifier="web"),
     )
     order_a1 = Order.objects.create(
         code='A1', event=event, email='a1dummy@dummy.test',
         status=Order.STATUS_PAID,
         datetime=now(), expires=now() + timedelta(days=10),
-        total=33, locale='en'
+        total=33, locale='en',
+        sales_channel=orga.sales_channels.get(identifier="web"),
     )
     order_a2 = Order.objects.create(
         code='A2', event=event, email='a2dummy@dummy.test',
         status=Order.STATUS_PAID,
         datetime=now(), expires=now() + timedelta(days=10),
-        total=23, locale='en'
+        total=23, locale='en',
+        sales_channel=orga.sales_channels.get(identifier="web"),
     )
     order_a3 = Order.objects.create(
         code='A3', event=event, email='a3dummy@dummy.test',
         status=Order.STATUS_PAID,
         datetime=now(), expires=now() + timedelta(days=10),
-        total=23, locale='en'
+        total=23, locale='en',
+        sales_channel=orga.sales_channels.get(identifier="web"),
     )
 
     # order position
@@ -215,13 +221,14 @@ def checkin_list_env():
         item=item_ticket,
         variation=None,
         price=Decimal("23"),
-        attendee_name_parts={'full_name': "a4"},  # a3 attendee is a4
+        attendee_name_parts={'full_name': "a4attendee"},  # a3 attendee is a4attendee
         attendee_email="a3company@dummy.test"
     )
 
     # checkin
     Checkin.objects.create(position=op_a1_ticket, datetime=now() + timedelta(minutes=1), list=cl)
     Checkin.objects.create(position=op_a3_ticket, list=cl)
+    Checkin.objects.create(position=op_a3_ticket, list=cl, type="exit")
 
     return event, user, orga, [item_ticket, item_mascot], [order_pending, order_a1, order_a2, order_a3], \
         [op_pending_ticket, op_a1_ticket, op_a1_mascot, op_a2_ticket, op_a3_ticket], cl
@@ -254,11 +261,13 @@ def test_checkins_list_ordering(client, checkin_list_env, order_key, expected):
 @pytest.mark.django_db
 @pytest.mark.parametrize("query, expected", [
     ('status=&item=&user=', ['A1Ticket', 'A1Mascot', 'A2Ticket', 'A3Ticket']),
-    ('status=1&item=&user=', ['A1Ticket', 'A3Ticket']),
     ('status=0&item=&user=', ['A1Mascot', 'A2Ticket']),
+    ('status=1&item=&user=', ['A1Ticket', 'A3Ticket']),
+    ('status=2&item=&user=', ['A1Ticket']),
+    ('status=3&item=&user=', ['A3Ticket']),
     ('status=&item=&user=a3dummy', ['A3Ticket']),  # match order email
     ('status=&item=&user=a3dummy', ['A3Ticket']),  # match order email,
-    ('status=&item=&user=a4', ['A3Ticket']),  # match attendee name
+    ('status=&item=&user=a4attendee', ['A3Ticket']),  # match attendee name
     ('status=&item=&user=a3company', ['A3Ticket']),  # match attendee email
     ('status=1&item=&user=a3company', ['A3Ticket']),
 ])
@@ -381,19 +390,22 @@ def checkin_list_with_addon_env():
         code='PENDING', event=event, email='dummy@dummy.test',
         status=Order.STATUS_PENDING,
         datetime=now(), expires=now() + timedelta(days=10),
-        total=23, locale='en'
+        total=23, locale='en',
+        sales_channel=orga.sales_channels.get(identifier="web"),
     )
     order_a1 = Order.objects.create(
         code='A1', event=event, email='a1dummy@dummy.test',
         status=Order.STATUS_PAID,
         datetime=now(), expires=now() + timedelta(days=10),
-        total=33, locale='en'
+        total=33, locale='en',
+        sales_channel=orga.sales_channels.get(identifier="web"),
     )
     order_a2 = Order.objects.create(
         code='A2', event=event, email='a2dummy@dummy.test',
         status=Order.STATUS_PAID,
         datetime=now(), expires=now() + timedelta(days=10),
-        total=23, locale='en'
+        total=23, locale='en',
+        sales_channel=orga.sales_channels.get(identifier="web"),
     )
 
     # order position
@@ -513,6 +525,19 @@ class CheckinListFormTest(SoupTest):
         assert doc.select(".alert-success")
         cl.refresh_from_db()
         assert cl.exit_all_at == datetime(2020, 1, 3, 3, 0, tzinfo=self.event1.timezone)
+
+    @freeze_time("2020-10-25 17:00:00+02:00")
+    def test_update_exit_all_at_current_day_dst(self):
+        with scopes_disabled():
+            cl = self.event1.checkin_lists.create(name='All', all_products=True)
+        doc = self.get_doc('/control/event/%s/%s/checkinlists/%s/change' % (self.orga1.slug, self.event1.slug, cl.id))
+        form_data = extract_form_fields(doc.select('.container-fluid form')[0])
+        form_data['exit_all_at'] = '02:03:00'
+        doc = self.post_doc('/control/event/%s/%s/checkinlists/%s/change' % (self.orga1.slug, self.event1.slug, cl.id),
+                            form_data)
+        assert doc.select(".alert-success")
+        cl.refresh_from_db()
+        assert cl.exit_all_at.astimezone(self.event1.timezone).isoformat() == '2020-10-26T02:03:00+01:00'
 
     def test_delete(self):
         with scopes_disabled():

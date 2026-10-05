@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -54,9 +54,9 @@ from paypalrestsdk.openid_connect import Tokeninfo
 from requests import RequestException
 
 from pretix.base.decimal import round_decimal
+from pretix.base.forms import SecretKeySettingsField
 from pretix.base.models import Event, Order, OrderPayment, OrderRefund, Quota
 from pretix.base.payment import BasePaymentProvider, PaymentException
-from pretix.base.services.mail import SendMailException
 from pretix.base.settings import SettingsSandbox
 from pretix.multidomain.urlreverse import build_absolute_uri
 from pretix.plugins.paypal.api import Api
@@ -119,7 +119,7 @@ class Paypal(BasePaymentProvider):
                      )
                  )),
                 ('secret',
-                 forms.CharField(
+                 SecretKeySettingsField(
                      label=_('Secret'),
                      max_length=80,
                      min_length=80,
@@ -229,7 +229,10 @@ class Paypal(BasePaymentProvider):
             kwargs['cart_namespace'] = request.resolver_match.kwargs['cart_namespace']
 
         try:
-            if request.event.settings.payment_paypal_connect_user_id:
+            if self.settings.connect_client_id and not self.settings.secret:
+                if not request.event.settings.payment_paypal_connect_user_id:
+                    raise PaymentException('Payment method misconfigured')
+
                 try:
                     tokeninfo = Tokeninfo.create_with_refresh_token(request.event.settings.payment_paypal_connect_refresh_token)
                 except BadRequest as ex:
@@ -464,9 +467,6 @@ class Paypal(BasePaymentProvider):
             payment_obj.confirm()
         except Quota.QuotaExceededException as e:
             raise PaymentException(str(e))
-
-        except SendMailException:
-            messages.warning(request, _('There was an error sending the confirmation mail.'))
         return None
 
     def payment_pending_render(self, request, payment) -> str:

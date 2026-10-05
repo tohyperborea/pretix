@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -40,26 +40,33 @@ from django_filters.rest_framework import DjangoFilterBackend, FilterSet
 from django_scopes import scopes_disabled
 from rest_framework import viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
 from pretix.api.pagination import TotalOrderingFilter
 from pretix.api.serializers.item import (
     ItemAddOnSerializer, ItemBundleSerializer, ItemCategorySerializer,
-    ItemSerializer, ItemVariationSerializer, QuestionOptionSerializer,
-    QuestionSerializer, QuotaSerializer,
+    ItemProgramTimeSerializer, ItemSerializer, ItemVariationSerializer,
+    QuestionOptionSerializer, QuestionSerializer, QuotaSerializer,
 )
 from pretix.api.views import ConditionalListView
 from pretix.base.models import (
-    CartPosition, Item, ItemAddOn, ItemBundle, ItemCategory, ItemVariation,
-    Question, QuestionOption, Quota,
+    CartPosition, Item, ItemAddOn, ItemBundle, ItemCategory, ItemProgramTime,
+    ItemVariation, Question, QuestionOption, Quota,
 )
 from pretix.base.services.quotas import QuotaAvailability
 from pretix.helpers.dicts import merge_dicts
+from pretix.helpers.i18n import i18ncomp
 
 with scopes_disabled():
     class ItemFilter(FilterSet):
         tax_rate = django_filters.CharFilter(method='tax_rate_qs')
+        search = django_filters.CharFilter(method='search_qs')
+
+        def search_qs(self, queryset, name, value):
+            return queryset.filter(
+                Q(internal_name__icontains=value) | Q(name__icontains=i18ncomp(value))
+            )
 
         def tax_rate_qs(self, queryset, name, value):
             if value in ("0", "None", "0.00"):
@@ -70,6 +77,18 @@ with scopes_disabled():
         class Meta:
             model = Item
             fields = ['active', 'category', 'admission', 'tax_rate', 'free_price']
+
+    class ItemVariationFilter(FilterSet):
+        search = django_filters.CharFilter(method='search_qs')
+
+        def search_qs(self, queryset, name, value):
+            return queryset.filter(
+                Q(value__icontains=i18ncomp(value))
+            )
+
+        class Meta:
+            model = ItemVariation
+            fields = ['active']
 
 
 class ItemViewSet(ConditionalListView, viewsets.ModelViewSet):
@@ -87,6 +106,7 @@ class ItemViewSet(ConditionalListView, viewsets.ModelViewSet):
             'variations', 'addons', 'bundles', 'meta_values', 'meta_values__property',
             'variations__meta_values', 'variations__meta_values__property',
             'require_membership_types', 'variations__require_membership_types',
+            'limit_sales_channels', 'variations__limit_sales_channels', 'program_times'
         ).all()
 
     def perform_create(self, serializer):
@@ -139,6 +159,7 @@ class ItemVariationViewSet(viewsets.ModelViewSet):
     serializer_class = ItemVariationSerializer
     queryset = ItemVariation.objects.none()
     filter_backends = (DjangoFilterBackend, TotalOrderingFilter,)
+    filterset_class = ItemVariationFilter
     ordering_fields = ('id', 'position')
     ordering = ('id',)
     permission = None
@@ -152,7 +173,8 @@ class ItemVariationViewSet(viewsets.ModelViewSet):
         return self.item.variations.all().prefetch_related(
             'meta_values',
             'meta_values__property',
-            'require_membership_types'
+            'require_membership_types',
+            'limit_sales_channels',
         )
 
     def get_serializer_context(self):
@@ -254,6 +276,59 @@ class ItemBundleViewSet(viewsets.ModelViewSet):
             auth=self.request.auth,
             data={'bundled_item': instance.bundled_item.pk, 'bundled_variation': instance.bundled_variation.pk if instance.bundled_variation else None,
                   'count': instance.count, 'designated_price': instance.designated_price}
+        )
+
+
+class ItemProgramTimeViewSet(viewsets.ModelViewSet):
+    serializer_class = ItemProgramTimeSerializer
+    queryset = ItemProgramTime.objects.none()
+    filter_backends = (DjangoFilterBackend, TotalOrderingFilter,)
+    ordering_fields = ('id',)
+    ordering = ('id',)
+    permission = None
+    write_permission = 'can_change_items'
+
+    @cached_property
+    def item(self):
+        return get_object_or_404(Item, pk=self.kwargs['item'], event=self.request.event)
+
+    def get_queryset(self):
+        if self.request.event.has_subevents:
+            raise ValidationError('You cannot use program times on an event series.')
+        return self.item.program_times.all()
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['event'] = self.request.event
+        ctx['item'] = self.item
+        return ctx
+
+    def perform_create(self, serializer):
+        item = get_object_or_404(Item, pk=self.kwargs['item'], event=self.request.event)
+        serializer.save(item=item)
+        item.log_action(
+            'pretix.event.item.program_times.added',
+            user=self.request.user,
+            auth=self.request.auth,
+            data=merge_dicts(self.request.data, {'id': serializer.instance.pk})
+        )
+
+    def perform_update(self, serializer):
+        serializer.save(event=self.request.event)
+        serializer.instance.item.log_action(
+            'pretix.event.item.program_times.changed',
+            user=self.request.user,
+            auth=self.request.auth,
+            data=merge_dicts(self.request.data, {'id': serializer.instance.pk})
+        )
+
+    def perform_destroy(self, instance):
+        super().perform_destroy(instance)
+        instance.item.log_action(
+            'pretix.event.item.program_times.removed',
+            user=self.request.user,
+            auth=self.request.auth,
+            data={'start': instance.start, 'end': instance.end}
         )
 
 
@@ -463,8 +538,17 @@ class QuestionOptionViewSet(viewsets.ModelViewSet):
         super().perform_destroy(instance)
 
 
+class NumberInFilter(django_filters.BaseInFilter, django_filters.NumberFilter):
+    pass
+
+
 with scopes_disabled():
     class QuotaFilter(FilterSet):
+        items__in = NumberInFilter(
+            field_name='items__id',
+            lookup_expr='in',
+        )
+
         class Meta:
             model = Quota
             fields = {
@@ -483,10 +567,10 @@ class QuotaViewSet(ConditionalListView, viewsets.ModelViewSet):
     write_permission = 'can_change_items'
 
     def get_queryset(self):
-        return self.request.event.quotas.all()
+        return self.request.event.quotas.select_related('subevent').prefetch_related('items', 'variations').all()
 
     def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
+        queryset = self.filter_queryset(self.get_queryset()).distinct()
 
         page = self.paginate_queryset(queryset)
 
@@ -597,7 +681,7 @@ class QuotaViewSet(ConditionalListView, viewsets.ModelViewSet):
     def availability(self, request, *args, **kwargs):
         quota = self.get_object()
 
-        qa = QuotaAvailability()
+        qa = QuotaAvailability(full_results=True)
         qa.queue(quota)
         qa.compute()
         avail = qa.results[quota]

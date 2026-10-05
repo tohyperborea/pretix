@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -30,7 +30,6 @@ from django_scopes.forms import (
     SafeModelChoiceField, SafeModelMultipleChoiceField,
 )
 
-from pretix.base.channels import get_all_sales_channels
 from pretix.base.forms.widgets import SplitDateTimePickerWidget
 from pretix.base.models import Gate
 from pretix.base.models.checkin import Checkin, CheckinList
@@ -66,15 +65,6 @@ class CheckinListForm(forms.ModelForm):
         kwargs.pop('locales', None)
         super().__init__(**kwargs)
         self.fields['limit_products'].queryset = self.event.items.all()
-        self.fields['auto_checkin_sales_channels'] = forms.MultipleChoiceField(
-            label=self.fields['auto_checkin_sales_channels'].label,
-            help_text=self.fields['auto_checkin_sales_channels'].help_text,
-            required=self.fields['auto_checkin_sales_channels'].required,
-            choices=(
-                (c.identifier, c.verbose_name) for c in get_all_sales_channels().values()
-            ),
-            widget=forms.CheckboxSelectMultiple
-        )
 
         if not self.event.organizer.gates.exists():
             del self.fields['gates']
@@ -106,7 +96,6 @@ class CheckinListForm(forms.ModelForm):
             'limit_products',
             'subevent',
             'include_pending',
-            'auto_checkin_sales_channels',
             'allow_multiple_entries',
             'allow_entry_after_exit',
             'rules',
@@ -123,7 +112,6 @@ class CheckinListForm(forms.ModelForm):
             'gates': forms.CheckboxSelectMultiple(attrs={
                 'class': 'scrolling-multiple-choice'
             }),
-            'auto_checkin_sales_channels': forms.CheckboxSelectMultiple(),
             'exit_all_at': NextTimeInput(attrs={'class': 'timepickerfield'}),
         }
         field_classes = {
@@ -227,3 +215,9 @@ class CheckinListSimulatorForm(forms.Form):
         )
         self.fields['gate'].widget.choices = self.fields['gate'].choices
         self.fields['gate'].label = _('Gate')
+
+
+class CheckinResetForm(forms.Form):
+    ok = forms.BooleanField(
+        label=_("I am sure that the check-in state of the entire event should be reset.")
+    )

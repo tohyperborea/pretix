@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -106,6 +106,18 @@ class BaseExporter:
         return False
 
     @property
+    def repeatable_read(self) -> bool:
+        """
+        If ``True``, this exporter will be run in a REPEATABLE READ transaction. This ensures consistent results for
+        all queries performed by the exporter, but creates a performance burden on the database server. We recommend to
+        disable this for exporters that take very long to run and do not rely on this behavior, such as export of lists
+        to CSV files.
+
+        Defaults to ``True`` for now, but default may change in future versions.
+        """
+        return True
+
+    @property
     def identifier(self) -> str:
         """
         A short and unique identifier for this exporter.
@@ -207,10 +219,13 @@ class ListExporter(BaseExporter):
     def get_filename(self):
         return 'export'
 
+    def get_csv_encoding(self):
+        return 'utf-8'
+
     def _render_csv(self, form_data, output_file=None, **kwargs):
         if output_file:
             if 'b' in output_file.mode:
-                output_file = io.TextIOWrapper(output_file, encoding='utf-8', newline='')
+                output_file = io.TextIOWrapper(output_file, encoding=self.get_csv_encoding(), errors='replace', newline='')
             writer = csv.writer(output_file, **kwargs)
             total = 0
             counter = 0
@@ -246,7 +261,7 @@ class ListExporter(BaseExporter):
                     if counter % max(10, total // 100) == 0:
                         self.progress_callback(counter / total * 100)
                 writer.writerow(line)
-            return self.get_filename() + '.csv', 'text/csv', output.getvalue().encode("utf-8")
+            return self.get_filename() + '.csv', 'text/csv', output.getvalue().encode(self.get_csv_encoding(), errors='replace')
 
     def prepare_xlsx_sheet(self, ws):
         pass
@@ -256,7 +271,7 @@ class ListExporter(BaseExporter):
         ws = wb.create_sheet()
         self.prepare_xlsx_sheet(ws)
         try:
-            ws.title = str(self.verbose_name)
+            ws.title = str(self.verbose_name)[:30]
         except:
             pass
         total = 0
@@ -374,7 +389,7 @@ class MultiSheetListExporter(ListExporter):
         wb = SafeWorkbook(write_only=True)
         n_sheets = len(self.sheets)
         for i_sheet, (s, l) in enumerate(self.sheets):
-            ws = wb.create_sheet(str(l))
+            ws = wb.create_sheet(str(l)[:30])
             if hasattr(self, 'prepare_xlsx_sheet_' + s):
                 getattr(self, 'prepare_xlsx_sheet_' + s)(ws)
 

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -28,7 +28,7 @@ import pytest
 from django_countries.fields import Country
 from django_scopes import scopes_disabled
 
-from pretix.base.models import InvoiceAddress, Order, OrderPosition
+from pretix.base.models import Invoice, InvoiceAddress, Order, OrderPosition
 from pretix.base.models.orders import OrderFee
 from pretix.base.services.invoices import (
     generate_cancellation, generate_invoice,
@@ -85,6 +85,7 @@ def order(event, item, taxrule, question):
             status=Order.STATUS_PENDING, secret="k24fiuwvu8kxz3y1",
             datetime=datetime.datetime(2017, 12, 1, 10, 0, 0, tzinfo=datetime.timezone.utc),
             expires=datetime.datetime(2017, 12, 10, 10, 0, 0, tzinfo=datetime.timezone.utc),
+            sales_channel=event.organizer.sales_channels.get(identifier="web"),
             total=23, locale='en'
         )
         p1 = o.payments.create(
@@ -148,6 +149,7 @@ def order2(event2, item2):
             status=Order.STATUS_PENDING, secret="asd436cvbfd1",
             datetime=datetime.datetime(2017, 12, 1, 10, 0, 0, tzinfo=datetime.timezone.utc),
             expires=datetime.datetime(2017, 12, 10, 10, 0, 0, tzinfo=datetime.timezone.utc),
+            sales_channel=event2.organizer.sales_channels.get(identifier="web"),
             total=23, locale='en'
         )
         o.payments.create(
@@ -195,10 +197,12 @@ TEST_INVOICE_RES = {
     "invoice_from": "",
     "invoice_from_zipcode": "",
     "invoice_from_city": "",
+    "invoice_from_state": "",
     "invoice_from_country": None,
     "invoice_from_tax_id": "",
     "invoice_from_vat_id": "",
     "invoice_to": "Sample company\nNew Zealand\nVAT-ID: DE123",
+    "invoice_to_is_business": False,
     "invoice_to_company": "Sample company",
     "invoice_to_name": "",
     "invoice_to_street": "",
@@ -208,6 +212,7 @@ TEST_INVOICE_RES = {
     "invoice_to_country": "NZ",
     "invoice_to_vat_id": "DE123",
     "invoice_to_beneficiary": "",
+    "invoice_to_transmission_info": {},
     "custom_field": None,
     "date": "2017-12-10",
     "refers": None,
@@ -227,7 +232,9 @@ TEST_INVOICE_RES = {
             "description": "Budget Ticket<br />Attendee: Peter",
             'subevent': None,
             'event_date_from': '2017-12-27T10:00:00Z',
-            'event_date_to': None,
+            'event_date_to': '2017-12-27T10:00:00Z',
+            'period_start': '2017-12-27T10:00:00Z',
+            'period_end': '2017-12-27T10:00:00Z',
             'event_location': None,
             'attendee_name': 'Peter',
             'item': None,
@@ -237,6 +244,7 @@ TEST_INVOICE_RES = {
             "gross_value": "23.00",
             "tax_value": "0.00",
             "tax_name": "",
+            "tax_code": None,
             "tax_rate": "0.00"
         },
         {
@@ -244,7 +252,9 @@ TEST_INVOICE_RES = {
             "description": "Payment fee",
             'subevent': None,
             'event_date_from': '2017-12-27T10:00:00Z',
-            'event_date_to': None,
+            'event_date_to': '2017-12-27T10:00:00Z',
+            'period_start': '2017-12-27T10:00:00Z',
+            'period_end': '2017-12-27T10:00:00Z',
             'event_location': None,
             'attendee_name': None,
             'fee_type': "payment",
@@ -253,10 +263,15 @@ TEST_INVOICE_RES = {
             'variation': None,
             "gross_value": "0.25",
             "tax_value": "0.05",
+            "tax_code": None,
             "tax_name": "",
             "tax_rate": "19.00"
         }
-    ]
+    ],
+    "transmission_type": "email",
+    "transmission_provider": None,
+    "transmission_status": "pending",
+    "transmission_date": None
 }
 
 
@@ -310,6 +325,20 @@ def test_invoice_list(token_client, organizer, event, order, item, invoice):
 
 
 @pytest.mark.django_db
+def test_invoice_list_multi_filter(token_client, organizer, event, order, order2, item, invoice, invoice2):
+    order2.event = event
+    order2.save()
+    invoice2.event = event
+    invoice2.save()
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/invoices/?order=FOO'.format(organizer.slug, event.slug))
+    assert len(resp.data['results']) == 1
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/invoices/?order=BAR'.format(organizer.slug, event.slug))
+    assert len(resp.data['results']) == 1
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/invoices/?order=FOO&order=BAR'.format(organizer.slug, event.slug))
+    assert len(resp.data['results']) == 2
+
+
+@pytest.mark.django_db
 def test_organizer_level(token_client, organizer, team, event, event2, invoice, invoice2):
     resp = token_client.get('/api/v1/organizers/{}/invoices/'.format(organizer.slug))
     assert resp.status_code == 200
@@ -346,6 +375,26 @@ def test_invoice_detail(token_client, organizer, event, item, invoice):
                                                                                   invoice.number))
     assert resp.status_code == 200
     assert res == resp.data
+
+
+@pytest.mark.django_db
+def test_invoice_retransmit(token_client, organizer, event, invoice):
+    invoice.transmission_status = Invoice.TRANSMISSION_STATUS_INFLIGHT
+    invoice.save()
+    resp = token_client.post('/api/v1/organizers/{}/events/{}/invoices/{}/retransmit/'.format(
+        organizer.slug, event.slug, invoice.number
+    ))
+    assert resp.status_code == 409
+
+    invoice.transmission_status = Invoice.TRANSMISSION_STATUS_FAILED
+    invoice.save()
+    resp = token_client.post('/api/v1/organizers/{}/events/{}/invoices/{}/retransmit/'.format(
+        organizer.slug, event.slug, invoice.number
+    ))
+    assert resp.status_code == 204
+
+    invoice.refresh_from_db()
+    assert invoice.transmission_status == Invoice.TRANSMISSION_STATUS_PENDING
 
 
 @pytest.mark.django_db

@@ -48,6 +48,12 @@
                                             class="form-control"
                                             id="id_url" readonly>
                                     <div class="input-group-btn">
+                                        <button type="button" class="btn btn-default btn-clipboard" data-clipboard-target="#id_url">
+                                            <i class="fa fa-clipboard" aria-hidden="true"></i>
+                                            <span class="sr-only">
+                                                {% trans "Copy" %}
+                                            </span>
+                                        </button>
                                         <button type="button" class="btn btn-default dropdown-toggle" data-toggle="dropdown" title="{% trans "Create QR code" %}" aria-haspopup="true" aria-expanded="false">
                                             <i class="fa fa-qrcode" aria-hidden="true"></i>
                                         </button>
@@ -119,6 +125,15 @@
                 <button type="submit" class="btn btn-primary btn-save">
                     {% trans "Save" %}
                 </button>
+                {% if voucher.pk %}
+                    <div class="pull-left">
+                        <a href="{% url "control:event.voucher.delete" organizer=request.organizer.slug event=request.event.slug voucher=voucher.pk %}"
+                           class="btn btn-danger btn-lg">
+                            <span class="fa fa-trash"></span>
+                            {% trans "Delete voucher" %}
+                        </a>
+                    </div>
+                {% endif %}
             </div>
         {% endif %}
     </form>
