@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -79,8 +79,8 @@ class BaseMailForm(FormPlaceholderMixin, forms.Form):
             widget=I18nMarkdownTextarea, required=True,
             locales=event.settings.get('locales'),
         )
-        self._set_field_placeholders('subject', context_parameters)
-        self._set_field_placeholders('message', context_parameters)
+        self._set_field_placeholders('subject', context_parameters, rich=False)
+        self._set_field_placeholders('message', context_parameters, rich=True)
 
 
 class WaitinglistMailForm(BaseMailForm):
@@ -225,6 +225,11 @@ class OrderMailForm(BaseMailForm):
             ]
         self.fields['recipients'].choices = recp_choices
 
+        if not self.event.settings.mail_attach_tickets:
+            self.fields['attach_tickets'].disabled = True
+            self.fields['attach_tickets'].help_text = _("Attachment of tickets is disabled in this event's email "
+                                                        "settings.")
+
         choices = [(e, l) for e, l in Order.STATUS_CHOICE if e != 'n']
         choices.insert(0, ('valid_if_pending', _('payment pending but already confirmed')))
         choices.insert(0, ('na', _('payment pending (except unapproved or already confirmed)')))
@@ -274,7 +279,6 @@ class OrderMailForm(BaseMailForm):
                         'event': event.slug,
                         'organizer': event.organizer.slug,
                     }),
-                    'data-placeholder': pgettext_lazy('subevent', 'Date')
                 }
             )
             self.fields['subevent'].widget.choices = self.fields['subevent'].choices
@@ -355,7 +359,6 @@ class RuleForm(FormPlaceholderMixin, I18nModelForm):
                         'event': self.event.slug,
                         'organizer': self.event.organizer.slug,
                     }),
-                    'data-placeholder': pgettext_lazy('subevent', 'Date')
                 }
             )
             self.fields['subevent'].widget.choices = self.fields['subevent'].choices
@@ -376,8 +379,8 @@ class RuleForm(FormPlaceholderMixin, I18nModelForm):
             ]
         )
 
-        self._set_field_placeholders('subject', ['event', 'order'])
-        self._set_field_placeholders('template', ['event', 'order'])
+        self._set_field_placeholders('subject', ['event', 'order', 'event_or_subevent'])
+        self._set_field_placeholders('template', ['event', 'order', 'event_or_subevent'], rich=True)
 
         choices = [(e, l) for e, l in Order.STATUS_CHOICE if e != 'n']
         choices.insert(0, ('n__valid_if_pending', _('payment pending but already confirmed')))
@@ -386,7 +389,7 @@ class RuleForm(FormPlaceholderMixin, I18nModelForm):
         choices.insert(0, ('n__pending_approval', _('approval pending')))
         if not self.event.settings.get('payment_term_expire_automatically', as_type=bool):
             choices.append(
-                ('p__overdue', _('pending with payment overdue'))
+                ('n__pending_overdue', _('pending with payment overdue'))
             )
         self.fields['restrict_to_status'] = forms.MultipleChoiceField(
             label=pgettext_lazy('sendmail_from', 'Restrict to orders with status'),

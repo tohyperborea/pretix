@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -30,10 +30,10 @@ from rest_framework.exceptions import ValidationError
 
 from pretix.api.serializers.order import (
     AnswerCreateSerializer, AnswerSerializer, CompatibleCountryField,
-    OrderPositionCreateSerializer,
+    OrderFeeCreateSerializer, OrderPositionCreateSerializer,
 )
 from pretix.base.models import ItemVariation, Order, OrderFee, OrderPosition
-from pretix.base.services.orders import OrderError
+from pretix.base.services.orders import OrderChangeManager, OrderError
 from pretix.base.settings import COUNTRIES_WITH_STATE_IN_ADDRESS
 
 logger = logging.getLogger(__name__)
@@ -82,10 +82,11 @@ class OrderPositionCreateForExistingOrderSerializer(OrderPositionCreateSerialize
         return data
 
     def create(self, validated_data):
-        ocm = self.context['ocm']
+        ocm: OrderChangeManager = self.context['ocm']
+        check_quotas = self.context.get('check_quotas', True)
 
         try:
-            ocm.add_position(
+            new_position = ocm.add_position(
                 item=validated_data['item'],
                 variation=validated_data.get('variation'),
                 price=validated_data.get('price'),
@@ -96,10 +97,58 @@ class OrderPositionCreateForExistingOrderSerializer(OrderPositionCreateSerialize
                 valid_until=validated_data.get('valid_until'),
             )
             if self.context.get('commit', True):
-                ocm.commit()
-                return validated_data['order'].positions.order_by('-positionid').first()
+                ocm.commit(check_quotas=check_quotas)
+                return new_position.position
             else:
                 return OrderPosition()  # fake to appease DRF
+        except OrderError as e:
+            raise ValidationError(str(e))
+
+
+class OrderFeeCreateForExistingOrderSerializer(OrderFeeCreateSerializer):
+    order = serializers.SlugRelatedField(slug_field='code', queryset=Order.objects.none(), required=True, allow_null=False)
+    value = serializers.DecimalField(required=True, allow_null=False, decimal_places=2,
+                                     max_digits=13)
+    internal_type = serializers.CharField(required=False, default="")
+
+    class Meta:
+        model = OrderFee
+        fields = ('order', 'fee_type', 'value', 'description', 'internal_type', 'tax_rule')
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.context:
+            return
+        self.fields['order'].queryset = self.context['event'].orders.all()
+        self.fields['tax_rule'].queryset = self.context['event'].tax_rules.all()
+        if 'order' in self.context:
+            del self.fields['order']
+
+    def validate(self, data):
+        data = super().validate(data)
+        if 'order' in self.context:
+            data['order'] = self.context['order']
+        return data
+
+    def create(self, validated_data):
+        ocm: OrderChangeManager = self.context['ocm']
+
+        try:
+            f = OrderFee(
+                order=validated_data['order'],
+                fee_type=validated_data['fee_type'],
+                value=validated_data.get('value'),
+                description=validated_data.get('description'),
+                internal_type=validated_data.get('internal_type'),
+                tax_rule=validated_data.get('tax_rule'),
+            )
+            f._calculate_tax()
+            ocm.add_fee(f)
+            if self.context.get('commit', True):
+                ocm.commit()
+                return f
+            else:
+                return OrderFee()  # fake to appease DRF
         except OrderError as e:
             raise ValidationError(str(e))
 
@@ -203,7 +252,7 @@ class OrderPositionChangeSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrderPosition
         fields = (
-            'item', 'variation', 'subevent', 'seat', 'price', 'tax_rule', 'valid_from', 'valid_until'
+            'item', 'variation', 'subevent', 'seat', 'price', 'tax_rule', 'valid_from', 'valid_until', 'secret'
         )
 
     def __init__(self, *args, **kwargs):
@@ -261,7 +310,8 @@ class OrderPositionChangeSerializer(serializers.ModelSerializer):
         return data
 
     def update(self, instance, validated_data):
-        ocm = self.context['ocm']
+        ocm: OrderChangeManager = self.context['ocm']
+        check_quotas = self.context.get('check_quotas', True)
         current_seat = {'seat_guid': instance.seat.seat_guid} if instance.seat else None
         item = validated_data.get('item', instance.item)
         variation = validated_data.get('variation', instance.variation)
@@ -271,6 +321,7 @@ class OrderPositionChangeSerializer(serializers.ModelSerializer):
         tax_rule = validated_data.get('tax_rule', instance.tax_rule)
         valid_from = validated_data.get('valid_from', instance.valid_from)
         valid_until = validated_data.get('valid_until', instance.valid_until)
+        secret = validated_data.get('secret', instance.secret)
 
         change_item = None
         if item != instance.item or variation != instance.variation:
@@ -303,8 +354,11 @@ class OrderPositionChangeSerializer(serializers.ModelSerializer):
             if valid_until != instance.valid_until:
                 ocm.change_valid_until(instance, valid_until)
 
+            if secret != instance.secret:
+                ocm.change_ticket_secret(instance, secret)
+
             if self.context.get('commit', True):
-                ocm.commit()
+                ocm.commit(check_quotas=check_quotas)
                 instance.refresh_from_db()
         except OrderError as e:
             raise ValidationError(str(e))
@@ -345,7 +399,7 @@ class OrderFeeChangeSerializer(serializers.ModelSerializer):
         )
 
     def update(self, instance, validated_data):
-        ocm = self.context['ocm']
+        ocm: OrderChangeManager = self.context['ocm']
         value = validated_data.get('value', instance.value)
 
         try:
@@ -399,6 +453,9 @@ class OrderChangeOperationSerializer(serializers.Serializer):
             many=True, required=False, context=self.context
         )
         self.fields['split_positions'] = SelectPositionSerializer(
+            many=True, required=False, context=self.context
+        )
+        self.fields['create_fees'] = OrderFeeCreateForExistingOrderSerializer(
             many=True, required=False, context=self.context
         )
         self.fields['patch_fees'] = PatchFeeSerializer(

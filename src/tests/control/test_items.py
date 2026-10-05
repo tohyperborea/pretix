@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -85,6 +85,23 @@ class CategoriesTest(ItemFormTest):
         self.assertNotIn("Entry tickets", doc.select("#page-wrapper table")[0].text)
         with scopes_disabled():
             assert str(ItemCategory.objects.get(id=c.id).name) == 'T-Shirts'
+
+    def test_copy(self):
+        i2 = Item.objects.create(event=self.event1, name="Non-Standard", default_price=10, position=2)
+        c = ItemCategory.objects.create(event=self.event1, name="Cross-Selling", cross_selling_mode='only', cross_selling_condition='products')
+        c.cross_selling_match_products.add(self.item1)
+        c.cross_selling_match_products.add(i2)
+
+        doc = self.get_doc('/control/event/%s/%s/categories/add?copy_from=%d' % (self.orga1.slug, self.event1.slug, c.pk))
+        form_data = extract_form_fields(doc.select('.container-fluid form')[0])
+        assert form_data['name_0'] == 'Cross-Selling'
+        assert form_data['category_type'] == 'only'
+        assert form_data['cross_selling_condition'] == 'products'
+        assert form_data['cross_selling_match_products'] == [str(self.item1.pk), str(i2.pk)]
+        form_data['name_0'] = 'Recommendations'
+        doc = self.post_doc('/control/event/%s/%s/categories/add' % (self.orga1.slug, self.event1.slug), form_data)
+        assert doc.select(".alert-success")
+        self.assertIn("Recommendations", doc.select("#page-wrapper table")[0].text)
 
     def test_sort(self):
         with scopes_disabled():
@@ -225,6 +242,7 @@ class QuestionsTest(ItemFormTest):
             o = Order.objects.create(code='FOO', event=self.event1, email='dummy@dummy.test',
                                      status=Order.STATUS_PENDING, datetime=now(),
                                      expires=now() + datetime.timedelta(days=10),
+                                     sales_channel=self.event1.organizer.sales_channels.get(identifier="web"),
                                      total=14, locale='en')
             op = OrderPosition.objects.create(order=o, item=item1, variation=None, price=Decimal("14"),
                                               attendee_name_parts={'full_name': "Peter"})
@@ -401,6 +419,24 @@ class ItemsTest(ItemFormTest):
         self.item1.refresh_from_db()
         self.item2.refresh_from_db()
         assert self.item1.position < self.item2.position
+
+    def test_reorder(self):
+        self.client.post('/control/event/%s/%s/items/reorder/0/' % (self.orga1.slug, self.event1.slug), {
+            'ids': [str(self.item2.id), str(self.item1.id)],
+        }, content_type='application/json')
+        self.item1.refresh_from_db()
+        self.item2.refresh_from_db()
+        assert self.item1.position > self.item2.position
+        assert self.item1.category is None
+        assert self.item2.category is None
+        self.client.post('/control/event/%s/%s/items/reorder/%s/' % (self.orga1.slug, self.event1.slug, self.addoncat.id), {
+            'ids': [str(self.item1.id), str(self.item2.id)],
+        }, content_type='application/json')
+        self.item1.refresh_from_db()
+        self.item2.refresh_from_db()
+        assert self.item1.position < self.item2.position
+        assert self.item1.category.id == self.addoncat.id
+        assert self.item2.category.id == self.addoncat.id
 
     def test_create(self):
         self.client.post('/control/event/%s/%s/items/add' % (self.orga1.slug, self.event1.slug), {
@@ -616,6 +652,7 @@ class ItemsTest(ItemFormTest):
                 code='FOO', event=self.event1, email='dummy@dummy.test',
                 status=Order.STATUS_PENDING,
                 datetime=now(), expires=now() + datetime.timedelta(days=10),
+                sales_channel=self.event1.organizer.sales_channels.get(identifier="web"),
                 total=14, locale='en'
             )
             OrderPosition.objects.create(
@@ -636,9 +673,18 @@ class ItemsTest(ItemFormTest):
         with scopes_disabled():
             q = Question.objects.create(event=self.event1, question="Size", type="N")
             q.items.add(self.item2)
-        self.item2.sales_channels = ["web", "bar"]
+            self.item2.limit_sales_channels.set(self.orga1.sales_channels.filter(identifier__in=["web", "bar"]))
+            self.item2.all_sales_channels = False
+            self.item2.save()
+            self.var2.limit_sales_channels.set(self.orga1.sales_channels.filter(identifier__in=["web"]))
+            self.var2.all_sales_channels = False
+            self.var2.save()
         prop = self.event1.item_meta_properties.create(name="Foo")
         self.item2.meta_values.create(property=prop, value="Bar")
+        self.item2.program_times.create(start=datetime.datetime(2017, 12, 27, 0, 0, 0,
+                                                                tzinfo=datetime.timezone.utc),
+                                        end=datetime.datetime(2017, 12, 28, 0, 0, 0,
+                                                              tzinfo=datetime.timezone.utc))
 
         doc = self.get_doc('/control/event/%s/%s/items/add?copy_from=%d' % (self.orga1.slug, self.event1.slug, self.item2.pk))
         data = extract_form_fields(doc.select("form")[0])
@@ -653,6 +699,7 @@ class ItemsTest(ItemFormTest):
         with scopes_disabled():
             i_old = Item.objects.get(name__icontains='Business')
             i_new = Item.objects.get(name__icontains='Intermediate')
+            v2_new = i_new.variations.get(value__icontains='Gold')
             assert i_new.category == i_old.category
             assert i_new.description == i_old.description
             assert i_new.active == i_old.active
@@ -661,10 +708,13 @@ class ItemsTest(ItemFormTest):
             assert i_new.require_voucher == i_old.require_voucher
             assert i_new.hide_without_voucher == i_old.hide_without_voucher
             assert i_new.allow_cancel == i_old.allow_cancel
-            assert i_new.sales_channels == i_old.sales_channels
+            assert set(i_new.limit_sales_channels.values_list("identifier", flat=True)) == {"web", "bar"}
+            assert set(v2_new.limit_sales_channels.values_list("identifier", flat=True)) == {"web"}
             assert i_new.meta_data == i_old.meta_data == {"Foo": "Bar"}
             assert set(i_new.questions.all()) == set(i_old.questions.all())
             assert set([str(v.value) for v in i_new.variations.all()]) == set([str(v.value) for v in i_old.variations.all()])
+            assert i_old.program_times.first().start == i_new.program_times.first().start
+            assert i_old.program_times.first().end == i_new.program_times.first().end
 
     def test_add_to_existing_quota(self):
         with scopes_disabled():

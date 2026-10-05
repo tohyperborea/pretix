@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -112,7 +112,8 @@ def test_typeahead(organizer, admin_user, client, gift_card):
         o = Order.objects.create(
             code='FOO', event=event, email='dummy@dummy.test',
             status=Order.STATUS_PENDING, datetime=now(), expires=now() + timedelta(days=10),
-            total=14, locale='en'
+            total=14, locale='en',
+            sales_channel=event.organizer.sales_channels.get(identifier="web"),
         )
         ticket = event.items.create(name='Early-bird ticket', category=None, default_price=23, admission=True, personalized=True)
         op = o.positions.create(item=ticket, price=Decimal("14"))

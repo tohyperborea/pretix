@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -47,7 +47,6 @@ class BundlePricesTest(TestCase):
             date_from=datetime.datetime(now().year + 1, 12, 26, tzinfo=datetime.timezone.utc),
             live=True,
             plugins="pretix.plugins.banktransfer",
-            sales_channels=['web', 'bar']
         )
         self.tr19 = self.event.tax_rules.create(rate=Decimal('19.00'))
         self.tr7 = self.event.tax_rules.create(rate=Decimal('7.00'))

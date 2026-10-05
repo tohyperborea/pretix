@@ -1,26 +1,4 @@
-/*global $ */
-
-function gettext(msgid) {
-    if (typeof django !== 'undefined' && typeof django.gettext !== 'undefined') {
-        return django.gettext(msgid);
-    }
-    return msgid;
-}
-
-function ngettext(singular, plural, count) {
-    if (typeof django !== 'undefined' && typeof django.ngettext !== 'undefined') {
-        return django.ngettext(singular, plural, count);
-    }
-    return plural;
-}
-
-function interpolate(fmt, object, named) {
-    if (named) {
-        return fmt.replace(/%\(\w+\)s/g, function(match){return String(obj[match.slice(2,-2)])});
-    } else {
-        return fmt.replace(/%s/g, function(match){return String(obj.shift())});
-    }
-}
+/*global $, gettext, ngettext, interpolate */
 
 var form_handlers = function (el) {
     el.find('input, select, textarea').on('invalid', function (e) {
@@ -60,6 +38,7 @@ var form_handlers = function (el) {
             locale: $("body").attr("data-datetimelocale"),
             useCurrent: false,
             showClear: !$(this).prop("required"),
+            keepInvalid: true,
             icons: {
                 time: 'fa fa-clock-o',
                 date: 'fa fa-calendar',
@@ -82,7 +61,15 @@ var form_handlers = function (el) {
                     Math.abs(+new Date(opts.minDate) - new Date()) < Math.abs(+new Date(opts.maxDate) - new Date())
             ) ? opts.minDate : opts.maxDate;
         }
-        $(this).datetimepicker(opts);
+        $(this).datetimepicker(opts).on("dp.hide", function() {
+            // when min/max is used in datetimepicker, closing and re-opening the picker opens at the wrong date
+            // therefore keep the current viewDate and re-set it after datetimepicker is done hiding
+            var $dtp = $(this).data("DateTimePicker");
+            var currentViewDate = $dtp.viewDate();
+            window.setTimeout(function () {
+                $dtp.viewDate(currentViewDate);
+            }, 50);
+        });
         if ($(this).parent().is('.splitdatetimerow')) {
             $(this).on("dp.change", function (ev) {
                 var $timepicker = $(this).closest(".splitdatetimerow").find(".timepickerfield");
@@ -91,7 +78,11 @@ var form_handlers = function (el) {
                     return;
                 }
                 if ($timepicker.val() === "") {
-                    date.set({'hour': 0, 'minute': 0, 'second': 0});
+                    if (/_(until|end|to)(_|$)/.test($(this).attr("name"))) {
+                        date.set({'hour': 23, 'minute': 59, 'second': 59});
+                    } else {
+                        date.set({'hour': 0, 'minute': 0, 'second': 0});
+                    }
                     $timepicker.data('DateTimePicker').date(date);
                 }
             });
@@ -231,9 +222,25 @@ var form_handlers = function (el) {
             }
         });
     }
+
+    el.find('.use_giftcard').on("click", function () {
+        var value = $(this).data('value');
+        $('#id_payment_giftcard-code').val(value)
+    })
+
 };
 
 function setup_basics(el) {
+    el.find("form").attr("novalidate", true).on("submit", function (e) {
+        if (!this.checkValidity()) {
+            var input = this.querySelector(":invalid:not(fieldset)");
+            (input.labels[0] || input).scrollIntoView();
+            // only use reportValidity, which usually sets focus on element
+            // input.focus() opens dropdowns, which is not what we want
+            input.reportValidity();
+            e.preventDefault();
+        }
+    });
     el.find("input[data-toggle=radiocollapse]").change(function () {
         $($(this).attr("data-parent")).find(".collapse.in").collapse('hide');
         $($(this).attr("data-target")).collapse('show');
@@ -243,6 +250,11 @@ function setup_basics(el) {
             $($(this).attr("data-target")).collapse('show');
         }
     });
+    $("fieldset.accordion-panel > legend input[type=radio]").change(function() {
+        $(this).closest("fieldset").siblings("fieldset").prop('disabled', true).children('.panel-body').slideUp();
+        $(this).closest("fieldset").prop('disabled', false).children('.panel-body').slideDown();
+    }).filter(':not(:checked)').each(function() { $(this).closest("fieldset").prop('disabled', true).children('.panel-body').hide(); });
+
     el.find(".js-only").removeClass("js-only");
     el.find(".js-hidden").hide();
 
@@ -285,8 +297,6 @@ function setup_basics(el) {
         e.preventDefault();
     });
 
-    el.find('[data-toggle="tooltip"]').tooltip();
-
     // AddOns
     el.find('.addon-variation-description').hide();
     el.find('.toggle-variation-description').click(function () {
@@ -296,6 +306,49 @@ function setup_basics(el) {
         if ($(this).prop("checked")) {
             $(this).parent().parent().find('.addon-variation-description').stop().slideDown();
         }
+    });
+
+    // tabs - see https://www.w3.org/WAI/ARIA/apg/patterns/tabs/examples/tabs-automatic/ for reference
+    el.find('.tabcontainer').each(function() {
+        var currentTab;
+        function setCurrentTab(tab) {
+            if (tab == currentTab) return;
+            if (currentTab) {
+                currentTab.setAttribute('aria-selected', 'false');
+                currentTab.tabIndex = -1;
+                currentTab.classList.remove('active');
+                document.getElementById(currentTab.getAttribute('aria-controls')).setAttribute('hidden', 'hidden');
+            }
+            tab.setAttribute('aria-selected', 'true');
+            tab.removeAttribute('tabindex');
+            tab.classList.add('active');
+            document.getElementById(tab.getAttribute('aria-controls')).removeAttribute('hidden');
+            currentTab = tab;
+        }
+        var tabs = $('button[role=tab]').on('keydown', function(event) {
+            if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].indexOf(event.key) == -1) {
+                return;
+            }
+            event.stopPropagation();
+            event.preventDefault();
+
+            if (event.key == 'ArrowLeft') {
+                setCurrentTab(currentTab.previousElementSibling || lastTab);
+            } else if (event.key == 'ArrowRight') {
+                setCurrentTab(currentTab.nextElementSibling || firstTab);
+            } else if (event.key == 'Home') {
+                setCurrentTab(firstTab);
+            } else if (event.key == 'End') {
+                setCurrentTab(lastTab);
+            }
+            currentTab.focus();
+        }).on('click', function (event) {
+            setCurrentTab(this);
+        });
+        
+        var firstTab = tabs.first().get(0);
+        var lastTab = tabs.last().get(0);
+        setCurrentTab(tabs.filter('[aria-selected=true]').get(0));
     });
 }
 
@@ -309,10 +362,17 @@ function setup_week_calendar() {
     }
 }
 
+function get_label_text_for_id(id) {
+    return $("label[for=" + id +"]").first().contents().filter(function () {
+        return this.nodeType != Node.ELEMENT_NODE || !this.classList.contains("sr-only");
+    }).text().trim();
+}
+
 $(function () {
     "use strict";
 
     $("body").removeClass("nojs");
+    moment.locale($("body").attr("data-datetimelocale"));
 
     var scrollpos = sessionStorage ? sessionStorage.getItem('scrollpos') : 0;
     if (scrollpos) {
@@ -337,9 +397,7 @@ $(function () {
         $("#voucher-toggle").slideUp();
     });
 
-    $("#ajaxerr").on("click", ".ajaxerr-close", ajaxErrDialog.hide);
-
-    // Copy answers
+    // Handlers for "Copy answers from above" buttons
     $(".js-copy-answers").click(function (e) {
         e.preventDefault();
         e.stopPropagation();
@@ -367,97 +425,84 @@ $(function () {
         copy_answers(elements, answers);
         return false;
     });
-    var copy_to_first_ticket = true;
-    var attendee_address_fields = $("input[id*=attendee_name_parts_], input[id*=attendee_email], .questions-form" +
-        " input[id$=company], .questions-form[id$=street], .questions-form input[id$=zipcode], .questions-form" +
-        " input[id$=city]");
-    attendee_address_fields.each(function () {
-        if ($(this).val()) {
-            copy_to_first_ticket = false;
-        }
-    })
-    $("select[id^=id_name_parts], input[id^=id_name_parts_], #id_email, #id_street, #id_company, #id_zipcode," +
-        " #id_city, #id_country, #id_state").change(function () {
-        if (copy_to_first_ticket) {
-            var $first_ticket_form = $(".questions-form").first().find("[data-addonidx=0]");
-            $first_ticket_form.find("input[id*=attendee_email]").val($("#id_email").val());
-            $first_ticket_form.find("input[id$=company]").val($("#id_company").val());
-            $first_ticket_form.find("textarea[id$=street]").val($("#id_street").val());
-            $first_ticket_form.find("input[id$=zipcode]").val($("#id_zipcode").val());
-            $first_ticket_form.find("input[id$=city]").val($("#id_city").val());
 
-            $first_ticket_form.find("select[id$=state]").val($("#id_state").val());
-            if ($first_ticket_form.find("select[id$=country]").val() !== $("#id_country").val()) {
-                $first_ticket_form.find("select[id$=country]").val($("#id_country").val()).trigger('change');
-            }
-            $first_ticket_form.find("[id*=attendee_name_parts]").each(function () {
-                var parts = $(this).attr("id").split("_");
-                var num = parts[parts.length - 1];
-                $(this).val($("#id_name_parts_" + num).val());
-            });
-        }
-    });
-    attendee_address_fields.change(function () {
-        copy_to_first_ticket = false;
-    });
-    questions_init_profiles($("body"));
+    // Automatically copy answers from invoice to first attendee
+    var attendee_address_fields = $("input[id*=attendee_name_parts_], input[id*=attendee_email], " +
+        ".questions-form input[id$=company], .questions-form input[id$=street], " +
+        ".questions-form input[id$=zipcode], .questions-form input[id$=city]");
+    function copy_to_first_ticket () {
+        var source = this;
+        var source_label = get_label_text_for_id(source.id);
 
-    // Subevent choice
-    if ($(".subevent-toggle").length) {
-        $(".subevent-list").hide();
-        $(".subevent-toggle").show().click(function () {
-            $(".subevent-list").slideToggle(300);
-            $(this).slideToggle(300).attr("aria-expanded", true);
+        var $first_ticket_form = $(".questions-form").first().find("[data-addonidx=0]");
+        var $candidates = $first_ticket_form.find(source.tagName + ":not([type='checkbox'], [type='radio'], [type='hidden'])");
+        var $match = $candidates.filter(function() {
+            return (
+                this.id.endsWith(source.id.substring(3))
+                || (this.placeholder && this.placeholder === source.placeholder)
+                || (this.placeholder && this.placeholder === source_label)
+                || (source_label && this.id && get_label_text_for_id(this.id) === source_label)
+            );
+        }).first();
+        $match.val(this.value).trigger("change");
+    }
+    function valueIsEmpty(el) { return !el.value; }
+    if (attendee_address_fields.toArray().every(valueIsEmpty)) {
+        var invoice_address_fields = $("select[id^=id_name_parts], input[id^=id_name_parts_], #id_email, #id_street, " +
+            "#id_company, #id_zipcode, #id_city, #id_country, #id_state");
+        invoice_address_fields.on("change", copy_to_first_ticket).trigger("change");
+        attendee_address_fields.one("input", function () {
+            invoice_address_fields.off("change", copy_to_first_ticket);
         });
     }
+
+    questions_init_profiles($("body"));
+
     if (sessionStorage) {
         $("[data-save-scrollpos]").on("click submit", function () {
             sessionStorage.setItem('scrollpos', window.scrollY);
         });
+        $("#monthselform").on("submit", function () {
+            sessionStorage.setItem('scrollpos', window.scrollY);
+        });
     }
-    $("#monthselform select").change(function () {
-        if (sessionStorage) sessionStorage.setItem('scrollpos', window.scrollY);
-        this.form.submit();
+    $("form:has(#btn-add-to-cart)").on("submit", function(e) {
+        if (
+            this.querySelector("pretix-seating-checkout-button button") ||
+            this.querySelector("input[type=checkbox]:checked, input[type=radio]:checked") ||
+            [...this.querySelectorAll(".input-item-count:not([type=hidden])")].some(input => input.value && input.value !== "0") // TODO: seating adds a hidden seating-dummy-item-count, which is not useful and should at some point be removed
+        ) {
+            // okay, let the submit-event bubble to async-task
+            return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        document.querySelector("#dialog-nothing-to-add").showModal();
     });
-    $("#monthselform input").on("dp.change", function () {
-        if ($(this).data("DateTimePicker")) {  // prevent submit after dp init
-            if (sessionStorage) sessionStorage.setItem('scrollpos', window.scrollY);
-            this.form.submit();
-        }
-    });
-    var update_cart_form = function () {
-        var is_enabled = $(".product-row input[type=checkbox]:checked, .variations input[type=checkbox]:checked, .product-row input[type=radio]:checked, .variations input[type=radio]:checked").length;
-        if (!is_enabled) {
-            $(".input-item-count").each(function () {
-                if ($(this).val() && $(this).val() !== "0") {
-                    is_enabled = true;
-                }
-            });
-            $(".input-seat-selection option").each(function() {
-                if ($(this).val() && $(this).val() !== "" && $(this).prop('selected')) {
-                    is_enabled = true;
-                }
-            });
-        }
-        if (!is_enabled && (!$(".has-seating").length || $("#seating-dummy-item-count").length)) {
-            $("#btn-add-to-cart").prop("disabled", !is_enabled).popover({
-                'content': function () { return gettext("Please enter a quantity for one of the ticket types.") },
-                'placement': 'top',
-                'trigger': 'hover focus'
-            });
-        } else {
-            $("#btn-add-to-cart").prop("disabled", false).popover("destroy")
-        }
-    };
-    update_cart_form();
-    $(".product-row input[type=checkbox], .variations input[type=checkbox], .product-row input[type=radio], .variations input[type=radio], .input-item-count, .input-seat-selection")
-        .on("change mouseup keyup", update_cart_form);
 
     $(".table-calendar td.has-events").click(function () {
-        var $tr = $(this).closest(".table-calendar").find(".selected-day");
-        $tr.find("td").html($(this).find(".events").clone());
-        $tr.find("td").prepend($("<h3>").text($(this).attr("data-date")));
-        $tr.removeClass("hidden");
+        var $grid = $(this).closest("[role='grid']");
+        $grid.find("[aria-selected]").attr("aria-selected", false);
+        $(this).attr("aria-selected", true);
+        $("#selected-day")
+            .html($(this).find(".events").clone())
+            .prepend($("<h3>").text($(this).attr("data-date")));
+    }).each(function() {
+        // check all events classes and set the "winning" class for the availability of the day-label on mobile
+        var $dayLabel = $('.day-label', this);
+        if ($('.available.low', this).length == $('.available', this).length) {
+            $dayLabel.addClass('low');
+        }
+        var classes = ['available', 'waitinglist', 'soon', 'reserved', 'soldout', 'continued', 'over'];
+        for (var c of classes) {
+            if ($('.'+c, this).length) {
+                $dayLabel.addClass(c);
+                // CAREFUL: „return“ as „break“ is not supported before ES2015 and breaks e.g. on iOS 15
+                return;
+            }
+        }
     });
 
     $(".print-this-page").on("click", function (e) {
@@ -469,23 +514,30 @@ $(function () {
     $("input[data-required-if], select[data-required-if], textarea[data-required-if]").each(function () {
         var dependent = $(this),
             dependentLabel = $("label[for="+this.id+"]"),
-            dependency = $($(this).attr("data-required-if")),
+            dependencies = $($(this).attr("data-required-if")),
             update = function (ev) {
-                var enabled = (dependency.attr("type") === 'checkbox' || dependency.attr("type") === 'radio') ? dependency.prop('checked') : !!dependency.val();
+                var enabled = true;
+                dependencies.each(function () {
+                    var dependency = $(this);
+                    var e = (dependency.attr("type") === 'checkbox' || dependency.attr("type") === 'radio') ? dependency.prop('checked') : !!dependency.val();
+                    enabled = enabled && e;
+                });
                 if (!dependent.is("[data-no-required-attr]")) {
                     dependent.prop('required', enabled);
                 }
-                dependent.closest('.form-group').toggleClass('required', enabled);
                 if (enabled) {
-                    dependentLabel.append('<i class="sr-only label-required">, ' + gettext('required') + '</i>');
+                    dependentLabel.append('<i class="label-required">' + gettext('required') + '</i>');
                 }
                 else {
                     dependentLabel.find(".label-required").remove();
                 }
             };
         update();
-        dependency.closest('.form-group').find('input[name=' + dependency.attr("name") + ']').on("change", update);
-        dependency.closest('.form-group').find('input[name=' + dependency.attr("name") + ']').on("dp.change", update);
+        dependencies.each(function () {
+            var dependency = $(this);
+            dependency.closest('.form-group').find('input[name=' + dependency.attr("name") + ']').on("change", update);
+            dependency.closest('.form-group').find('input[name=' + dependency.attr("name") + ']').on("dp.change", update);
+        });
     });
 
     $("input[data-display-dependency], div[data-display-dependency], select[data-display-dependency], textarea[data-display-dependency]").each(function () {
@@ -512,96 +564,20 @@ $(function () {
         dependency.closest('.form-group, form').find('input[name=' + dependency.attr("name") + ']').on("dp.change", update);
     });
 
-    $("input[name$=vat_id][data-countries-with-vat-id]").each(function () {
-        var dependent = $(this),
-            dependency_country = $(this).closest(".panel-body, form").find('select[name$=country]'),
-            dependency_id_is_business_1 = $(this).closest(".panel-body, form").find('input[id$=id_is_business_1]'),
-            update = function (ev) {
-                if (dependency_id_is_business_1.length && !dependency_id_is_business_1.prop("checked")) {
-                    dependent.closest(".form-group").hide();
-                } else if (dependent.attr('data-countries-with-vat-id').split(',').includes(dependency_country.val())) {
-                    dependent.closest(".form-group").show();
-                } else {
-                    dependent.closest(".form-group").hide();
-                }
-            };
-        update();
-        dependency_country.on("change", update);
-        dependency_id_is_business_1.on("change", update);
-    });
-
-    $("select[name$=state]").each(function () {
-        var dependent = $(this),
-            counter = 0,
-            dependency = $(this).closest(".panel-body, form").find('select[name$=country]'),
-            update = function (ev) {
-                counter++;
-                var curCounter = counter;
-                dependent.prop("disabled", true);
-                dependency.closest(".form-group").find("label").prepend("<span class='fa fa-cog fa-spin'></span> ");
-                $.getJSON('/js_helpers/states/?country=' + dependency.val(), function (data) {
-                    if (counter > curCounter) {
-                        return;  // Lost race
-                    }
-                    var selected_value = dependent.prop("data-selected-value");
-                    dependent.find("option").filter(function (t) {return !!$(this).attr("value")}).remove();
-                    if (data.data.length > 0) {
-                        $.each(data.data, function (k, s) {
-                            var o = $("<option>").attr("value", s.code).text(s.name);
-                            if (s.code == selected_value || (selected_value && selected_value.indexOf && selected_value.indexOf(s.code) > -1)) {
-                                o.prop("selected", true);
-                            }
-                            dependent.append(o);
-                        });
-                        dependent.closest(".form-group").show();
-                        dependent.prop('required', dependency.prop("required"));
-                    } else {
-                        dependent.closest(".form-group").hide();
-                        dependent.prop("required", false);
-                    }
-                    dependent.prop("disabled", false);
-                    dependency.closest(".form-group").find("label .fa-spin").remove();
-                });
-            };
-        if (dependent.find("option").length === 1) {
-            dependent.closest(".form-group").hide();
-        } else {
-            dependent.prop('required', dependency.prop("required"));
-        }
-        dependency.on("change", update);
-    });
-
     form_handlers($("body"));
 
     var local_tz = moment.tz.guess()
-    $("span[data-timezone], small[data-timezone]").each(function() {
-        var t = moment.tz($(this).attr("data-time"), $(this).attr("data-timezone"))
+    $(".event-is-remote span[data-timezone]").each(function() {
+        var t = moment.tz($(this).attr("datetime") || $(this).attr("data-time"), $(this).attr("data-timezone"))
         var tz = moment.tz.zone($(this).attr("data-timezone"))
-        var tpl = '<div class="tooltip" role="tooltip"><div class="tooltip-arrow"></div><div class="tooltip-inner text-nowrap"></div></div>';
 
-        $(this).tooltip({
-            "title": gettext("Time zone:") + " " + tz.abbr(t),
-            "template": tpl
-        });
         if (t.tz(tz.name).format() !== t.tz(local_tz).format()) {
-            var $add = $("<span>")
-            $add.append($("<span>").addClass("fa fa-globe"))
-            if ($(this).is("[data-time-short]")) {
-                $add.append($("<em>").text(" " + t.tz(local_tz).format($("body").attr("data-timeformat"))))
-            } else {
-                $add.addClass("text-muted")
-                $add.append(" " + gettext("Your local time:") + " ")
-                if (t.tz(tz.name).format("YYYY-MM-DD") != t.tz(local_tz).format("YYYY-MM-DD")) {
-                    $add.append(t.tz(local_tz).format($("body").attr("data-datetimeformat")))
-                } else {
-                    $add.append(t.tz(local_tz).format($("body").attr("data-timeformat")))
-                }
-            }
+            var format = t.tz(tz.name).format("YYYY-MM-DD") != t.tz(local_tz).format("YYYY-MM-DD") ? "datetimeformat" : "timeformat";
+            var time_str = t.tz(local_tz).format($("body").data(format));
+            var $add = $("<small>").addClass("text-muted").append(" (" + gettext("Your local time:") + " ")
+            $add.append($('<time>').attr("datetime", time_str).text(time_str))
+            $add.append(" " + moment.tz.zone(local_tz).abbr(t) + ")");
             $add.insertAfter($(this));
-            $add.tooltip({
-                "title": gettext("Time zone:") + " " + moment.tz.zone(local_tz).abbr(t),
-                "template": tpl
-            });
         }
     });
 
@@ -715,12 +691,32 @@ $(function () {
     });
 
     // Lightbox
-    lightbox.init();
+    (function() {
+        var dialog = document.getElementById("lightbox-dialog");
+        var img = dialog.querySelector("img");
+        var caption = dialog.querySelector("figcaption");
+        $(dialog).on("mousedown", function (e) {
+            if (e.target == this) {
+                // dialog has no padding, so click triggers only on backdrop
+                this.close();
+            }
+        });
+        $("a[data-lightbox]").on("click", function (e) {
+            e.preventDefault();
+            var label = this.querySelector("img").alt;
+            img.src = this.href;
+            img.alt = label;
+            caption.textContent = label;
+            dialog.showModal();
+        });
+    })();
+
+
 
     // free-range price input auto-check checkbox/set count-input to 1 if 0
     $("[data-checked-onchange]").each(function() {
         var countInput = this;
-        $("#" + this.getAttribute("data-checked-onchange")).on("change", function() {
+        $("#" + this.getAttribute("data-checked-onchange")).on("input", function() {
             if (countInput.type === "checkbox") {
                 if (countInput.checked) return;
                 countInput.checked = true;
@@ -734,6 +730,11 @@ $(function () {
             // in case of a change, trigger event
             $(countInput).trigger("change");
         });
+    });
+
+    $("#customer-account-login-providers a").click(function () {
+        // Prevent double-submit, see also https://github.com/pretix/pretix/issues/5836
+        $(this).addClass("disabled");
     });
 });
 
@@ -751,7 +752,10 @@ function copy_answers(elements, answers) {
                 input.val(answers.filter("[name$=" + suffix + "]").val());
                 break;
             case "select":
-                input.val(answers.filter("[name$=" + suffix + "]").find(":selected").val()).change();
+                // save answer as data-attribute so if external event changes select-element/options it can select correct entries
+                // currently used when country => state changes
+                var answer = answers.filter("[name$=" + suffix + "]").find(":selected").val();
+                input.prop("data-selected-value", answer).val(answer).change();
                 break;
             case "input":
                 switch (attributeType) {

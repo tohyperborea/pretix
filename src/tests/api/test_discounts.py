@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -41,10 +41,14 @@ TEST_DISCOUNT_RES = {
     "active": True,
     "internal_name": "3 for 2",
     "position": 1,
-    "sales_channels": ["web"],
+    "all_sales_channels": True,
+    "limit_sales_channels": [],
+    "sales_channels": ["bar", "baz", "web"],
     "available_from": None,
     "available_until": None,
     "subevent_mode": "mixed",
+    "subevent_date_from": None,
+    "subevent_date_until": None,
     "condition_all_products": True,
     "condition_limit_products": [],
     "condition_apply_to_addons": True,

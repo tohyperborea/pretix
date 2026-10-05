@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -21,6 +21,7 @@
 #
 from django import forms
 from django.conf import settings
+from django.utils.translation import pgettext
 from i18nfield.strings import LazyI18nString
 
 from pretix.base.models import EventMetaValue, SubEventMetaValue
@@ -66,7 +67,7 @@ def meta_filtersets(organizer, event=None):
             ).values_list("value", flat=True).distinct())
             choices = [(k, k) for k in sorted(existing_values)]
 
-        choices.insert(0, ("", ""))
+        choices.insert(0, ("", "-- %s --" % pgettext("filter_empty", "all")))
         if len(choices) > 1:
             fields[f"attr[{prop.name}]"] = {
                 "label": str(prop.public_label) or prop.name,

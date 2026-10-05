@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -54,7 +54,7 @@ from pretix.presale.signals import contact_form_fields
 
 class ContactForm(forms.Form):
     required_css_class = 'required'
-    email = forms.EmailField(label=_('E-mail'),
+    email = forms.EmailField(label=_('Email'),
                              validators=[EmailBanlistValidator()],
                              widget=forms.EmailInput(attrs={'autocomplete': 'section-contact email'})
                              )
@@ -67,7 +67,7 @@ class ContactForm(forms.Form):
 
         if self.event.settings.order_email_asked_twice:
             self.fields['email_repeat'] = forms.EmailField(
-                label=_('E-mail address (repeated)'),
+                label=_('Email address (repeated)'),
                 help_text=_('Please enter the same email address again to make sure you typed it correctly.'),
             )
 
@@ -133,6 +133,7 @@ class InvoiceAddressForm(BaseInvoiceAddressForm):
 
 
 class InvoiceNameForm(InvoiceAddressForm):
+    address_validation = False
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

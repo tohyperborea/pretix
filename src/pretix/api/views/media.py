@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -42,6 +42,7 @@ from pretix.base.models import (
     Checkin, GiftCard, GiftCardAcceptance, GiftCardTransaction, OrderPosition,
     ReusableMedium,
 )
+from pretix.base.models.orders import PrintLog
 from pretix.helpers import OF_SELF
 from pretix.helpers.dicts import merge_dicts
 
@@ -78,7 +79,8 @@ class ReusableMediaViewSet(viewsets.ModelViewSet):
                 queryset=OrderPosition.objects.select_related(
                     'order', 'order__event', 'order__event__organizer', 'seat',
                 ).prefetch_related(
-                    Prefetch('checkins', queryset=Checkin.objects.all()),
+                    Prefetch('checkins', queryset=Checkin.objects.select_related('device')),
+                    Prefetch('print_logs', queryset=PrintLog.objects.select_related('device')),
                     'answers', 'answers__options', 'answers__question',
                 )
             ),

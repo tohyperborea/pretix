@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -37,12 +37,12 @@ from zoneinfo import ZoneInfo
 
 from dateutil.parser import parse
 from django.core.exceptions import PermissionDenied
-from django.db.models import F, Max, Min, Q
+from django.db.models import Count, F, Max, Min, Q
 from django.db.models.functions import Coalesce, Greatest
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
-from django.utils.formats import date_format, get_format
+from django.utils.formats import date_format
 from django.utils.timezone import make_aware
 from django.utils.translation import gettext as _, pgettext
 
@@ -56,7 +56,7 @@ from pretix.control.permissions import (
     event_permission_required, organizer_permission_required,
 )
 from pretix.helpers.daterange import daterange
-from pretix.helpers.i18n import i18ncomp
+from pretix.helpers.i18n import i18ncomp, parse_date_localized
 
 
 def serialize_user(u):
@@ -156,7 +156,7 @@ def event_list(request):
         max_fromto=Greatest(Max('subevents__date_to'), Max('subevents__date_from'))
     ).annotate(
         order_from=Coalesce('min_from', 'date_from'),
-    ).order_by('-order_from')
+    ).order_by('-order_from', 'slug')
 
     total = qs.count()
     pagesize = 20
@@ -318,7 +318,7 @@ def nav_context_list(request):
         max_fromto=Greatest(Max('subevents__date_to'), Max('subevents__date_from'))
     ).annotate(
         order_from=Coalesce('min_from', 'date_from'),
-    ).order_by('-order_from')
+    ).order_by('-order_from', 'slug')
 
     if request.user.has_active_staff_session(request.session.session_key):
         qs_orga = Organizer.objects.all()
@@ -326,6 +326,9 @@ def nav_context_list(request):
         qs_orga = Organizer.objects.filter(pk__in=request.user.teams.values_list('organizer', flat=True))
     if query:
         qs_orga = qs_orga.filter(Q(name__icontains=query) | Q(slug__icontains=query))
+    qs_orga = qs_orga.annotate(
+        n_events=Count("events")
+    ).order_by("-n_events")
 
     if query and len(query) >= 3:
         qs_orders = Order.objects.filter(
@@ -405,13 +408,7 @@ def subevent_select2(request, **kwargs):
     qf = Q(name__icontains=i18ncomp(query)) | Q(location__icontains=query)
     tz = request.event.timezone
 
-    dt = None
-    for f in get_format('DATE_INPUT_FORMATS'):
-        try:
-            dt = datetime.strptime(query, f)
-            break
-        except (ValueError, TypeError):
-            continue
+    dt = parse_date_localized(query)
 
     if dt:
         dt_start = make_aware(datetime.combine(dt.date(), time(hour=0, minute=0, second=0)), tz)
@@ -455,13 +452,7 @@ def quotas_select2(request, **kwargs):
     qf = Q(name__icontains=query) | Q(subevent__name__icontains=i18ncomp(query))
     tz = request.event.timezone
 
-    dt = None
-    for f in get_format('DATE_INPUT_FORMATS'):
-        try:
-            dt = datetime.strptime(query, f)
-            break
-        except (ValueError, TypeError):
-            continue
+    dt = parse_date_localized(query)
 
     if dt and request.event.has_subevents:
         dt_start = make_aware(datetime.combine(dt.date(), time(hour=0, minute=0, second=0)), tz)
@@ -578,7 +569,7 @@ def category_select2(request, **kwargs):
         page = 1
 
     qs = request.event.categories.filter(
-        name__icontains=i18ncomp(query)
+        Q(name__icontains=i18ncomp(query)) | Q(internal_name__icontains=query)
     ).order_by('name')
 
     total = qs.count()
@@ -829,12 +820,13 @@ def organizer_select2(request):
     total = qs.count()
     pagesize = 20
     offset = (page - 1) * pagesize
+    display_slug = 'display_slug' in request.GET
 
     doc = {
         "results": [
             {
                 'id': o.pk,
-                'text': str(o.name)
+                'text': '{} — {}'.format(o.slug, o.name) if display_slug else str(o.name)
             } for o in qs[offset:offset + pagesize]
         ],
         "pagination": {

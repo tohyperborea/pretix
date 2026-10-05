@@ -1,6 +1,7 @@
 {% extends "pretixcontrol/items/base.html" %}
 {% load i18n %}
 {% load bootstrap3 %}
+{% load static %}
 {% load urlreplace %}
 {% block title %}{% trans "Check-in lists" %}{% endblock %}
 {% block inside %}
@@ -82,6 +83,13 @@
                 <a href="{% url "control:organizer.devices" organizer=request.organizer.slug %}"
                    class="btn btn-default"><i class="fa fa-tablet"></i> {% trans "Connected devices" %}</a>
             {% endif %}
+            {% if "can_change_orders" in request.eventpermset %}
+                <a href="{% url "control:event.orders.checkinlists.reset" organizer=request.event.organizer.slug event=request.event.slug %}"
+                   class="btn btn-default">
+                    <span class="fa fa-repeat"></span>
+                    {% trans "Reset check-in" %}
+                </a>
+            {% endif %}
         </p>
         <div class="table-responsive">
             <table class="table table-hover table-quotas">
@@ -100,7 +108,6 @@
                             <a href="?{% url_replace request 'ordering' 'subevent' %}"><i class="fa fa-caret-up"></i></a>
                         </th>
                     {% endif %}
-                    <th class="iconcol">{% trans "Automated check-in" %}</th>
                     <th>{% trans "Products" %}</th>
                     <th class="action-col-2"></th>
                 </tr>
@@ -127,8 +134,7 @@
                         {% if request.event.has_subevents %}
                             {% if cl.subevent %}
                                 <td>
-                                    {{ cl.subevent.name }} – {{ cl.subevent.get_date_range_display }}
-                                    {{ cl.subevent.date_from|date:"TIME_FORMAT" }}
+                                    {{ cl.subevent.name }} – {{ cl.subevent.get_date_range_display_with_times }}
                                 </td>
                             {% else %}
                                 <td>
@@ -136,12 +142,6 @@
                                 </td>
                             {% endif %}
                         {% endif %}
-                        <td>
-                            {% for channel in cl.auto_checkin_sales_channels %}
-                                <span class="fa fa-{{ channel.icon }} text-muted"
-                                      data-toggle="tooltip" title="{% trans channel.verbose_name %}"></span>
-                            {% endfor %}
-                        </td>
                         <td>
                             {% if cl.all_products %}
                                 <em>{% trans "All" %}</em>

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -28,7 +28,7 @@ from django_countries.fields import Country
 from django_scopes import scopes_disabled
 
 from pretix.base.models import (
-    InvoiceAddress, Order, OrderPosition, SeatingPlan, SubEvent,
+    InvoiceAddress, ItemVariation, Order, OrderPosition, SeatingPlan, SubEvent,
 )
 from pretix.base.models.orders import OrderFee
 
@@ -60,6 +60,7 @@ def order(event, item, taxrule):
             status=Order.STATUS_PENDING, secret="k24fiuwvu8kxz3y1",
             datetime=datetime(2017, 12, 1, 10, 0, 0, tzinfo=timezone.utc),
             expires=datetime(2017, 12, 10, 10, 0, 0, tzinfo=timezone.utc),
+            sales_channel=event.organizer.sales_channels.get(identifier="web"),
             total=23, locale='en'
         )
         o.fees.create(fee_type=OrderFee.FEE_TYPE_PAYMENT, value=Decimal('0.25'), tax_rate=Decimal('19.00'),
@@ -503,7 +504,7 @@ def test_subevent_update(token_client, organizer, event, subevent, item, item2, 
     )
     assert resp.status_code == 200
     with scopes_disabled():
-        assert subevent.items.get(id=item.pk).default_price == Decimal('23.00')
+        assert event.items.get(id=item.pk).default_price == Decimal('23.00')
     assert subevent.item_price_overrides[item.pk] == Decimal('99.99')
 
     resp = token_client.patch(
@@ -609,7 +610,7 @@ def test_subevent_update(token_client, organizer, event, subevent, item, item2, 
     )
     assert resp.status_code == 200
     with scopes_disabled():
-        assert subevent.variations.get(id=variations[0].pk).default_price == Decimal('12.00')
+        assert ItemVariation.objects.get(id=variations[0].pk).default_price == Decimal('12.00')
         assert subevent.var_price_overrides[variations[0].pk] == Decimal('99.99')
 
     resp = token_client.patch(

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -55,7 +55,7 @@ class BaseOrdersTest(TestCase):
     @scopes_disabled()
     def setUp(self):
         super().setUp()
-        self.orga = Organizer.objects.create(name='CCC', slug='ccc')
+        self.orga = Organizer.objects.create(name='CCC', slug='ccc', plugins='pretix.plugins.banktransfer')
         self.event = Event.objects.create(
             organizer=self.orga, name='30C3', slug='30c3',
             date_from=datetime.datetime(2013, 12, 26, tzinfo=datetime.timezone.utc),
@@ -92,6 +92,7 @@ class BaseOrdersTest(TestCase):
             datetime=now() - datetime.timedelta(days=3),
             expires=now() + datetime.timedelta(days=11),
             total=Decimal("23"),
+            sales_channel=self.orga.sales_channels.get(identifier="web"),
             locale='en'
         )
         self.ticket_pos = OrderPosition.objects.create(
@@ -993,6 +994,81 @@ class OrderChangeAddonsTest(BaseOrdersTest):
             self.order.refresh_from_db()
             assert self.order.total == Decimal('23.00')
 
+    def test_do_not_remove_unavailable_on_adding(self):
+        self.iao.max_count = 2
+        self.iao.save()
+        self.workshop1.available_until = now() - datetime.timedelta(days=1)
+        self.workshop1.save()
+        with scopes_disabled():
+            OrderPosition.objects.create(
+                order=self.order,
+                item=self.workshop1,
+                variation=None,
+                price=Decimal("12"),
+                addon_to=self.ticket_pos,
+                attendee_name_parts={'full_name': "Peter"}
+            )
+            self.order.total += Decimal("12")
+            self.order.save()
+
+        response = self.client.get(
+            '/%s/%s/order/%s/%s/change' % (self.orga.slug, self.event.slug, self.order.code, self.order.secret)
+        )
+        assert response.status_code == 200
+        assert '<li>1x Workshop 1</li>' in response.content.decode()
+        assert f'cp_{self.ticket_pos.pk}_item_{self.workshop1.pk}' not in response.content.decode()
+
+        response = self.client.post(
+            '/%s/%s/order/%s/%s/change' % (self.orga.slug, self.event.slug, self.order.code, self.order.secret),
+            {
+                f'cp_{self.ticket_pos.pk}_variation_{self.workshop2.pk}_{self.workshop2a.pk}': '1'
+            },
+            follow=True
+        )
+        doc = BeautifulSoup(response.content.decode(), "lxml")
+        form_data = extract_form_fields(doc.select('.main-box form')[0])
+        form_data['confirm'] = 'true'
+        response = self.client.post(
+            '/%s/%s/order/%s/%s/change' % (self.orga.slug, self.event.slug, self.order.code, self.order.secret), form_data, follow=True
+        )
+        assert 'alert-success' in response.content.decode()
+
+        with scopes_disabled():
+            assert self.ticket_pos.addons.count() == 2
+
+    def test_do_not_overbook_unavailable_on_adding(self):
+        self.iao.max_count = 1
+        self.iao.save()
+        self.workshop1.available_until = now() - datetime.timedelta(days=1)
+        self.workshop1.save()
+        with scopes_disabled():
+            OrderPosition.objects.create(
+                order=self.order,
+                item=self.workshop1,
+                variation=None,
+                price=Decimal("12"),
+                addon_to=self.ticket_pos,
+                attendee_name_parts={'full_name': "Peter"}
+            )
+            self.order.total += Decimal("12")
+            self.order.save()
+
+        response = self.client.get(
+            '/%s/%s/order/%s/%s/change' % (self.orga.slug, self.event.slug, self.order.code, self.order.secret)
+        )
+        assert response.status_code == 200
+        assert '<li>1x Workshop 1</li>' in response.content.decode()
+        assert f'cp_{self.ticket_pos.pk}_item_{self.workshop1.pk}' not in response.content.decode()
+
+        response = self.client.post(
+            '/%s/%s/order/%s/%s/change' % (self.orga.slug, self.event.slug, self.order.code, self.order.secret),
+            {
+                f'cp_{self.ticket_pos.pk}_variation_{self.workshop2.pk}_{self.workshop2a.pk}': '1'
+            },
+            follow=True
+        )
+        assert 'alert-danger' in response.content.decode()
+
     def test_remove_addon_checked_in(self):
         with scopes_disabled():
             self.event.settings.change_allow_user_if_checked_in = True
@@ -1308,12 +1384,12 @@ class OrderChangeAddonsTest(BaseOrdersTest):
         self._assert_ws2a_not_allowed()
 
     def test_forbidden_sales_channel(self):
-        self.workshop2.sales_channels = ['pretixpos']
+        self.workshop2.all_sales_channels = False
         self.workshop2.save()
         self._assert_ws2a_not_allowed()
 
     def test_forbidden_var_sales_channel(self):
-        self.workshop2a.sales_channels = ['pretixpos']
+        self.workshop2a.all_sales_channels = False
         self.workshop2a.save()
         self._assert_ws2a_not_allowed()
 
@@ -1578,7 +1654,6 @@ class OrderChangeAddonsTest(BaseOrdersTest):
             },
             follow=True
         )
-        print(response.content.decode())
         assert 'alert-danger' not in response.content.decode()
 
         response = self.client.post(
@@ -1873,6 +1948,47 @@ class OrderChangeAddonsTest(BaseOrdersTest):
             assert self.order.total == Decimal('23.00')
             r = self.order.refunds.get()
             assert r.provider == 'giftcard'
+
+    def test_refund_giftcard_to_customer_account(self):
+        with scopes_disabled():
+            customer = self.orga.customers.create(email='john@example.org', is_verified=True)
+            customer.set_password('foo')
+            customer.save()
+
+        self.order.customer = customer
+        self.event.settings.cancel_allow_user_paid_refund_as_giftcard = 'force'
+        with scopes_disabled():
+            gc = customer.usable_gift_cards()
+            assert len(gc) == 0
+            OrderPosition.objects.create(
+                order=self.order,
+                item=self.workshop1,
+                variation=None,
+                price=Decimal("12"),
+                addon_to=self.ticket_pos,
+                attendee_name_parts={'full_name': "Peter"},
+            )
+            self.order.status = Order.STATUS_PAID
+            self.order.total += Decimal("12")
+            self.order.save()
+            self.order.payments.create(provider='testdummy_partialrefund', amount=self.order.total,
+                                       state=OrderPayment.PAYMENT_STATE_CONFIRMED)
+
+        response = self.client.post(
+            '/%s/%s/order/%s/%s/change' % (self.orga.slug, self.event.slug, self.order.code, self.order.secret), {},
+            follow=True
+        )
+        doc = BeautifulSoup(response.content.decode(), "lxml")
+        form_data = extract_form_fields(doc.select('.main-box form')[0])
+        form_data['confirm'] = 'true'
+        self.client.post(
+            '/%s/%s/order/%s/%s/change' % (self.orga.slug, self.event.slug, self.order.code, self.order.secret),
+            form_data, follow=True
+        )
+
+        with scopes_disabled():
+            gc = customer.usable_gift_cards()
+            assert len(gc) == 1
 
     def test_attendee(self):
         self.workshop2a.default_price = Decimal('0.00')

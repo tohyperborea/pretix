@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -23,6 +23,7 @@ import calendar
 import hashlib
 import json
 import logging
+import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from urllib.parse import urljoin
@@ -65,55 +66,93 @@ from pretix.helpers.daterange import daterange
 from pretix.helpers.thumb import get_thumbnail
 from pretix.multidomain.urlreverse import build_absolute_uri
 from pretix.presale.forms.organizer import meta_filtersets
+from pretix.presale.style import get_theme_vars_css
 from pretix.presale.views.cart import get_or_create_cart_id
 from pretix.presale.views.event import (
     get_grouped_items, item_group_by_category,
 )
 from pretix.presale.views.organizer import (
     EventListMixin, add_events_for_days, add_subevents_for_days,
-    days_for_template, filter_qs_by_attr, weeks_for_template,
+    days_for_template, filter_qs_by_attr, filter_subevents_with_plugins,
+    weeks_for_template,
 )
 
 logger = logging.getLogger(__name__)
+
+# we never change static source without restart, so we can cache this thread-wise
+_source_cache_key = None
+
+version_min = 2
+version_max = 2
+version_default = 2  # used for output in widget-embed-code
+
+
+def _get_source_cache_key(version):
+    global _source_cache_key
+    checksum = hashlib.sha256()
+    if not _source_cache_key:
+        with open(finders.find("pretixbase/scss/_theme_variables.scss"), "r") as f:
+            checksum.update(f.read().encode())
+
+        template_path = 'pretixpresale/widget_dummy.html' if version == version_max else 'pretixpresale/widget_dummy.v{}.html'.format(version)
+
+        tpl = get_template(template_path)
+        et = html.fromstring(tpl.render()).xpath('/html/head/link')[0].attrib['href'].replace(settings.STATIC_URL, '')
+        checksum.update(et.encode())
+        _source_cache_key = checksum.hexdigest()[:12]
+    return _source_cache_key
 
 
 def indent(s):
     return s.replace('\n', '\n  ')
 
 
-def widget_css_etag(request, **kwargs):
-    o = getattr(request, 'event', request.organizer)
-    return o.settings.presale_widget_css_checksum or o.settings.presale_widget_css_checksum
+def widget_css_etag(request, version, **kwargs):
+    if version > version_max:
+        return None
+    if version < version_min:
+        version = version_min
+    # This makes sure a new version of the theme is loaded whenever settings or the source files have changed
+    if hasattr(request, 'event'):
+        return (f'{_get_source_cache_key(version)}-'
+                f'{request.organizer.cache.get_or_set("css_version", default=lambda: int(time.time()))}-'
+                f'{request.event.cache.get_or_set("css_version", default=lambda: int(time.time()))}')
+    else:
+        return f'{_get_source_cache_key(version)}-{request.organizer.cache.get_or_set("css_version", default=lambda: int(time.time()))}'
 
 
-def widget_js_etag(request, lang, **kwargs):
+def widget_js_etag(request, version, lang, **kwargs):
     gs = GlobalSettingsObject()
-    return gs.settings.get('widget_checksum_{}'.format(lang))
+    return gs.settings.get('widget_checksum_{}_{}'.format(version, lang))
 
 
 @gzip_page
 @condition(etag_func=widget_css_etag)
 @cache_page(60)
-def widget_css(request, **kwargs):
+def widget_css(request, version, **kwargs):
+    if version > version_max:
+        raise Http404()
+    if version < version_min:
+        version = version_min
     o = getattr(request, 'event', request.organizer)
-    if o.settings.presale_widget_css_file:
-        try:
-            resp = FileResponse(default_storage.open(o.settings.presale_widget_css_file),
-                                content_type='text/css')
-            resp['Access-Control-Allow-Origin'] = '*'
-            return resp
-        except FileNotFoundError:
-            pass
-    tpl = get_template('pretixpresale/widget_dummy.html')
-    et = html.fromstring(tpl.render({})).xpath('/html/head/link')[0].attrib['href'].replace(settings.STATIC_URL, '')
-    f = finders.find(et)
-    resp = FileResponse(open(f, 'rb'), content_type='text/css')
+
+    template_path = 'pretixpresale/widget_dummy.html' if version == version_max else 'pretixpresale/widget_dummy.v{}.html'.format(version)
+
+    tpl = get_template(template_path)
+    et = html.fromstring(tpl.render()).xpath('/html/head/link')[0].attrib['href'].replace(settings.STATIC_URL, '')
+    with open(finders.find(et), 'r') as f:
+        widget_css = f.read()
+
+    theme_css = get_theme_vars_css(o, widget=True)
+    css = f"/* v{version} */\n" + theme_css + widget_css
+
+    resp = FileResponse(css, content_type='text/css')
     resp._csp_ignore = True
     resp['Access-Control-Allow-Origin'] = '*'
     return resp
 
 
-def generate_widget_js(lang):
+def generate_widget_js(version, lang):
     code = []
     with language(lang):
         # Provide isolation
@@ -148,7 +187,7 @@ def generate_widget_js(lang):
             'vuejs/vue.js' if settings.DEBUG else 'vuejs/vue.min.js',
             'pretixpresale/js/widget/docready.js',
             'pretixpresale/js/widget/floatformat.js',
-            'pretixpresale/js/widget/widget.js',
+            'pretixpresale/js/widget/widget.js' if version == version_max else 'pretixpresale/js/widget/widget.v{}.js'.format(version),
         ]
         for fname in files:
             f = finders.find(fname)
@@ -162,21 +201,27 @@ def generate_widget_js(lang):
             code.append('})({});\n')
     code = ''.join(code)
     code = rJSMinFilter(content=code).output()
-    return code
+    return f"/* v{version} */\n" + code
 
 
 @gzip_page
 @condition(etag_func=widget_js_etag)
-def widget_js(request, lang, **kwargs):
-    if lang not in [lc for lc, ll in settings.LANGUAGES]:
+def widget_js(request, version, lang, **kwargs):
+    if version > version_max or lang not in [lc for lc, ll in settings.LANGUAGES]:
         raise Http404()
 
-    cached_js = cache.get('widget_js_data_{}'.format(lang))
+    if version < version_min:
+        version = version_min
+
+    cached_js = cache.get('widget_js_data_v{}_{}'.format(version, lang))
     if cached_js and not settings.DEBUG:
-        return HttpResponse(cached_js, content_type='text/javascript')
+        resp = HttpResponse(cached_js, content_type='text/javascript')
+        resp._csp_ignore = True
+        resp['Access-Control-Allow-Origin'] = '*'
+        return resp
 
     gs = GlobalSettingsObject()
-    fname = gs.settings.get('widget_file_{}'.format(lang))
+    fname = gs.settings.get('widget_file_v{}_{}'.format(version, lang))
     resp = None
     if fname and not settings.DEBUG:
         if isinstance(fname, File):
@@ -184,21 +229,21 @@ def widget_js(request, lang, **kwargs):
         try:
             data = default_storage.open(fname).read()
             resp = HttpResponse(data, content_type='text/javascript')
-            cache.set('widget_js_data_{}'.format(lang), data, 3600 * 4)
+            cache.set('widget_js_data_v{}_{}'.format(version, lang), data, 3600 * 4)
         except:
             logger.exception('Failed to open widget.js')
 
     if not resp:
-        data = generate_widget_js(lang).encode()
+        data = generate_widget_js(version, lang).encode()
         checksum = hashlib.sha1(data).hexdigest()
         if not settings.DEBUG:
             newname = default_storage.save(
-                'widget/widget.{}.{}.js'.format(lang, checksum),
+                'widget/widget.{}.{}.{}.js'.format(version, lang, checksum),
                 ContentFile(data)
             )
-            gs.settings.set('widget_file_{}'.format(lang), 'file://' + newname)
-            gs.settings.set('widget_checksum_{}'.format(lang), checksum)
-            cache.set('widget_js_data_{}'.format(lang), data, 3600 * 4)
+            gs.settings.set('widget_file_v{}_{}'.format(version, lang), 'file://' + newname)
+            gs.settings.set('widget_checksum_v{}_{}'.format(version, lang), checksum)
+            cache.set('widget_js_data_v{}_{}'.format(version, lang), data, 3600 * 4)
         resp = HttpResponse(data, content_type='text/javascript')
     resp._csp_ignore = True
     resp['Access-Control-Allow-Origin'] = '*'
@@ -250,7 +295,7 @@ class WidgetAPIProductList(EventListMixin, View):
             self.request.event,
             subevent=self.subevent,
             voucher=self.voucher,
-            channel=self.request.sales_channel.identifier,
+            channel=self.request.sales_channel,
             base_qs=qs,
             require_seat=None,
             memberships=(
@@ -348,7 +393,7 @@ class WidgetAPIProductList(EventListMixin, View):
                 'error': gettext('This ticket shop is currently disabled.')
             })
 
-        if request.sales_channel.identifier not in request.event.sales_channels:
+        if not request.event.all_sales_channels and request.sales_channel.identifier not in (s.identifier for s in request.event.limit_sales_channels.all()):
             return self.response({
                 'error': gettext('Tickets for this event cannot be purchased on this sales channel.')
             })
@@ -361,6 +406,14 @@ class WidgetAPIProductList(EventListMixin, View):
                     return self.response({
                         'error': gettext('The selected date does not exist in this event series.')
                     })
+
+                # Prevent direct access to subevents that are hidden by a plugin
+                subevents = filter_subevents_with_plugins([self.subevent], request.sales_channel)
+                if self.subevent not in subevents:
+                    return self.response({
+                        'error': gettext('The selected date is not available.')
+                    })
+
             else:
                 return self._get_event_list(request, **kwargs)
         else:
@@ -393,7 +446,7 @@ class WidgetAPIProductList(EventListMixin, View):
                     else:
                         availability['text'] = gettext('Book now')
                     availability['reason'] = 'ok'
-            elif event.waiting_list_active and (ev.best_availability_state is not None and ev.best_availability_state >= 0):
+            elif ev.waiting_list_active and (ev.best_availability_state is not None and ev.best_availability_state >= 0):
                 availability['color'] = 'orange'
                 availability['text'] = gettext('Waiting list')
                 availability['reason'] = 'waitinglist'
@@ -420,10 +473,11 @@ class WidgetAPIProductList(EventListMixin, View):
             availability['color'] = 'red'
             availability['text'] = gettext('Sale over')
             availability['reason'] = 'over'
-        elif event.settings.presale_start_show_date and ev.presale_start:
+        elif event.settings.presale_start_show_date and ev.effective_presale_start:
             availability['color'] = 'orange'
             availability['text'] = gettext('from %(start_date)s') % {
-                'start_date': date_format(ev.presale_start.astimezone(tz or event.timezone), "SHORT_DATE_FORMAT")
+                'start_date': date_format(ev.effective_presale_start.astimezone(tz or event.timezone),
+                                          "SHORT_DATE_FORMAT")
             }
             availability['reason'] = 'soon'
         else:
@@ -521,32 +575,45 @@ class WidgetAPIProductList(EventListMixin, View):
             if hasattr(self.request, 'event'):
                 add_subevents_for_days(
                     filter_qs_by_attr(
-                        self.request.event.subevents_annotated('web').filter(
-                            event__sales_channels__contains=self.request.sales_channel.identifier
+                        self.request.event.subevents_annotated(self.request.sales_channel).filter(
+                            Q(event__all_sales_channels=True) |
+                            Q(event__limit_sales_channels=self.request.sales_channel),
                         ), self.request
                     ),
-                    limit_before, after, ebd, set(), self.request.event,
-                    kwargs.get('cart_namespace')
+                    before=limit_before, after=after, ebd=ebd, timezones=set(), event=self.request.event,
+                    cart_namespace=kwargs.get('cart_namespace'),
+                    sales_channel=self.request.sales_channel,
                 )
             else:
                 timezones = set()
                 add_events_for_days(
                     self.request,
                     filter_qs_by_attr(
-                        Event.annotated(self.request.organizer.events, 'web').filter(
-                            sales_channels__contains=self.request.sales_channel.identifier
+                        Event.annotated(self.request.organizer.events, self.request.sales_channel).filter(
+                            Q(all_sales_channels=True) | Q(limit_sales_channels=self.request.sales_channel),
                         ), self.request
                     ),
-                    limit_before, after, ebd, timezones
+                    before=limit_before,
+                    after=after,
+                    ebd=ebd,
+                    timezones=timezones,
                 )
-                add_subevents_for_days(filter_qs_by_attr(SubEvent.annotated(SubEvent.objects.filter(
-                    event__organizer=self.request.organizer,
-                    event__is_public=True,
-                    event__live=True,
-                    event__sales_channels__contains=self.request.sales_channel.identifier
-                ).prefetch_related(
-                    'event___settings_objects', 'event__organizer___settings_objects'
-                )), self.request), limit_before, after, ebd, timezones)
+                add_subevents_for_days(
+                    filter_qs_by_attr(SubEvent.annotated(SubEvent.objects.filter(
+                        Q(event__all_sales_channels=True) |
+                        Q(event__limit_sales_channels__identifier=self.request.sales_channel.identifier),
+                        event__organizer=self.request.organizer,
+                        event__is_public=True,
+                        event__live=True,
+                    ).prefetch_related(
+                        'event___settings_objects', 'event__organizer___settings_objects'
+                    ), self.request.sales_channel), self.request),
+                    before=limit_before,
+                    after=after,
+                    ebd=ebd,
+                    timezones=timezones,
+                    sales_channel=self.request.sales_channel,
+                )
 
             data['weeks'] = weeks_for_template(ebd, self.year, self.month)
             for w in data['weeks']:
@@ -579,24 +646,32 @@ class WidgetAPIProductList(EventListMixin, View):
             ebd = defaultdict(list)
             if hasattr(self.request, 'event'):
                 add_subevents_for_days(
-                    filter_qs_by_attr(self.request.event.subevents_annotated('web'), self.request),
-                    limit_before, after, ebd, set(), self.request.event,
-                    kwargs.get('cart_namespace')
+                    filter_qs_by_attr(self.request.event.subevents_annotated(self.request.sales_channel), self.request),
+                    before=limit_before, after=after, ebd=ebd, timezones=set(), event=self.request.event,
+                    cart_namespace=kwargs.get('cart_namespace'),
+                    sales_channel=self.request.sales_channel,
                 )
             else:
                 timezones = set()
                 add_events_for_days(
                     self.request,
-                    filter_qs_by_attr(Event.annotated(self.request.organizer.events, 'web'), self.request),
+                    filter_qs_by_attr(Event.annotated(self.request.organizer.events, self.request.sales_channel), self.request),
                     limit_before, after, ebd, timezones
                 )
-                add_subevents_for_days(filter_qs_by_attr(SubEvent.annotated(SubEvent.objects.filter(
-                    event__organizer=self.request.organizer,
-                    event__is_public=True,
-                    event__live=True,
-                ).prefetch_related(
-                    'event___settings_objects', 'event__organizer___settings_objects'
-                )), self.request), limit_before, after, ebd, timezones)
+                add_subevents_for_days(
+                    filter_qs_by_attr(SubEvent.annotated(SubEvent.objects.filter(
+                        event__organizer=self.request.organizer,
+                        event__is_public=True,
+                        event__live=True,
+                    ).prefetch_related(
+                        'event___settings_objects', 'event__organizer___settings_objects'
+                    ), self.request.sales_channel), self.request),
+                    before=limit_before,
+                    after=after,
+                    ebd=ebd,
+                    timezones=timezones,
+                    sales_channel=self.request.sales_channel,
+                )
 
             data['days'] = days_for_template(ebd, week)
             for d in data['days']:
@@ -606,7 +681,7 @@ class WidgetAPIProductList(EventListMixin, View):
             limit = 50
             if hasattr(self.request, 'event'):
                 evs = filter_qs_by_attr(
-                    self.request.event.subevents_annotated(self.request.sales_channel.identifier),
+                    self.request.event.subevents_annotated(self.request.sales_channel),
                     self.request,
                     match_subevents_with_conditions=(
                         Q(Q(date_to__isnull=True) & Q(date_from__gte=now() - timedelta(hours=24)))
@@ -693,7 +768,7 @@ class WidgetAPIProductList(EventListMixin, View):
             'display_net_prices': request.event.settings.display_net_prices,
             'use_native_spinners': request.event.settings.widget_use_native_spinners,
             'show_variations_expanded': request.event.settings.show_variations_expanded,
-            'waiting_list_enabled': request.event.waiting_list_active,
+            'waiting_list_enabled': (self.subevent or request.event).waiting_list_active,
             'voucher_explanation_text': str(rich_text(request.event.settings.voucher_explanation_text, safelinks=False)),
             'error': None,
             'cart_exists': False

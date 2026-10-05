@@ -28,7 +28,7 @@ def _default_sold_out_html(event, item, variation, allow_waitinglist, cart_names
             query += f"&subevent={subevent.pk}"
         url = eventreverse(event, "presale:event.waitinglist", kwargs=kwargs) + query
         label += format_html(
-            '<br/><a href="{}">'
+            '<br/><a href="{}" class="btn btn-default btn-block">'
             '<span class="fa fa-plus-circle" aria-hidden="true"></span> {}'
             "</a>",
             url,

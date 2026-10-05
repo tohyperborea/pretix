@@ -79,8 +79,8 @@ class WaitingListSmsMixin:
     """
 
     def __init__(self, *args, **kwargs):
-        self._customer = kwargs.get("customer")
         self._request = kwargs.get("request")
+        self._customer = getattr(self._request, "customer", None)
         super().__init__(*args, **kwargs)
         self.fields["sms_opt_in"] = forms.BooleanField(
             label=_("Send me SMS notifications when my waitlist spot is ready"),

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -59,6 +59,11 @@ def test_hook_list(token_client, organizer, event, webhook):
     resp = token_client.get('/api/v1/organizers/{}/webhooks/'.format(organizer.slug))
     assert resp.status_code == 200
     assert [res] == resp.data['results']
+
+    resp = token_client.get('/api/v1/organizers/{}/webhooks/?enabled=true'.format(organizer.slug))
+    assert [res] == resp.data['results']
+    resp = token_client.get('/api/v1/organizers/{}/webhooks/?enabled=false'.format(organizer.slug))
+    assert [] == resp.data['results']
 
 
 @pytest.mark.django_db

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -86,6 +86,18 @@ def test_giftcard_list(token_client, organizer, event, giftcard, other_giftcard)
     assert resp.status_code == 200
     assert 2 == len(resp.data['results'])
 
+    resp = token_client.get('/api/v1/organizers/{}/giftcards/?expired=false'.format(organizer.slug))
+    assert 1 == len(resp.data['results'])
+    resp = token_client.get('/api/v1/organizers/{}/giftcards/?expired=true'.format(organizer.slug))
+    assert 0 == len(resp.data['results'])
+
+    resp = token_client.get('/api/v1/organizers/{}/giftcards/?value=23.00'.format(organizer.slug))
+    assert 1 == len(resp.data['results'])
+    resp = token_client.get('/api/v1/organizers/{}/giftcards/?value=23'.format(organizer.slug))
+    assert 1 == len(resp.data['results'])
+    resp = token_client.get('/api/v1/organizers/{}/giftcards/?value=24'.format(organizer.slug))
+    assert 0 == len(resp.data['results'])
+
 
 @pytest.mark.django_db
 def test_giftcard_detail(token_client, organizer, event, giftcard):
@@ -103,6 +115,7 @@ def test_giftcard_detail_expand(token_client, organizer, event, giftcard):
         o = Order.objects.create(
             code='FOO', event=event, email='dummy@dummy.test',
             status=Order.STATUS_PENDING, datetime=now(), expires=now() + timedelta(days=10),
+            sales_channel=event.organizer.sales_channels.get(identifier="web"),
             total=14, locale='en'
         )
         ticket = event.items.create(name='Early-bird ticket', category=None, default_price=23, admission=True,
@@ -138,15 +151,18 @@ def test_giftcard_detail_expand(token_client, organizer, event, giftcard):
         "voucher_budget_use": None,
         "tax_rate": "0.00",
         "tax_value": "0.00",
+        "tax_code": None,
         "secret": op.secret,
         "addon_to": None,
         "subevent": None,
         "checkins": [],
+        "print_logs": [],
         "downloads": [],
         "answers": [],
         "tax_rule": None,
         "pseudonymization_id": op.pseudonymization_id,
         "pdf_data": {},
+        "plugin_data": {},
         "seat": None,
         "canceled": False,
         "valid_from": None,
@@ -196,6 +212,7 @@ def test_giftcard_patch_owner_by_id(token_client, organizer, event, giftcard):
         o = Order.objects.create(
             code='FOO', event=event, email='dummy@dummy.test',
             status=Order.STATUS_PENDING, datetime=now(), expires=now() + timedelta(days=10),
+            sales_channel=event.organizer.sales_channels.get(identifier="web"),
             total=14, locale='en'
         )
         ticket = event.items.create(name='Early-bird ticket', category=None, default_price=23, admission=True,
@@ -220,6 +237,7 @@ def test_giftcard_patch_owner_by_secret(token_client, organizer, event, giftcard
         o = Order.objects.create(
             code='FOO', event=event, email='dummy@dummy.test',
             status=Order.STATUS_PENDING, datetime=now(), expires=now() + timedelta(days=10),
+            sales_channel=event.organizer.sales_channels.get(identifier="web"),
             total=14, locale='en'
         )
         ticket = event.items.create(name='Early-bird ticket', category=None, default_price=23, admission=True,

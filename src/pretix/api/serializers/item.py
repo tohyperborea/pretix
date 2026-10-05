@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -42,19 +42,28 @@ from django.utils.functional import cached_property, lazy
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
+from pretix.api.serializers import SalesChannelMigrationMixin
 from pretix.api.serializers.event import MetaDataField
 from pretix.api.serializers.fields import UploadedFileField
 from pretix.api.serializers.i18n import I18nAwareModelSerializer
 from pretix.base.models import (
-    Item, ItemAddOn, ItemBundle, ItemCategory, ItemMetaValue, ItemVariation,
-    ItemVariationMetaValue, Question, QuestionOption, Quota,
+    Item, ItemAddOn, ItemBundle, ItemCategory, ItemMetaValue, ItemProgramTime,
+    ItemVariation, ItemVariationMetaValue, Question, QuestionOption, Quota,
+    SalesChannel,
 )
 
 
-class InlineItemVariationSerializer(I18nAwareModelSerializer):
+class InlineItemVariationSerializer(SalesChannelMigrationMixin, I18nAwareModelSerializer):
     price = serializers.DecimalField(read_only=True, decimal_places=2, max_digits=13,
                                      coerce_to_string=True)
     meta_data = MetaDataField(required=False, source='*')
+    limit_sales_channels = serializers.SlugRelatedField(
+        slug_field="identifier",
+        queryset=SalesChannel.objects.none(),
+        required=False,
+        allow_empty=True,
+        many=True,
+    )
 
     class Meta:
         model = ItemVariation
@@ -63,11 +72,14 @@ class InlineItemVariationSerializer(I18nAwareModelSerializer):
                   'require_membership', 'require_membership_types', 'require_membership_hidden',
                   'checkin_attention', 'checkin_text',
                   'available_from', 'available_from_mode', 'available_until', 'available_until_mode',
-                  'sales_channels', 'hide_without_voucher', 'meta_data')
+                  'all_sales_channels', 'limit_sales_channels', 'hide_without_voucher', 'meta_data')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['require_membership_types'].queryset = lazy(lambda: self.context['event'].organizer.membership_types.all(), QuerySet)
+        self.fields['limit_sales_channels'].child_relation.queryset = (
+            self.context['event'].organizer.sales_channels.all() if 'event' in self.context else SalesChannel.objects.none()
+        )
 
     def validate_meta_data(self, value):
         for key in value['meta_data'].keys():
@@ -76,10 +88,17 @@ class InlineItemVariationSerializer(I18nAwareModelSerializer):
         return value
 
 
-class ItemVariationSerializer(I18nAwareModelSerializer):
+class ItemVariationSerializer(SalesChannelMigrationMixin, I18nAwareModelSerializer):
     price = serializers.DecimalField(read_only=True, decimal_places=2, max_digits=13,
                                      coerce_to_string=True)
     meta_data = MetaDataField(required=False, source='*')
+    limit_sales_channels = serializers.SlugRelatedField(
+        slug_field="identifier",
+        queryset=SalesChannel.objects.none(),
+        required=False,
+        allow_empty=True,
+        many=True,
+    )
 
     class Meta:
         model = ItemVariation
@@ -88,20 +107,25 @@ class ItemVariationSerializer(I18nAwareModelSerializer):
                   'require_membership', 'require_membership_types', 'require_membership_hidden',
                   'checkin_attention', 'checkin_text',
                   'available_from', 'available_from_mode', 'available_until', 'available_until_mode',
-                  'sales_channels', 'hide_without_voucher', 'meta_data')
+                  'all_sales_channels', 'limit_sales_channels', 'hide_without_voucher', 'meta_data')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['require_membership_types'].queryset = self.context['event'].organizer.membership_types.all()
+        self.fields['limit_sales_channels'].child_relation.queryset = self.context['event'].organizer.sales_channels.all()
 
     @transaction.atomic
     def create(self, validated_data):
         meta_data = validated_data.pop('meta_data', None)
         require_membership_types = validated_data.pop('require_membership_types', [])
+        limit_sales_channels = validated_data.pop('limit_sales_channels', [])
         variation = ItemVariation.objects.create(**validated_data)
 
         if require_membership_types:
             variation.require_membership_types.add(*require_membership_types)
+
+        if limit_sales_channels:
+            variation.limit_sales_channels.add(*limit_sales_channels)
 
         # Meta data
         if meta_data is not None:
@@ -164,6 +188,12 @@ class InlineItemAddOnSerializer(serializers.ModelSerializer):
                   'position', 'price_included', 'multi_allowed')
 
 
+class InlineItemProgramTimeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ItemProgramTime
+        fields = ('start', 'end')
+
+
 class ItemBundleSerializer(serializers.ModelSerializer):
     class Meta:
         model = ItemBundle
@@ -185,6 +215,37 @@ class ItemBundleSerializer(serializers.ModelSerializer):
         if full_data.get('bundled_item'):
             if full_data['bundled_item'].bundles.exists():
                 raise ValidationError(_("The bundled item must not have bundles on its own."))
+
+        return data
+
+
+class ItemProgramTimeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ItemProgramTime
+        fields = ('id', 'start', 'end')
+
+    def validate(self, data):
+        data = super().validate(data)
+
+        full_data = self.to_internal_value(self.to_representation(self.instance)) if self.instance else {}
+        full_data.update(data)
+
+        start = full_data.get('start')
+        if not start:
+            raise ValidationError(_("The program start must not be empty."))
+
+        end = full_data.get('end')
+        if not end:
+            raise ValidationError(_("The program end must not be empty."))
+
+        if start > end:
+            raise ValidationError(_("The program end must not be before the program start."))
+
+        event = self.context['event']
+        if event.has_subevents:
+            raise ValidationError({
+                _("You cannot use program times on an event series.")
+            })
 
         return data
 
@@ -223,26 +284,34 @@ class ItemTaxRateField(serializers.Field):
             return str(Decimal('0.00'))
 
 
-class ItemSerializer(I18nAwareModelSerializer):
+class ItemSerializer(SalesChannelMigrationMixin, I18nAwareModelSerializer):
     addons = InlineItemAddOnSerializer(many=True, required=False)
     bundles = InlineItemBundleSerializer(many=True, required=False)
     variations = InlineItemVariationSerializer(many=True, required=False)
+    program_times = InlineItemProgramTimeSerializer(many=True, required=False)
     tax_rate = ItemTaxRateField(source='*', read_only=True)
     meta_data = MetaDataField(required=False, source='*')
     picture = UploadedFileField(required=False, allow_null=True, allowed_types=(
         'image/png', 'image/jpeg', 'image/gif'
     ), max_size=settings.FILE_UPLOAD_MAX_SIZE_IMAGE)
+    limit_sales_channels = serializers.SlugRelatedField(
+        slug_field="identifier",
+        queryset=SalesChannel.objects.none(),
+        required=False,
+        allow_empty=True,
+        many=True,
+    )
 
     class Meta:
         model = Item
-        fields = ('id', 'category', 'name', 'internal_name', 'active', 'sales_channels', 'description',
-                  'default_price', 'free_price', 'free_price_suggestion', 'tax_rate', 'tax_rule', 'admission',
+        fields = ('id', 'category', 'name', 'internal_name', 'active', 'all_sales_channels', 'limit_sales_channels',
+                  'description', 'default_price', 'free_price', 'free_price_suggestion', 'tax_rate', 'tax_rule', 'admission',
                   'personalized', 'position', 'picture',
                   'available_from', 'available_from_mode', 'available_until', 'available_until_mode',
                   'require_voucher', 'hide_without_voucher', 'allow_cancel', 'require_bundling',
                   'min_per_order', 'max_per_order', 'checkin_attention', 'checkin_text', 'has_variations', 'variations',
-                  'addons', 'bundles', 'original_price', 'require_approval', 'generate_tickets',
-                  'show_quota_left', 'hidden_if_available', 'hidden_if_item_available', 'allow_waitinglist',
+                  'addons', 'bundles', 'program_times', 'original_price', 'require_approval', 'generate_tickets',
+                  'show_quota_left', 'hidden_if_available', 'hidden_if_item_available', 'hidden_if_item_available_mode', 'allow_waitinglist',
                   'issue_giftcard', 'meta_data',
                   'require_membership', 'require_membership_types', 'require_membership_hidden', 'grant_membership_type',
                   'grant_membership_duration_like_event', 'grant_membership_duration_days',
@@ -259,12 +328,14 @@ class ItemSerializer(I18nAwareModelSerializer):
         if not self.read_only:
             self.fields['require_membership_types'].queryset = self.context['event'].organizer.membership_types.all()
             self.fields['grant_membership_type'].queryset = self.context['event'].organizer.membership_types.all()
+            self.fields['limit_sales_channels'].child_relation.queryset = self.context['event'].organizer.sales_channels.all()
+            self.fields['variations'].child.fields['limit_sales_channels'].child_relation.queryset = self.context['event'].organizer.sales_channels.all()
 
     def validate(self, data):
         data = super().validate(data)
-        if self.instance and ('addons' in data or 'variations' in data or 'bundles' in data):
-            raise ValidationError(_('Updating add-ons, bundles, or variations via PATCH/PUT is not supported. Please use the '
-                                    'dedicated nested endpoint.'))
+        if self.instance and ('addons' in data or 'variations' in data or 'bundles' in data or 'program_times' in data):
+            raise ValidationError(_('Updating add-ons, bundles, program times or variations via PATCH/PUT is not '
+                                    'supported. Please use the dedicated nested endpoint.'))
 
         Item.clean_per_order(data.get('min_per_order'), data.get('max_per_order'))
         Item.clean_available(data.get('available_from'), data.get('available_until'))
@@ -315,6 +386,13 @@ class ItemSerializer(I18nAwareModelSerializer):
                 ItemAddOn.clean_max_min_count(addon_data.get('max_count', 0), addon_data.get('min_count', 0))
         return value
 
+    def validate_program_times(self, value):
+        if not self.instance:
+            for program_time_data in value:
+                ItemProgramTime.clean_start_end(self, start=program_time_data.get('start', None),
+                                                end=program_time_data.get('end', None))
+        return value
+
     @cached_property
     def item_meta_properties(self):
         return {
@@ -332,10 +410,14 @@ class ItemSerializer(I18nAwareModelSerializer):
         variations_data = validated_data.pop('variations') if 'variations' in validated_data else {}
         addons_data = validated_data.pop('addons') if 'addons' in validated_data else {}
         bundles_data = validated_data.pop('bundles') if 'bundles' in validated_data else {}
+        program_times_data = validated_data.pop('program_times') if 'program_times' in validated_data else {}
         meta_data = validated_data.pop('meta_data', None)
         picture = validated_data.pop('picture', None)
         require_membership_types = validated_data.pop('require_membership_types', [])
+        limit_sales_channels = validated_data.pop('limit_sales_channels', [])
         item = Item.objects.create(**validated_data)
+        if limit_sales_channels and not validated_data.get('all_sales_channels'):
+            item.limit_sales_channels.add(*limit_sales_channels)
         if picture:
             item.picture.save(os.path.basename(picture.name), picture)
         if require_membership_types:
@@ -343,10 +425,13 @@ class ItemSerializer(I18nAwareModelSerializer):
 
         for variation_data in variations_data:
             require_membership_types = variation_data.pop('require_membership_types', [])
+            limit_sales_channels = variation_data.pop('limit_sales_channels', [])
             var_meta_data = variation_data.pop('meta_data', {})
             v = ItemVariation.objects.create(item=item, **variation_data)
             if require_membership_types:
                 v.require_membership_types.add(*require_membership_types)
+            if limit_sales_channels:
+                v.limit_sales_channels.add(*limit_sales_channels)
 
             if var_meta_data is not None:
                 for key, value in var_meta_data.items():
@@ -360,6 +445,8 @@ class ItemSerializer(I18nAwareModelSerializer):
             ItemAddOn.objects.create(base_item=item, **addon_data)
         for bundle_data in bundles_data:
             ItemBundle.objects.create(base_item=item, **bundle_data)
+        for program_time_data in program_times_data:
+            ItemProgramTime.objects.create(item=item, **program_time_data)
 
         # Meta data
         if meta_data is not None:
@@ -403,7 +490,22 @@ class ItemCategorySerializer(I18nAwareModelSerializer):
 
     class Meta:
         model = ItemCategory
-        fields = ('id', 'name', 'internal_name', 'description', 'position', 'is_addon')
+        fields = (
+            'id', 'name', 'internal_name', 'description', 'position',
+            'is_addon', 'cross_selling_mode',
+            'cross_selling_condition', 'cross_selling_match_products'
+        )
+
+    def validate(self, data):
+        data = super().validate(data)
+
+        full_data = self.to_internal_value(self.to_representation(self.instance)) if self.instance else {}
+        full_data.update(data)
+
+        if full_data.get('is_addon') and full_data.get('cross_selling_mode'):
+            raise ValidationError('is_addon and cross_selling_mode are mutually exclusive')
+
+        return data
 
 
 class QuestionOptionSerializer(I18nAwareModelSerializer):
@@ -452,6 +554,11 @@ class QuestionSerializer(I18nAwareModelSerializer):
         Question._clean_identifier(self.context['event'], value, self.instance)
         return value
 
+    def validate_type(self, value):
+        if self.instance:
+            self.instance.clean_type_change(self.instance.type, value)
+        return value
+
     def validate_dependency_question(self, value):
         if value:
             if value.type not in (Question.TYPE_CHOICE, Question.TYPE_BOOLEAN, Question.TYPE_CHOICE_MULTIPLE):
@@ -492,7 +599,7 @@ class QuestionSerializer(I18nAwareModelSerializer):
         if full_data.get('show_during_checkin') and full_data.get('type') in Question.SHOW_DURING_CHECKIN_UNSUPPORTED:
             raise ValidationError(_('This type of question cannot be shown during check-in.'))
 
-        Question.clean_items(event, full_data.get('items'))
+        Question.clean_items(event, full_data.get('items') or [])
         return data
 
     def validate_options(self, value):
@@ -508,7 +615,7 @@ class QuestionSerializer(I18nAwareModelSerializer):
     @transaction.atomic
     def create(self, validated_data):
         options_data = validated_data.pop('options') if 'options' in validated_data else []
-        items = validated_data.pop('items')
+        items = validated_data.pop('items', [])
 
         question = Question.objects.create(**validated_data)
         question.items.set(items)
@@ -524,7 +631,7 @@ class QuotaSerializer(I18nAwareModelSerializer):
     class Meta:
         model = Quota
         fields = ('id', 'name', 'size', 'items', 'variations', 'subevent', 'closed', 'close_when_sold_out',
-                  'release_after_exit', 'available', 'available_number')
+                  'release_after_exit', 'available', 'available_number', 'ignore_for_event_availability')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

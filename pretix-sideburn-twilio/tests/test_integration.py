@@ -73,6 +73,23 @@ def test_waitinglist_signup_opt_out(client, twilio_env, logged_in_customer):
 
 
 @pytest.mark.django_db
+def test_waitinglist_form_prefills_returning_customer(client, twilio_env, logged_in_customer):
+    """An opted-in customer sees their choice and phone pre-filled, so resubmitting keeps them opted in."""
+    event = twilio_env["event"]
+    item = twilio_env["item"]
+    organizer = twilio_env["organizer"]
+    with scopes_disabled():
+        CustomerSmsPreference.objects.create(customer=logged_in_customer, sms_opt_in=True)
+
+    response = client.get("/{}/{}/waitinglist/?item={}".format(organizer.slug, event.slug, item.pk))
+
+    assert response.status_code == 200
+    form = response.context["form"]
+    assert form.initial["sms_opt_in"] is True
+    assert str(form.initial["sms_phone"]) == TEST_PHONE
+
+
+@pytest.mark.django_db
 def test_send_voucher_queues_sms_when_opted_in(twilio_env, ticket_available, sms_calls):
     event = twilio_env["event"]
     item = twilio_env["item"]
@@ -220,7 +237,7 @@ def test_waitinglist_form_hook_keeps_previous_plugins_form(twilio_env):
     form_class = inject_waitinglist_form_with_sms(sender=event, cls=EarlierPluginForm)
     with scope(organizer=event.organizer):
         form = form_class(
-            request=RequestFactory().get("/"), event=event, channel="web", customer=None,
+            request=RequestFactory().get("/"), event=event, itemvars=[(str(item.pk), str(item.name))],
             instance=WaitingListEntry(event=event, item=item),
         )
 

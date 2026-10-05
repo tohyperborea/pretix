@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -43,7 +43,6 @@ from pretix.control.permissions import (
 )
 from pretix.helpers.models import modelcopy
 
-from ...base.channels import get_all_sales_channels
 from ...helpers.compat import CompatDeleteView
 from . import CreateView, PaginationMixin, UpdateView
 
@@ -190,11 +189,14 @@ class DiscountList(PaginationMixin, ListView):
     template_name = 'pretixcontrol/items/discounts.html'
 
     def get_queryset(self):
-        return self.request.event.discounts.prefetch_related('condition_limit_products')
+        return self.request.event.discounts.prefetch_related('condition_limit_products', 'limit_sales_channels')
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
-        ctx['sales_channels'] = get_all_sales_channels()
+        ctx['sales_channels'] = [
+            c for c in self.request.organizer.sales_channels.all()
+            if c.type_instance.discounts_supported
+        ]
         return ctx
 
 

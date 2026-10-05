@@ -59,25 +59,12 @@ seat_category_mapping                 object                     An object mappi
 last_modified                         datetime                   Last modification of this object
 ===================================== ========================== =======================================================
 
-.. versionchanged:: 4.15
-
-    The ``search`` query parameter has been added to filter sub-events by their name or location in any language.
-
-.. versionchanged:: 5.0
-
-    The ``date_from_before``, ``date_from_after``, ``date_to_before``, and ``date_to_after`` query parameters have been
-    added.
-
 .. versionchanged:: 2023.8.0
 
     For the organizer-wide endpoint, the ``search`` query parameter has been modified to filter sub-events by their parent events slug too.
 
 Endpoints
 ---------
-
-.. versionchanged:: 4.1
-
-    The ``with_availability_for`` parameter has been added.
 
 .. http:get:: /api/v1/organizers/(organizer)/events/(event)/subevents/
 
@@ -136,6 +123,7 @@ Endpoints
       }
 
    :query page: The page number in case of a multi-page result set, default is 1
+   :query is_public: If set to ``true``/``false``, only subevents with a matching value of ``is_public`` are returned.
    :query active: If set to ``true``/``false``, only events with a matching value of ``active`` are returned.
    :query is_future: If set to ``true`` (``false``), only events that happen currently or in the future are (not) returned.
    :query is_past: If set to ``true`` (``false``), only events that are over are (not) returned.
@@ -467,6 +455,7 @@ Endpoints
       }
 
    :query page: The page number in case of a multi-page result set, default is 1
+   :query is_public: If set to ``true``/``false``, only subevents with a matching value of ``is_public`` are returned.
    :query active: If set to ``true``/``false``, only events with a matching value of ``active`` are returned.
    :query event__live: If set to ``true``/``false``, only events with a matching value of ``live`` on the parent event are returned.
    :query is_future: If set to ``true`` (``false``), only events that happen currently or in the future are (not) returned.

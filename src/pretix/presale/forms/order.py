@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -98,7 +98,8 @@ class OrderPositionChangeForm(forms.Form):
                 new_price = get_price(i, v, voucher=instance.voucher, subevent=instance.subevent,
                                       invoice_address=invoice_address)
                 current_price = TaxedPrice(tax=instance.tax_value, gross=instance.price, net=instance.price - instance.tax_value,
-                                           name=instance.tax_rule.name if instance.tax_rule else '', rate=instance.tax_rate)
+                                           name=instance.tax_rule.name if instance.tax_rule else '', rate=instance.tax_rate,
+                                           code=instance.tax_code)
                 if new_price.gross < current_price.gross and event.settings.change_allow_user_price == 'gte':
                     continue
                 if new_price.gross <= current_price.gross and event.settings.change_allow_user_price == 'gt':

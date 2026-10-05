@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -25,13 +25,13 @@ from typing import List, Optional
 from dateutil.relativedelta import relativedelta
 from django.core.exceptions import ValidationError
 from django.utils.formats import date_format
-from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
 
 from pretix.base.models import (
     AbstractPosition, CartPosition, Customer, Event, Item, Membership, Order,
     OrderPosition, SubEvent,
 )
+from pretix.base.timemachine import time_machine_now
 from pretix.helpers import OF_SELF
 
 
@@ -48,7 +48,7 @@ def membership_validity(item: Item, subevent: Optional[SubEvent], event: Event):
 
     else:
         # Always start at start of day
-        date_start = now().astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        date_start = time_machine_now().astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
         date_end = date_start
 
         if item.grant_membership_duration_months:

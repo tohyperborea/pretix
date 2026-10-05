@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -28,7 +28,6 @@ from django.utils.crypto import get_random_string
 from django.utils.translation import gettext_lazy as _
 from django_scopes import ScopedManager, scopes_disabled
 
-from pretix.api.auth.devicesecurity import DEVICE_SECURITY_PROFILES
 from pretix.base.models import LoggedModel
 
 
@@ -161,7 +160,6 @@ class Device(LoggedModel):
     )
     security_profile = models.CharField(
         max_length=190,
-        choices=[(k, v.verbose_name) for k, v in DEVICE_SECURITY_PROFILES.items()],
         default='full',
         null=True,
         blank=False

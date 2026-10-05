@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -82,7 +82,7 @@ class RedirectBackMixin:
             self.redirect_field_name,
             self.request.GET.get(self.redirect_field_name, '')
         )
-        hosts = list(KnownDomain.objects.filter(event__organizer=self.request.organizer).values_list('domainname', flat=True))
+        hosts = list(KnownDomain.objects.filter(organizer=self.request.organizer).values_list('domainname', flat=True))
         siteurlsplit = urlsplit(settings.SITE_URL)
         if siteurlsplit.port and siteurlsplit.port not in (80, 443):
             hosts = ['%s:%d' % (h, siteurlsplit.port) for h in hosts]
@@ -127,7 +127,7 @@ class LoginView(RedirectBackMixin, FormView):
     def get_context_data(self, **kwargs):
         return super().get_context_data(
             **kwargs,
-            providers=self.request.organizer.sso_providers.all()
+            providers=self.request.organizer.sso_providers.filter(is_active=True)
         )
 
     def get_form_kwargs(self):
@@ -173,7 +173,7 @@ class LogoutView(View):
         return HttpResponseRedirect(next_page)
 
     def get_next_page(self):
-        if getattr(self.request, 'event_domain', False):
+        if getattr(self.request, 'domain_mode', 'system') in (KnownDomain.MODE_ORG_ALT_DOMAIN, KnownDomain.MODE_EVENT_DOMAIN):
             # After we cleared the cookies on this domain, redirect to the parent domain to clear cookies as well
             next_page = eventreverse(self.request.organizer, 'presale:organizer.customer.logout', kwargs={})
             if self.redirect_field_name in self.request.POST or self.redirect_field_name in self.request.GET:
@@ -193,7 +193,7 @@ class LogoutView(View):
                     self.redirect_field_name,
                     self.request.GET.get(self.redirect_field_name)
                 )
-                hosts = list(KnownDomain.objects.filter(event__organizer=self.request.organizer).values_list('domainname', flat=True))
+                hosts = list(KnownDomain.objects.filter(organizer=self.request.organizer).values_list('domainname', flat=True))
                 siteurlsplit = urlsplit(settings.SITE_URL)
                 if siteurlsplit.port and siteurlsplit.port not in (80, 443):
                     hosts = ['%s:%d' % (h, siteurlsplit.port) for h in hosts]
@@ -291,6 +291,7 @@ class SetPasswordView(FormView):
             self.customer.is_verified = True
             self.customer.save()
             self.customer.log_action('pretix.customer.password.set', {})
+        self.customer.send_security_notice(_("Your password has been changed."))
         messages.success(
             self.request,
             _('Your new password has been set! You can now use it to log in.'),
@@ -330,6 +331,7 @@ class ResetPasswordView(FormView):
             locale=customer.locale,
             customer=customer,
             organizer=self.request.organizer,
+            sensitive=True,
         )
         messages.success(
             self.request,
@@ -355,8 +357,48 @@ class CustomerRequiredMixin:
         return super().dispatch(request, *args, **kwargs)
 
 
-class ProfileView(CustomerRequiredMixin, ListView):
-    template_name = 'pretixpresale/organizers/customer_profile.html'
+class CustomerAccountBaseMixin(CustomerRequiredMixin):
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx['customer'] = self.request.customer
+        url_name = self.request.resolver_match.url_name
+        ctx['sub_nav'] = [
+            {
+                'label': _('Orders'),
+                'url': eventreverse(self.request.organizer, 'presale:organizer.customer.index', kwargs={}),
+                'active': url_name == 'organizer.customer.index',
+                'icon': 'shopping-cart',
+            },
+            {
+                'label': _('Memberships'),
+                'url': eventreverse(self.request.organizer, 'presale:organizer.customer.memberships', kwargs={}),
+                'active': url_name.startswith('organizer.customer.membership'),
+                'icon': 'id-badge',
+            },
+            {
+                'label': _('Gift cards'),
+                'url': eventreverse(self.request.organizer, 'presale:organizer.customer.giftcards', kwargs={}),
+                'active': url_name.startswith('organizer.customer.giftcard'),
+                'icon': 'gift',
+            },
+            {
+                'label': _('Addresses'),
+                'url': eventreverse(self.request.organizer, 'presale:organizer.customer.addresses', kwargs={}),
+                'active': url_name.startswith('organizer.customer.address'),
+                'icon': 'address-card-o',
+            },
+            {
+                'label': _('Attendee profiles'),
+                'url': eventreverse(self.request.organizer, 'presale:organizer.customer.profiles', kwargs={}),
+                'active': url_name.startswith('organizer.customer.profile'),
+                'icon': 'user',
+            },
+        ]
+        return ctx
+
+
+class OrderView(CustomerAccountBaseMixin, ListView):
+    template_name = 'pretixpresale/organizers/customer_orders.html'
     context_object_name = 'orders'
     paginate_by = 20
 
@@ -374,18 +416,6 @@ class ProfileView(CustomerRequiredMixin, ListView):
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
-        ctx['customer'] = self.request.customer
-        ctx['memberships'] = self.request.customer.memberships.with_usages().select_related(
-            'membership_type', 'granted_in', 'granted_in__order', 'granted_in__order__event'
-        )
-        ctx['invoice_addresses'] = InvoiceAddress.profiles.filter(customer=self.request.customer)
-        ctx['is_paginated'] = True
-
-        for m in ctx['memberships']:
-            if m.membership_type.max_usages:
-                m.percent = int(m.usages / m.membership_type.max_usages * 100)
-            else:
-                m.percent = 0
 
         s = OrderPosition.objects.filter(
             order=OuterRef('pk')
@@ -409,7 +439,18 @@ class ProfileView(CustomerRequiredMixin, ListView):
         return ctx
 
 
-class MembershipUsageView(CustomerRequiredMixin, ListView):
+class MembershipView(CustomerAccountBaseMixin, ListView):
+    template_name = 'pretixpresale/organizers/customer_memberships.html'
+    context_object_name = 'memberships'
+    paginate_by = 20
+
+    def get_queryset(self):
+        return self.request.customer.memberships.with_usages().select_related(
+            'membership_type', 'granted_in', 'granted_in__order', 'granted_in__order__event'
+        )
+
+
+class MembershipUsageView(CustomerAccountBaseMixin, ListView):
     template_name = 'pretixpresale/organizers/customer_membership.html'
     context_object_name = 'usages'
     paginate_by = 20
@@ -433,7 +474,25 @@ class MembershipUsageView(CustomerRequiredMixin, ListView):
         return ctx
 
 
-class AddressDeleteView(CustomerRequiredMixin, CompatDeleteView):
+class GiftcardView(CustomerAccountBaseMixin, ListView):
+    template_name = 'pretixpresale/organizers/customer_giftcards.html'
+    context_object_name = 'gift_cards'
+    paginate_by = 20
+
+    def get_queryset(self):
+        return self.request.customer.customer_gift_cards.all()
+
+
+class AddressView(CustomerAccountBaseMixin, ListView):
+    template_name = 'pretixpresale/organizers/customer_addresses.html'
+    context_object_name = 'invoice_addresses'
+    paginate_by = 20
+
+    def get_queryset(self):
+        return InvoiceAddress.profiles.filter(customer=self.request.customer)
+
+
+class AddressDeleteView(CustomerAccountBaseMixin, CompatDeleteView):
     template_name = 'pretixpresale/organizers/customer_address_delete.html'
     context_object_name = 'address'
 
@@ -441,10 +500,19 @@ class AddressDeleteView(CustomerRequiredMixin, CompatDeleteView):
         return get_object_or_404(InvoiceAddress.profiles, customer=self.request.customer, pk=self.kwargs.get('id'))
 
     def get_success_url(self):
-        return eventreverse(self.request.organizer, 'presale:organizer.customer.profile', kwargs={})
+        return eventreverse(self.request.organizer, 'presale:organizer.customer.addresses', kwargs={})
 
 
-class ProfileDeleteView(CustomerRequiredMixin, CompatDeleteView):
+class ProfileView(CustomerAccountBaseMixin, ListView):
+    template_name = 'pretixpresale/organizers/customer_profiles.html'
+    context_object_name = 'attendee_profiles'
+    paginate_by = 20
+
+    def get_queryset(self):
+        return self.request.customer.attendee_profiles.all()
+
+
+class ProfileDeleteView(CustomerAccountBaseMixin, CompatDeleteView):
     template_name = 'pretixpresale/organizers/customer_profile_delete.html'
     context_object_name = 'profile'
 
@@ -452,10 +520,10 @@ class ProfileDeleteView(CustomerRequiredMixin, CompatDeleteView):
         return get_object_or_404(self.request.customer.attendee_profiles, pk=self.kwargs.get('id'))
 
     def get_success_url(self):
-        return eventreverse(self.request.organizer, 'presale:organizer.customer.profile', kwargs={})
+        return eventreverse(self.request.organizer, 'presale:organizer.customer.profiles', kwargs={})
 
 
-class ChangePasswordView(CustomerRequiredMixin, FormView):
+class ChangePasswordView(CustomerAccountBaseMixin, FormView):
     template_name = 'pretixpresale/organizers/customer_password.html'
     form_class = ChangePasswordForm
 
@@ -470,7 +538,7 @@ class ChangePasswordView(CustomerRequiredMixin, FormView):
         return super().dispatch(request, *args, **kwargs)
 
     def get_success_url(self):
-        return eventreverse(self.request.organizer, 'presale:organizer.customer.profile', kwargs={})
+        return eventreverse(self.request.organizer, 'presale:organizer.customer.index', kwargs={})
 
     @transaction.atomic()
     def form_valid(self, form):
@@ -479,6 +547,7 @@ class ChangePasswordView(CustomerRequiredMixin, FormView):
         customer.set_password(form.cleaned_data['password'])
         customer.save()
         messages.success(self.request, _('Your changes have been saved.'))
+        customer.send_security_notice(_("Your password has been changed."))
         update_customer_session_auth_hash(self.request, customer)
         return HttpResponseRedirect(self.get_success_url())
 
@@ -488,7 +557,7 @@ class ChangePasswordView(CustomerRequiredMixin, FormView):
         return kwargs
 
 
-class ChangeInformationView(CustomerRequiredMixin, FormView):
+class ChangeInformationView(CustomerAccountBaseMixin, FormView):
     template_name = 'pretixpresale/organizers/customer_info.html'
     form_class = ChangeInfoForm
 
@@ -509,7 +578,7 @@ class ChangeInformationView(CustomerRequiredMixin, FormView):
         return super().dispatch(request, *args, **kwargs)
 
     def get_success_url(self):
-        return eventreverse(self.request.organizer, 'presale:organizer.customer.profile', kwargs={})
+        return eventreverse(self.request.organizer, 'presale:organizer.customer.index', kwargs={})
 
     def form_valid(self, form):
         if form.cleaned_data['email'] != self.initial_email and not self.request.customer.provider:
@@ -575,11 +644,15 @@ class ConfirmChangeView(View):
 
         try:
             with transaction.atomic():
+                old_email = customer.email
                 customer.email = data['email']
                 customer.save()
                 customer.log_action('pretix.customer.changed', {
                     'email': data['email']
                 })
+                msg = _('Your email address has been changed from {old_email} to {email}.').format(old_email=old_email, email=customer.email)
+                customer.send_security_notice(msg, email=old_email)
+                customer.send_security_notice(msg, email=customer.email)
         except IntegrityError:
             messages.success(request, _('Your email address has not been updated since the address is already in use '
                                         'for another customer account.'))
@@ -592,7 +665,7 @@ class ConfirmChangeView(View):
         return HttpResponseRedirect(self.get_success_url())
 
     def get_success_url(self):
-        return eventreverse(self.request.organizer, 'presale:organizer.customer.profile', kwargs={})
+        return eventreverse(self.request.organizer, 'presale:organizer.customer.index', kwargs={})
 
 
 class SSOLoginView(RedirectBackMixin, View):
@@ -636,6 +709,8 @@ class SSOLoginView(RedirectBackMixin, View):
                 popup_origin = None
 
         nonce = get_random_string(32)
+        pkce_code_verifier = get_random_string(64)
+        request.session[f'pretix_customerauth_{self.provider.pk}_pkce_code_verifier'] = pkce_code_verifier
         request.session[f'pretix_customerauth_{self.provider.pk}_nonce'] = nonce
         request.session[f'pretix_customerauth_{self.provider.pk}_popup_origin'] = popup_origin
         request.session[f'pretix_customerauth_{self.provider.pk}_cross_domain_requested'] = self.request.GET.get("request_cross_domain_customer_auth") == "true"
@@ -644,7 +719,7 @@ class SSOLoginView(RedirectBackMixin, View):
         })
 
         if self.provider.method == "oidc":
-            return redirect_to_url(oidc_authorize_url(self.provider, f'{nonce}%{next_url}', redirect_uri))
+            return redirect_to_url(oidc_authorize_url(self.provider, f'{nonce}%{next_url}', redirect_uri, pkce_code_verifier))
         else:
             raise Http404("Unknown SSO method.")
 
@@ -678,6 +753,7 @@ class SSOLoginReturnView(RedirectBackMixin, View):
                 )
             return HttpResponseRedirect(redirect_to)
         r = super().dispatch(request, *args, **kwargs)
+        request.session.pop(f'pretix_customerauth_{self.provider.pk}_pkce_code_verifier', None)
         request.session.pop(f'pretix_customerauth_{self.provider.pk}_nonce', None)
         request.session.pop(f'pretix_customerauth_{self.provider.pk}_popup_origin', None)
         request.session.pop(f'pretix_customerauth_{self.provider.pk}_cross_domain_requested', None)
@@ -703,7 +779,7 @@ class SSOLoginReturnView(RedirectBackMixin, View):
                     popup_origin,
                 )
 
-            nonce, redirect_to = re.split("[%#§]", request.GET['state'], 1)  # Allow § and # for backwards-compatibility for a while
+            nonce, redirect_to = re.split("[%#§]", request.GET['state'], maxsplit=1)  # Allow § and # for backwards-compatibility for a while
 
             if nonce != request.session.get(f'pretix_customerauth_{self.provider.pk}_nonce'):
                 return self._fail(
@@ -723,6 +799,7 @@ class SSOLoginReturnView(RedirectBackMixin, View):
                     self.provider,
                     request.GET.get('code'),
                     redirect_uri,
+                    request.session.get(f'pretix_customerauth_{self.provider.pk}_pkce_code_verifier'),
                 )
             except ValidationError as e:
                 for msg in e:

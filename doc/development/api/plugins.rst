@@ -56,6 +56,20 @@ restricted         boolean (optional)   ``False`` by default, restricts a plugin
                                         for an event by system administrators / superusers.
 experimental       boolean (optional)   ``False`` by default, marks a plugin as an experimental feature in the plugins list.
 compatibility      string               Specifier for compatible pretix versions.
+level              string               System level the plugin can be activated at.
+                                        Set to ``pretix.base.plugins.PLUGIN_LEVEL_EVENT`` for plugins that can be activated
+                                        at event level and then be active for that event only.
+                                        Set to ``pretix.base.plugins.PLUGIN_LEVEL_ORGANIZER`` for plugins that can be
+                                        activated only for the organizer as a whole and are active for any event within
+                                        that organizer.
+                                        Set to ``pretix.base.plugins.PLUGIN_LEVEL_EVENT_ORGANIZER_HYBRID`` for plugins that
+                                        can be activated at organizer level but are considered active only within events
+                                        for which they have also been specifically activated.
+                                        More levels, e.g. user-level plugins, might be invented in the future.
+settings_links     list                 List of ``((menu name, submenu name, …), urlname, url_kwargs)`` tuples that point
+                                        to the plugin's settings.
+navigation_links   list                 List of ``((menu name, submenu name, …), urlname, url_kwargs)`` tuples that point
+                                        to the plugin's system pages.
 ================== ==================== ===========================================================
 
 A working example would be:
@@ -63,9 +77,9 @@ A working example would be:
 .. code-block:: python
 
     try:
-        from pretix.base.plugins import PluginConfig
+        from pretix.base.plugins import PluginConfig, PLUGIN_LEVEL_EVENT
     except ImportError:
-        raise RuntimeError("Please use pretix 2.7 or above to run this plugin!")
+        raise RuntimeError("Please use pretix 2025.7 or above to run this plugin!")
     from django.utils.translation import gettext_lazy as _
 
 
@@ -79,11 +93,14 @@ A working example would be:
             version = '1.0.0'
             category = 'PAYMENT'
             picture = 'pretix_paypal/paypal_logo.svg'
+            level = PLUGIN_LEVEL_EVENT
             visible = True
             featured = False
             restricted = False
             description = _("This plugin allows you to receive payments via PayPal")
             compatibility = "pretix>=2.7.0"
+            settings_links = []
+            navigation_links = []
 
 
     default_app_config = 'pretix_paypal.PaypalApp'
@@ -121,6 +138,7 @@ This will automatically make pretix discover this plugin as soon as it is instal
 through ``pip``. During development, you can just run ``python setup.py develop`` inside
 your plugin source directory to make it discoverable.
 
+.. _`signals`:
 Signals
 -------
 
@@ -139,19 +157,38 @@ method to make your receivers available:
             from . import signals  # NOQA
 
 You can optionally specify code that is executed when your plugin is activated for an event
-in the ``installed`` method:
+or organizer in the ``installed`` method:
 
 .. code-block:: python
 
     class PaypalApp(AppConfig):
         …
 
-        def installed(self, event):
+        def installed(self, event_or_organizer):
             pass  # Your code here
 
 
 Note that ``installed`` will *not* be called if the plugin is indirectly activated for an event
 because the event is created with settings copied from another event.
+
+.. _`registries`:
+Registries
+----------
+
+Many signals in pretix are used so that plugins can "register" a class, e.g. a payment provider or a
+ticket renderer.
+
+However, for some of them (types of :ref:`Log Entries <logging>`) we use a different method to keep track of them:
+In a ``Registry``, classes are collected at application startup, along with a unique key (in case
+of LogEntryType, the ``action_type``) as well as which plugin registered them.
+
+To register a class, you can use one of several decorators provided by the Registry object:
+
+.. autoclass:: pretix.base.logentrytypes.LogEntryTypeRegistry
+   :members: register, new, new_from_dict
+
+All files in which classes are registered need to be imported in the ``AppConfig.ready`` as explained
+in `Signals <signals>`_ above.
 
 Views
 -----
@@ -164,6 +201,28 @@ your Django app label.
 .. WARNING:: If you define custom URLs and views, you are currently on your own
    with checking that the calling user is logged in, has appropriate permissions,
    etc. We plan on providing native support for this in a later version.
+
+To make your plugin views easily discoverable, you can specify links for "Go to"
+and "Settings" buttons next to your entry on the plugin page. These links should be
+added to the ``navigation_links`` and ``settings_links``, respectively, in the
+``PretixPluginMeta`` class.
+
+Each array entry consists of a tuple ``(label, urlname, kwargs)``. For the label,
+either a string or a tuple of strings can be specified. In the latter case, the provided
+strings will be merged with a separator indicating they are successive navigation steps
+the user would need to take to reach the page via the regular menu
+(e.g. "Payment > Bank transfer" as below).
+
+.. code-block:: python
+
+        settings_links = [
+            ((_("Payment"), _("Bank transfer")), "control:event.settings.payment.provider", {"provider": "banktransfer"}),
+        ]
+        navigation_links = [
+            ((_("Bank transfer"), _("Import bank data")), "plugins:banktransfer:import", {}),
+            ((_("Bank transfer"), _("Export refunds")), "plugins:banktransfer:refunds.list", {}),
+        ]
+
 
 .. _Django app: https://docs.djangoproject.com/en/3.0/ref/applications/
 .. _signal dispatcher: https://docs.djangoproject.com/en/3.0/topics/signals/

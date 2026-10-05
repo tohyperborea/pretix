@@ -3,7 +3,9 @@
     width: 14.29%;
   }
   h3 {
-    font-size: 16px;
+    font-size: 0.875rem;
+    color: $text-muted;
+    border-bottom: 2px solid $table-border-color;
   }
   p {
     margin-bottom: 3px;
@@ -11,95 +13,69 @@
   .events {
     list-style: none;
     padding: 0;
+    margin-bottom: 0;
   }
   a.event {
+    --status-bg-color: var(--pretix-brand-primary-tint-90);
+    --status-text-color: var(--pretix-brand-primary-shade-42);
+    --status-border-color: #{$brand-primary};
+    position: relative;
     display: block;
-    background: lighten($brand-primary, 48%);
-    color: $brand-primary;
+    background: var(--status-bg-color);
+    color: var(--status-text-color);
+    border: 1px solid var(--status-border-color);
     border-radius: $border-radius-base;
-    border-style: solid;
-    border-color: lighten($brand-primary, 30%);
-    border-width: 1px 1px 1px 12px;
-    border-left-color: inherit;
+    &:before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 11px;
+      height: 100%;
+      background: var(--status-border-color);
+    }
 
-    padding: 3px 5px;
+    padding: 3px 5px 3px 17px;
     margin-bottom: 3px;
     font-size: 12px;
     overflow-wrap: anywhere;
     text-decoration: none;
 
     &:hover {
-      background: lighten($brand-primary, 50%);
-      border-color: $brand-primary;
+      outline: 1px solid var(--status-border-color);
+      outline-offset: 0;
     }
     &:focus {
-      outline-color: inherit;
+      outline: 2px solid var(--status-border-color);
+      outline-offset: 2px;
     }
 
     &.continued, &.over {
-      background: lighten(#767676, 54%);
-      border-color: lighten(#767676, 44%);
-      border-left-color: lighten(#767676, 44%);
-      color: #767676;
-      &:hover {
-        background: lighten(#767676, 54%);
-        border-color: lighten(#767676, 40%);
-      }
-    }
-
-    &.soon {
-      background: lighten($brand-primary, 53%);
-      border-color: lighten($brand-primary, 40%);
-      border-left-color: lighten($brand-primary, 20%);
-      color: lighten($brand-primary, 5%);
-      &:hover {
-        background: lighten($brand-primary, 55%);
-        border-color: lighten($brand-primary, 20%);
-      }
+      --status-bg-color: #{$table-bg-accent};
+      --status-text-color: #{$text-muted};
+      --status-border-color: #{tint($text-muted, 50%)};
     }
 
     &.available {
-      background: lighten($brand-success, 48%);
-      border-color: lighten($brand-success, 30%);
-      border-left-color: $brand-success;
-      color: darken($brand-success, 12%);
+      --status-bg-color: #{$alert-success-bg};
+      --status-text-color: #{$alert-success-text};
+      --status-border-color: #{$alert-success-border};
 
-      &.low {
-        border-left-color: lighten($brand-warning, 12%);
-      }
-
-      &:hover {
-        background: lighten($brand-success, 50%);
-        border-color: $brand-success;
-
-        &.low {
-          border-left-color: $brand-warning;
-        }
+      &.low:before {
+        background: linear-gradient(to bottom, var(--pretix-brand-warning) 1em, var(--status-border-color) 2.5em);
       }
     }
 
     &.waitinglist {
-      background: lighten($brand-warning, 41%);
-      border-color: lighten($brand-warning, 30%);
-      border-left-color: lighten($brand-warning, 12%);
-      color: #963;
-
-      &:hover {
-        background: lighten($brand-warning, 43%);
-        border-color: $brand-warning;
-      }
+      --status-bg-color: #{$alert-warning-bg};
+      --status-text-color: #{$alert-warning-text};
+      --status-border-color: #{$alert-warning-border};
     }
 
     &.reserved, &.soldout, {
-      background: lighten($brand-danger, 43%);
-      border-color: lighten($brand-danger, 30%);
-      border-left-color: lighten($brand-danger, 30%);
-      color: darken($brand-danger, 5%);
-
-      &:hover {
-        background: lighten($brand-danger, 45%);
-        border-color: lighten($brand-danger, 25%);
-      }
+      --status-bg-color: #{$alert-danger-bg};
+      --status-text-color: #{$alert-danger-text};
+      --status-border-color: #{$alert-danger-border};
     }
 
     &.available > *:first-child,
@@ -124,9 +100,13 @@
     margin-bottom: 15px;
   }
   h3 {
+    margin-top: 0;
+    padding-top: 10px;
+    padding-bottom: 8px;
     margin-bottom: 8px;
     font-weight: bold;
     cursor: pointer;
+    background-color: #fff;
   }
   h3 .fa::before {
     content: $fa-var-caret-right;
@@ -137,6 +117,10 @@
   .no-events {
     display: none;
   }
+}
+
+.table-calendar .day:nth-child(even) {
+  background-color: $table-bg-accent;
 }
 
 .event-list-filter-form {
@@ -271,7 +255,7 @@
 }
 
 .day-calendar a.event {
-  margin: 1px;
+  margin: 0;
 }
 .day-calendar a.event .event-time {
   display: inline;
@@ -400,9 +384,20 @@ if concurrency is higher than 9, JavaScript (currently in pretixpresale/js/ui/ma
   grid-template-rows: repeat(var(--concurrency, 1), auto);
 }
 
+
+.day-timeline {
+  --total-concurrency: var(--concurrency);
+}
 .day-timeline > li {
   grid-column: calc(1 + var(--offset-hour, 0)*60/var(--raster-size, 5) + var(--offset-minute, 0)/var(--raster-size, 5)) / span calc(var(--duration-hour, 0)*60/var(--raster-size, 5) + var(--duration-minute, 0)/var(--raster-size, 5));
   grid-row: var(--concurrency, 1) / span 1;
+  padding: 3px 8px 0;
+  /* add 11px of padding-bottom to the events with --concurrency being the same as --total-concurrency, otherwise 0px */
+  padding-bottom: #{'round(down, calc(11px * var(--concurrency)/var(--total-concurrency)), 11px)'};
+}
+
+.day-timeline > li[data-concurrency="1"] {
+  padding-top: 8px;
 }
 .day-timeline > li:focus-within {
   z-index: 2;  /* move to front so focus-outline overlays other elements */
@@ -412,12 +407,14 @@ if concurrency is higher than 9, JavaScript (currently in pretixpresale/js/ui/ma
     grid-row: 1 / span var(--concurrency, 1) !important;
 }
 .ticks li {
-  padding: 8px 3px 5px;
+  padding: 11px 8px 8px;
   line-height: 1;
   border-top-left-radius: $border-radius-base;
   border-top-right-radius: $border-radius-base;
+  border-bottom: 2px solid $table-border-color;
+  font-weight: bold;
 }
-.ticks li:nth-of-type(odd), .tick {
+.tick {
     background-color: $table-bg-accent;
 }
 .day-timeline:nth-last-of-type(1) li {
@@ -432,8 +429,6 @@ if concurrency is higher than 9, JavaScript (currently in pretixpresale/js/ui/ma
   margin-left: calc(var(--offset-start, 0) / var(--duration) * 100%);
   margin-right: calc(var(--offset-end, 0) / var(--duration) * 100%);
 }
-
-
 
 
 @media (min-width: $screen-md-min) {
@@ -451,7 +446,16 @@ if concurrency is higher than 9, JavaScript (currently in pretixpresale/js/ui/ma
 
     .weekday {
       flex: 1;
-      margin: 0 5px;
+      padding: 0 8px 8px;
+    }
+    .weekday:nth-child(even) {
+      background-color: $table-bg-accent;
+    }
+    .weekday h3 {
+      margin-left: -8px;
+      margin-right: -8px;
+      padding-left: 8px;
+      padding-right: 8px;
     }
     .weekday:first-child {
       margin-left: 0;
@@ -464,24 +468,35 @@ if concurrency is higher than 9, JavaScript (currently in pretixpresale/js/ui/ma
     }
   }
 }
-@media (min-width: $screen-sm-min) {
-  .table-calendar, .week-calendar {
-    .selected-day {
-      display: none !important;
+@media (max-width: $screen-xs-max) {
+  .table-calendar {
+    .day, .no-day {
+      padding: 3px 2px;
+    }
+    p {
+      margin-bottom: 0;
+    }
+    .day .events {
+      display: none;
+    }
+    a.day-label, .day-label {
+      --status-text-color: #{$text-muted};
+      display: block;
+      padding: 3px 3px 15px 12px;
+      font-size: 12px;
+      font-weight: bold;
+      color: var(--status-text-color);
+      margin-bottom: 0;
+    }
+    .no-events .day-label {
+      padding-left: 12px;
+    }
+    a.day-label:before {
+      width: 8px;
     }
   }
-}
-@media (max-width: $screen-xs-max) {
-  .table-calendar .day .events {
-    display: none;
-  }
-  .table-calendar td.day.has-events {
-    background: $brand-primary;
-    cursor: pointer;
-    color: white;
-  }
-  .table-calendar td.day.has-events:hover {
-    background: darken($brand-primary, 15%);
+  #selected-day:has(*) {
+    padding: $table-cell-padding;
   }
 }
 #monthselform .row {

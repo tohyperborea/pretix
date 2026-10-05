@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -28,6 +28,7 @@ from django.core.files.base import ContentFile
 from django.utils.timezone import now
 from django_countries.fields import Country
 from django_scopes import scopes_disabled
+from freezegun import freeze_time
 from i18nfield.strings import LazyI18nString
 from tests.const import SAMPLE_PNG
 
@@ -67,6 +68,7 @@ def order(event, item, other_item, taxrule):
             status=Order.STATUS_PAID, secret="k24fiuwvu8kxz3y1",
             datetime=datetime.datetime(2017, 12, 1, 10, 0, 0, tzinfo=datetime.timezone.utc),
             expires=datetime.datetime(2017, 12, 10, 10, 0, 0, tzinfo=datetime.timezone.utc),
+            sales_channel=event.organizer.sales_channels.get(identifier="web"),
             total=46, locale='en'
         )
         InvoiceAddress.objects.create(order=o, company="Sample company", country=Country('NZ'))
@@ -114,6 +116,7 @@ def order2(event2, item_on_event2):
             status=Order.STATUS_PAID, secret="ylptCPNOxTyA",
             datetime=datetime.datetime(2017, 12, 1, 10, 0, 0, tzinfo=datetime.timezone.utc),
             expires=datetime.datetime(2017, 12, 10, 10, 0, 0, tzinfo=datetime.timezone.utc),
+            sales_channel=event2.organizer.sales_channels.get(identifier="web"),
             total=46, locale='en'
         )
         InvoiceAddress.objects.create(order=o, company="Sample company", country=Country('NZ'))
@@ -144,6 +147,9 @@ TEST_ORDERPOSITION1_RES = {
     "id": 1,
     "require_attention": False,
     "order__status": "p",
+    "order__require_approval": False,
+    "order__valid_if_pending": False,
+    "order__locale": "en",
     "order": "FOO",
     "positionid": 1,
     "item": 1,
@@ -159,6 +165,7 @@ TEST_ORDERPOSITION1_RES = {
     "secret": "z3fsn8jyufm5kpk768q69gkbyr5f4h6w",
     "addon_to": None,
     "checkins": [],
+    "print_logs": [],
     "downloads": [],
     "answers": [],
     "seat": None,
@@ -195,7 +202,7 @@ def clist_event2(event2):
     return c
 
 
-def _redeem(token_client, org, clist, p, body=None, query=''):
+def _redeem(token_client, org, clist, p, body=None, query='', headers={}):
     body = body or {}
     if isinstance(clist, list):
         body['lists'] = [c.pk for c in clist]
@@ -204,7 +211,7 @@ def _redeem(token_client, org, clist, p, body=None, query=''):
     body['secret'] = p
     return token_client.post('/api/v1/organizers/{}/checkinrpc/redeem/{}'.format(
         org.slug, query,
-    ), body, format='json')
+    ), body, format='json', headers={})
 
 
 @pytest.mark.django_db
@@ -731,6 +738,19 @@ def test_question_expand(token_client, organizer, clist, event, order, question)
 
 
 @pytest.mark.django_db
+def test_addons_expand(token_client, organizer, clist, event, order, question, other_item):
+    with scopes_disabled():
+        p = order.positions.first()
+        question[0].save()
+        p.answers.create(question=question[0], answer="3")
+
+    resp = _redeem(token_client, organizer, clist, p.secret, {"answers": {question[0].pk: ""}}, query="?expand=addons&expand=item")
+    assert resp.status_code == 201
+    assert resp.data["status"] == "ok"
+    assert resp.data["position"]["addons"][0]["item"]["id"] == other_item.pk
+
+
+@pytest.mark.django_db
 def test_store_failed(token_client, organizer, clist, event, order):
     with scopes_disabled():
         p = order.positions.first()
@@ -925,6 +945,12 @@ def test_search(token_client, organizer, event, clist, clist_all, item, other_it
     assert resp.status_code == 200
     assert [p1] == resp.data['results']
 
+    with django_assert_max_num_queries(25):
+        resp = token_client.get(
+            '/api/v1/organizers/{}/checkinrpc/search/?list={}&search=z3fsn8jyu&expand=item'.format(organizer.slug, clist_all.pk))
+    assert resp.status_code == 200
+    assert resp.data['results'][0]['item']['name']
+
 
 @pytest.mark.django_db
 def test_search_no_list(token_client, organizer, event, clist, clist_all, item, other_item, order):
@@ -1045,3 +1071,122 @@ def test_checkin_no_pdf_data(token_client, event, team, organizer, clist_all, or
     resp = token_client.get(
         '/api/v1/organizers/{}/checkinrpc/search/?list={}&search=dummy&pdf_data=true'.format(organizer.slug, clist_all.pk))
     assert not resp.data['results'][0].get('pdf_data')
+
+
+@pytest.mark.django_db
+def test_reason_explanation_localization(token_client, organizer, clist, other_item, event, order):
+    event.settings.locales = ["de", "en"]
+    order.locale = "de"
+    order.save()
+    with scopes_disabled():
+        p = order.positions.first()
+    p.valid_from = datetime.datetime(2020, 1, 1, 12, 0, 0, tzinfo=event.timezone)
+    p.save()
+    with freeze_time("2020-01-01 10:45:00"):
+        resp = _redeem(token_client, organizer, clist, 'z3fsn8jyufm5kpk768q69gkbyr5f4h6w', {})
+        assert resp.status_code == 400
+        assert resp.data["status"] == "error"
+        assert resp.data["reason"] == "invalid_time"
+        assert resp.data["reason_explanation"] == "This ticket is only valid after 2020-01-01 12:00."
+
+        resp = _redeem(token_client, organizer, clist, 'z3fsn8jyufm5kpk768q69gkbyr5f4h6w', {
+            "use_order_locale": True
+        })
+        assert resp.status_code == 400
+        assert resp.data["status"] == "error"
+        assert resp.data["reason"] == "invalid_time"
+        assert resp.data["reason_explanation"] == "Erst ab 01.01.2020 12:00 gültig."
+
+
+@pytest.mark.django_db
+def test_annul_simple(token_client, organizer, clist, event, order):
+    with scopes_disabled():
+        p = order.positions.first()
+    resp = _redeem(token_client, organizer, clist, p.secret, {
+        'nonce': 'nooooonce'
+    })
+    assert resp.status_code == 201
+    assert resp.data['status'] == 'ok'
+
+    resp = token_client.post('/api/v1/organizers/{}/checkinrpc/annul/'.format(organizer.slug), {
+        'lists': [clist.pk],
+        'nonce': 'nooooonce',
+        'error_explanation': 'Turnstile did not turn',
+    }, format='json', headers={})
+    assert resp.status_code == 200
+
+    with scopes_disabled():
+        ci = p.all_checkins.get()
+        assert not ci.successful
+        assert ci.error_reason == Checkin.REASON_ANNULLED
+        assert ci.error_explanation == "Turnstile did not turn"
+
+
+@pytest.mark.django_db
+def test_annul_failures(device_client, team, organizer, clist, clist_event2, event, order):
+    with scopes_disabled():
+        p = order.positions.first()
+    resp = _redeem(device_client, organizer, clist, p.secret, {
+        'nonce': 'nooooonce',
+        'datetime': '2025-04-01T12:23:45Z',
+    })
+    assert resp.status_code == 201
+    assert resp.data['status'] == 'ok'
+
+    resp = device_client.post('/api/v1/organizers/{}/checkinrpc/annul/'.format(organizer.slug), {
+        'lists': [clist.pk],
+    }, format='json', headers={})
+    assert resp.status_code == 400
+    assert resp.data == {"nonce": ["This field is required."]}
+
+    resp = device_client.post('/api/v1/organizers/{}/checkinrpc/annul/'.format(organizer.slug), {
+        'lists': [clist_event2.pk],
+        'nonce': 'nooooonce',
+        'error_explanation': 'Turnstile did not turn',
+    }, format='json', headers={})
+    assert resp.status_code == 404
+    assert resp.data == {"detail": "No check-in found based on nonce"}
+
+    resp = device_client.post('/api/v1/organizers/{}/checkinrpc/annul/'.format(organizer.slug), {
+        'lists': [clist.pk],
+        'nonce': 'notfound',
+        'error_explanation': 'Turnstile did not turn',
+    }, format='json', headers={})
+    assert resp.status_code == 404
+    assert resp.data == {"detail": "No check-in found based on nonce"}
+
+    with scopes_disabled():
+        lcnt = order.all_logentries().count()
+
+    resp = device_client.post('/api/v1/organizers/{}/checkinrpc/annul/'.format(organizer.slug), {
+        'lists': [clist.pk],
+        'nonce': 'nooooonce',
+        'error_explanation': 'Turnstile did not turn',
+    }, format='json', headers={})
+    assert resp.status_code == 400
+    assert resp.data == {
+        'non_field_errors': ['Annulment is not allowed more than 15 minutes after check-in']
+    }
+
+    with scopes_disabled():
+        assert order.all_logentries().count() == lcnt + 1
+
+    t = team.tokens.create(name='Foo')
+    team.all_events = True
+    team.save()
+    device_client.credentials(HTTP_AUTHORIZATION='Token ' + t.token)
+
+    resp = device_client.post('/api/v1/organizers/{}/checkinrpc/annul/'.format(organizer.slug), {
+        'lists': [clist.pk],
+        'nonce': 'nooooonce',
+        'error_explanation': 'Turnstile did not turn',
+        'datetime': '2025-04-01T12:24:45Z',
+    }, format='json', headers={})
+    assert resp.status_code == 400
+    assert resp.data == {
+        'non_field_errors': ['Annulment is only allowed from the same device']
+    }
+
+    with scopes_disabled():
+        ci = p.all_checkins.get()
+        assert ci.successful

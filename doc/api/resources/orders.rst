@@ -41,7 +41,10 @@ expires                               datetime                   The order will 
 payment_date                          date                       **DEPRECATED AND INACCURATE** Date of payment receipt
 payment_provider                      string                     **DEPRECATED AND INACCURATE** Payment provider used for this order
 total                                 money (string)             Total value of this order
+tax_rounding_mode                     string                     Tax rounding mode, see :ref:`algorithms-rounding`
 comment                               string                     Internal comment on this order
+api_meta                              object                     Meta data for that order. Only available through API, no guarantees
+                                                                 on the content structure. You can use this to save references to your system.
 custom_followup_at                    date                       Internal date for a custom follow-up action
 checkin_attention                     boolean                    If ``true``, the check-in app should show a warning
                                                                  that this ticket requires special attention if a ticket
@@ -63,18 +66,24 @@ invoice_address                       object                     Invoice address
 ├ state                               string                     Customer state (ISO 3166-2 code). Only supported in
                                                                  AU, BR, CA, CN, MY, MX, and US.
 ├ internal_reference                  string                     Customer's internal reference to be printed on the invoice
+
 ├ custom_field                        string                     Custom invoice address field
 ├ vat_id                              string                     Customer VAT ID
-└ vat_id_validated                    string                     ``true``, if the VAT ID has been validated against the
+├ vat_id_validated                    string                     ``true``, if the VAT ID has been validated against the
                                                                  EU VAT service and validation was successful. This only
                                                                  happens in rare cases.
+├ transmission_type                   string                     Transmission channel for invoice (see also :ref:`rest-transmission-types`).
+                                                                 Defaults to ``email``.
+└ transmission_info                   object                     Transmission-channel specific information (or ``null``).
+                                                                 See also :ref:`rest-transmission-types`.
 positions                             list of objects            List of order positions (see below). By default, only
                                                                  non-canceled positions are included.
 fees                                  list of objects            List of fees included in the order total. By default, only
                                                                  non-canceled fees are included.
 ├ id                                  integer                    Internal ID of the fee record
-├ fee_type                            string                     Type of fee (currently ``payment``, ``passbook``,
-                                                                 ``other``)
+├ fee_type                            string                     Type of fee (currently ``payment``, ``shipping``,
+                                                                 ``service``, ``cancellation``, ``insurance``, ``late``,
+                                                                 ``other``, ``giftcard``)
 ├ value                               money (string)             Fee amount
 ├ description                         string                     Human-readable string with more details (can be empty)
 ├ internal_type                       string                     Internal string (i.e. ID of the payment provider),
@@ -82,6 +91,7 @@ fees                                  list of objects            List of fees in
 ├ tax_rate                            decimal (string)           VAT rate applied for this fee
 ├ tax_value                           money (string)             VAT included in this fee
 ├ tax_rule                            integer                    The ID of the used tax rule (or ``null``)
+├ tax_code                            string                     Codified reason for tax rate (or ``null``), see :ref:`rest-taxcodes`.
 └ canceled                            boolean                    Whether or not this fee has been canceled.
 downloads                             list of objects            List of ticket download options for order-wise ticket
                                                                  downloading. This might be a multi-page PDF or a ZIP
@@ -102,36 +112,13 @@ url                                   string                     The full URL to
 payments                              list of objects            List of payment processes (see below)
 refunds                               list of objects            List of refund processes (see below)
 last_modified                         datetime                   Last modification of this object
+cancellation_date                     datetime                   Time of order cancellation (or ``null``). **Note**:
+                                                                 Will not be set for partial cancellations and is not
+                                                                 reliable for orders that have been cancelled,
+                                                                 reactivated and cancelled again.
+plugin_data                           object                     Additional data added by plugins.
 ===================================== ========================== =======================================================
 
-
-.. versionchanged:: 4.0
-
-   The ``customer`` attribute has been added.
-
-.. versionchanged:: 4.1
-
-   The ``custom_followup_at`` attribute has been added.
-
-.. versionchanged:: 4.4
-
-   The ``item`` and ``variation`` query parameters have been added.
-
-.. versionchanged:: 4.6
-
-   The ``subevent`` query parameters has been added.
-
-.. versionchanged:: 4.8
-
-   The ``order.fees.id`` attribute has been added.
-
-.. versionchanged:: 4.15
-
-   The ``include`` query parameter has been added.
-
-.. versionchanged:: 4.16
-
-   The ``valid_if_pending`` attribute has been added.
 
 .. versionchanged:: 2023.8
 
@@ -149,6 +136,25 @@ last_modified                         datetime                   Last modificati
 
    The ``expires`` attribute can now be passed during order creation.
 
+.. versionchanged:: 2024.11
+
+   The ``cancellation_date`` attribute has been added and can also be used as an ordering key.
+
+.. versionchanged:: 2025.1
+
+   The ``tax_code`` attribute has been added.
+
+.. versionchanged:: 2025.2
+
+   The ``plugin_data`` attribute has been added.
+
+.. versionchanged:: 2025.6
+
+   The ``invoice_address.transmission_type`` and ``invoice_address.transmission_info`` attributes have been added.
+
+.. versionchanged:: 2025.10
+
+   The ``tax_rounding_mode`` attribute has been added.
 
 .. _order-position-resource:
 
@@ -186,6 +192,7 @@ voucher_budget_use                    money (string)             Amount of money
                                                                  are changed *after* the order was created. Can be ``null``.
 tax_rate                              decimal (string)           VAT rate applied for this position
 tax_value                             money (string)             VAT included in this position
+tax_code                              string                     Codified reason for tax rate (or ``null``), see :ref:`rest-taxcodes`.
 tax_rule                              integer                    The ID of the used tax rule (or ``null``)
 secret                                string                     Secret code printed on the tickets for validation
 addon_to                              integer                    Internal ID of the position this position is an add-on for (or ``null``)
@@ -201,8 +208,20 @@ checkins                              list of objects            List of **succe
 ├ datetime                            datetime                   Time of check-in
 ├ type                                string                     Type of scan (defaults to ``entry``)
 ├ gate                                integer                    Internal ID of the gate. Can be ``null``.
-├ device                              integer                    Internal ID of the device. Can be ``null``.
+├ device                              integer                    Internal ID of the device. Can be ``null``. **Deprecated**, since this ID is not otherwise used in the API and is therefore not very useful.
+├ device_id                           integer                    Attribute ``device_id`` of the device. Can be ``null``.
 └ auto_checked_in                     boolean                    Indicates if this check-in been performed automatically by the system
+print_logs                            list of objects            List of print jobs recorded e.g. by the pretix apps
+├ id                                  integer                    Internal ID of the print job
+├ successful                          boolean                    Whether the print job successfully resulted in a print.
+                                                                 This is not expected to be 100 % reliable information (since
+                                                                 printer feedback is never perfect) and there is no guarantee
+                                                                 that unsuccessful jobs will be logged.
+├ device_id                           integer                    Attribute ``device_id`` of the device that recorded the print. Can be ``null``.
+├ datetime                            datetime                   Time of printing
+├ source                              string                     Source of print job, e.g. name of the app used.
+├ type                                string                     Type of print (currently ``badge``, ``ticket``, ``certificate``, or ``other``)
+└ info                                object                     Additional data with client-dependent structure.
 downloads                             list of objects            List of ticket download options
 ├ output                              string                     Ticket output provider (e.g. ``pdf``, ``passbook``)
 └ url                                 string                     Download URL
@@ -215,15 +234,29 @@ answers                               list of objects            Answers to user
 seat                                  objects                    The assigned seat. Can be ``null``.
 ├ id                                  integer                    Internal ID of the seat instance
 ├ name                                string                     Human-readable seat name
+├ zone_name                           string                     Name of the zone the seat is in
+├ row_name                            string                     Name/number of the row the seat is in
+├ row_label                           string                     Additional label of the row (or ``null``)
+├ seat_number                         string                     Number of the seat within the row
+├ seat_label                          string                     Additional label of the seat (or ``null``)
 └ seat_guid                           string                     Identifier of the seat within the seating plan
 pdf_data                              object                     Data object required for ticket PDF generation. By default,
                                                                  this field is missing. It will be added only if you add the
                                                                  ``pdf_data=true`` query parameter to your request.
+plugin_data                           object                     Additional data added by plugins.
 ===================================== ========================== =======================================================
 
-.. versionchanged:: 4.16
+.. versionchanged:: 2024.9
 
-   The attributes ``blocked``, ``valid_from`` and ``valid_until`` have been added.
+   The attribute ``print_logs`` has been added.
+
+.. versionchanged:: 2025.1
+
+   The ``tax_code`` attribute has been added.
+
+.. versionchanged:: 2025.2
+
+   The ``plugin_data`` attribute has been added.
 
 .. _order-payment-resource:
 
@@ -330,6 +363,7 @@ List of all orders
             "payment_provider": "banktransfer",
             "fees": [],
             "total": "23.00",
+            "tax_rounding_mode": "line",
             "comment": "",
             "custom_followup_at": null,
             "checkin_attention": false,
@@ -349,7 +383,9 @@ List of all orders
                 "state": "",
                 "internal_reference": "",
                 "vat_id": "EU123456789",
-                "vat_id_validated": false
+                "vat_id_validated": false,
+                "transmission_type": "email",
+                "transmission_info": {}
             },
             "positions": [
               {
@@ -376,6 +412,7 @@ List of all orders
                 "tax_rate": "0.00",
                 "tax_value": "0.00",
                 "tax_rule": null,
+                "tax_code": null,
                 "secret": "z3fsn8jyufm5kpk768q69gkbyr5f4h6w",
                 "addon_to": null,
                 "subevent": null,
@@ -387,12 +424,24 @@ List of all orders
                 "seat": null,
                 "checkins": [
                   {
+                    "id": 1337,
                     "list": 44,
                     "type": "entry",
                     "gate": null,
                     "device": 2,
+                    "device_id": 1,
                     "datetime": "2017-12-25T12:45:23Z",
                     "auto_checked_in": false
+                  }
+                ],
+                "print_logs": [
+                  {
+                    "id": 1,
+                    "type": "badge",
+                    "datetime": "2017-12-25T12:45:23Z",
+                    "device_id": 1,
+                    "source": "pretixSCAN",
+                    "info": {}
                   }
                 ],
                 "answers": [
@@ -409,7 +458,8 @@ List of all orders
                     "output": "pdf",
                     "url": "https://pretix.eu/api/v1/organizers/bigevents/events/sampleconf/orderpositions/23442/download/pdf/"
                   }
-                ]
+                ],
+                "plugin_data": {}
               }
             ],
             "downloads": [
@@ -430,14 +480,16 @@ List of all orders
                 "provider": "banktransfer"
               }
             ],
-            "refunds": []
+            "refunds": [],
+            "cancellation_date": null,
+            "plugin_data": {}
           }
         ]
       }
 
    :query integer page: The page number in case of a multi-page result set, default is 1
    :query string ordering: Manually set the ordering of results. Valid fields to be used are ``datetime``, ``code``,
-                           ``last_modified``, and ``status``. Default: ``datetime``
+                           ``last_modified``, ``status`` and ``cancellation_date``. Default: ``datetime``
    :query string code: Only return orders that match the given order code
    :query string status: Only return orders in the given order status (see above)
    :query string search: Only return orders matching a given search query (matching for names, email addresses, and company names)
@@ -455,10 +507,13 @@ List of all orders
    :query datetime modified_since: Only return orders that have changed since the given date. Be careful: We only
        recommend using this in combination with ``testmode=false``, since test mode orders can vanish at any time and
        you will not notice it using this method.
-   :query datetime created_since: Only return orders that have been created since the given date.
+   :query datetime created_since: Only return orders that have been created since the given date (inclusive).
+   :query datetime created_before: Only return orders that have been created before the given date (exclusive).
    :query integer subevent: Only return orders with a position that contains this subevent ID. *Warning:* Result will also include orders if they contain mixed subevents, and it will even return orders where the subevent is only contained in a canceled position.
    :query datetime subevent_after: Only return orders that contain a ticket for a subevent taking place after the given date. This is an exclusive after, and it considers the **end** of the subevent (or its start, if the end is not set).
    :query datetime subevent_before: Only return orders that contain a ticket for a subevent taking place after the given date. This is an exclusive before, and it considers the **start** of the subevent.
+   :query string sales_channel: Only return orders with the given sales channel identifier (e.g. ``"web"``).
+   :query string payment_provider: Only return orders that contain a payment using the given payment provider. Note that this also searches for partial incomplete, or failed payments within the order and is not useful to get a sum of payment amounts without further processing.
    :query string exclude: Exclude a field from the output, e.g. ``fees`` or ``positions.downloads``. Can be used as a performance optimization. Can be passed multiple times.
    :query string include: Include only the given field in the output, e.g. ``fees`` or ``positions.downloads``. Can be used as a performance optimization. Can be passed multiple times. ``include`` is applied before ``exclude``, so ``exclude`` takes precedence.
    :param organizer: The ``slug`` field of the organizer to fetch
@@ -553,7 +608,9 @@ Fetching individual orders
         "payment_provider": "banktransfer",
         "fees": [],
         "total": "23.00",
+        "tax_rounding_mode": "line",
         "comment": "",
+        "api_meta": {},
         "custom_followup_at": null,
         "checkin_attention": false,
         "checkin_text": null,
@@ -572,7 +629,9 @@ Fetching individual orders
             "state": "",
             "internal_reference": "",
             "vat_id": "EU123456789",
-            "vat_id_validated": false
+            "vat_id_validated": false,
+            "transmission_type": "email",
+            "transmission_info": {}
         },
         "positions": [
           {
@@ -599,6 +658,7 @@ Fetching individual orders
             "tax_rate": "0.00",
             "tax_rule": null,
             "tax_value": "0.00",
+            "tax_code": null,
             "secret": "z3fsn8jyufm5kpk768q69gkbyr5f4h6w",
             "addon_to": null,
             "subevent": null,
@@ -610,12 +670,25 @@ Fetching individual orders
             "seat": null,
             "checkins": [
               {
+                "id": 1337,
                 "list": 44,
                 "type": "entry",
                 "gate": null,
                 "device": 2,
+                "device_id": 1,
                 "datetime": "2017-12-25T12:45:23Z",
                 "auto_checked_in": false
+              }
+            ],
+            "print_logs": [
+              {
+                "id": 1,
+                "type": "badge",
+                "successful": true,
+                "datetime": "2017-12-25T12:45:23Z",
+                "device_id": 1,
+                "source": "pretixSCAN",
+                "info": {}
               }
             ],
             "answers": [
@@ -632,7 +705,8 @@ Fetching individual orders
                 "output": "pdf",
                 "url": "https://pretix.eu/api/v1/organizers/bigevents/events/sampleconf/orderpositions/23442/download/pdf/"
               }
-            ]
+            ],
+            "plugin_data": {}
           }
         ],
         "downloads": [
@@ -653,7 +727,9 @@ Fetching individual orders
             "provider": "banktransfer"
           }
         ],
-        "refunds": []
+        "refunds": [],
+        "cancellation_date": null,
+        "plugin_data": {}
       }
 
    :param organizer: The ``slug`` field of the organizer to fetch
@@ -669,10 +745,6 @@ Fetching individual orders
 
 Order ticket download
 ---------------------
-
-.. versionchanged:: 4.10
-
-   The API now supports ticket downloads for pending orders if allowed by the event settings.
 
 .. http:get:: /api/v1/organizers/(organizer)/events/(event)/orders/(code)/download/(output)/
 
@@ -734,6 +806,8 @@ Updating order fields
 
    * ``comment``
 
+   * ``api_meta``
+
    * ``custom_followup_at``
 
    * ``invoice_address`` (you always need to supply the full object, or ``null`` to delete the current address)
@@ -782,7 +856,7 @@ Generating new secrets
 
 .. http:post:: /api/v1/organizers/(organizer)/events/(event)/orders/(code)/regenerate_secrets/
 
-   Triggers generation of new ``secret`` attributes for both the order and all order positions.
+   Triggers generation of new ``secret`` and ``web_secret`` attributes for both the order and all order positions.
 
    **Example request**:
 
@@ -813,7 +887,7 @@ Generating new secrets
 
 .. http:post:: /api/v1/organizers/(organizer)/events/(event)/orderpositions/(id)/regenerate_secrets/
 
-   Triggers generation of a new ``secret`` attribute for a single order position.
+   Triggers generation of a new ``secret`` and ``web_secret`` attribute for a single order position.
 
    **Example request**:
 
@@ -944,6 +1018,7 @@ Creating orders
      provider will not be called to do anything about this (i.e. if you pass a bank account to a debit provider, *no*
      charge will be created), this is just informative in case you *handled the payment already*.
    * ``payment_date`` (optional) – Date and time of the completion of the payment.
+   * ``tax_rounding_mode`` (optional)
    * ``comment`` (optional)
    * ``custom_followup_at`` (optional)
    * ``checkin_attention`` (optional)
@@ -963,8 +1038,10 @@ Creating orders
       * ``internal_reference``
       * ``vat_id``
       * ``vat_id_validated`` (optional) – If you need support for reverse charge (rarely the case), you need to check
-       yourself if the passed VAT ID is a valid EU VAT ID. In that case, set this to ``true``. Only valid VAT IDs will
-       trigger reverse charge taxation. Don't forget to set ``is_business`` as well!
+        yourself if the passed VAT ID is a valid EU VAT ID. In that case, set this to ``true``. Only valid VAT IDs will
+        trigger reverse charge taxation. Don't forget to set ``is_business`` as well!
+     * ``transmission_type`` (optional, defaults to ``email``)
+     * ``transmission_info`` (optional, see also :ref:`rest-transmission-types`)
 
    * ``positions``
 
@@ -989,6 +1066,7 @@ Creating orders
       * ``valid_until`` (optional, if both ``valid_from`` and ``valid_until`` are **missing** (not ``null``) the availability will be computed from the given product)
       * ``requested_valid_from`` (optional, can be set **instead** of ``valid_from`` and ``valid_until`` to signal a user choice for the start time that may or may not be respected)
       * ``use_reusable_medium`` (optional, causes the new ticket to take over the given reusable medium, identified by its ID)
+      * ``discount`` (optional, only possible if ``price`` is set; attention: if this is set to not-``null`` on any position, automatic calculation of discounts will not run)
       * ``answers``
 
         * ``question``
@@ -1007,9 +1085,10 @@ Creating orders
         prices. Note that this will not include other fees and is calculated once during order generation and will not
         be respected automatically when the order changes later.)
       * ``_split_taxes_like_products`` (Optional convenience flag. If set to ``true``, your ``tax_rule`` will be ignored
-        and the fee will be taxed like the products in the order. If the products have multiple tax rates, multiple fees
-        will be generated with weights adjusted to the net price of the products. Note that this will be calculated once
-        during order generation and is not respected automatically when the order changes later.)
+        and the fee will be taxed like the products in the order *unless* the total amount of the positions is zero.
+        If the products have multiple tax rates, multiple fees will be generated with weights adjusted to the net price
+        of the products. Note that this will be calculated once during order generation and is not respected automatically
+        when the order changes later.)
 
    * ``force`` (optional). If set to ``true``, quotas will be ignored.
    * ``send_email`` (optional). If set to ``true``, the same emails will be sent as for a regular order, regardless of
@@ -1552,6 +1631,7 @@ List of all order positions
             "tax_rate": "0.00",
             "tax_rule": null,
             "tax_value": "0.00",
+            "tax_code": null,
             "secret": "z3fsn8jyufm5kpk768q69gkbyr5f4h6w",
             "discount": null,
             "pseudonymization_id": "MQLJvANO3B",
@@ -1563,12 +1643,25 @@ List of all order positions
             "blocked": null,
             "checkins": [
               {
+                "id": 1337,
                 "list": 44,
                 "type": "entry",
                 "gate": null,
                 "device": 2,
+                "device_id": 1,
                 "datetime": "2017-12-25T12:45:23Z",
                 "auto_checked_in": false
+              }
+            ],
+            "print_logs": [
+              {
+                "id": 1,
+                "type": "badge",
+                "successful": true,
+                "datetime": "2017-12-25T12:45:23Z",
+                "device_id": 1,
+                "source": "pretixSCAN",
+                "info": {}
               }
             ],
             "answers": [
@@ -1585,7 +1678,8 @@ List of all order positions
                 "output": "pdf",
                 "url": "https://pretix.eu/api/v1/organizers/bigevents/events/sampleconf/orderpositions/23442/download/pdf/"
               }
-            ]
+            ],
+            "plugin_data": {}
           }
         ]
       }
@@ -1666,6 +1760,7 @@ Fetching individual positions
         "tax_rate": "0.00",
         "tax_rule": null,
         "tax_value": "0.00",
+        "tax_code": null,
         "secret": "z3fsn8jyufm5kpk768q69gkbyr5f4h6w",
         "addon_to": null,
         "subevent": null,
@@ -1677,12 +1772,25 @@ Fetching individual positions
         "seat": null,
         "checkins": [
           {
+            "id": 1337,
             "list": 44,
             "type": "entry",
             "gate": null,
             "device": 2,
+            "device_id": 1,
             "datetime": "2017-12-25T12:45:23Z",
             "auto_checked_in": false
+          }
+        ],
+        "print_logs": [
+          {
+            "id": 1,
+            "type": "badge",
+            "successful": true,
+            "datetime": "2017-12-25T12:45:23Z",
+            "device_id": 1,
+            "source": "pretixSCAN",
+            "info": {}
           }
         ],
         "answers": [
@@ -1699,7 +1807,8 @@ Fetching individual positions
             "output": "pdf",
             "url": "https://pretix.eu/api/v1/organizers/bigevents/events/sampleconf/orderpositions/23442/download/pdf/"
           }
-        ]
+        ],
+        "plugin_data": {}
       }
 
    :param organizer: The ``slug`` field of the organizer to fetch
@@ -1715,10 +1824,6 @@ Fetching individual positions
 
 Order position ticket download
 ------------------------------
-
-.. versionchanged:: 4.10
-
-   The API now supports ticket downloads for pending orders if allowed by the event settings.
 
 .. http:get:: /api/v1/organizers/(organizer)/events/(event)/orderpositions/(id)/download/(output)/
 
@@ -1772,14 +1877,9 @@ Order position ticket download
 Manipulating individual positions
 ---------------------------------
 
-.. versionchanged:: 4.8
+.. versionchanged:: 2024.9
 
-   The ``PATCH`` method now supports changing items, variations, subevents, seats, prices, and tax rules.
-   The ``POST`` endpoint to add individual positions has been added.
-
-.. versionadded:: 4.16
-
-   The endpoints to manage blocks have been added.
+   The API now supports logging ticket and badge prints.
 
 .. http:patch:: /api/v1/organizers/(organizer)/events/(event)/orderpositions/(id)/
 
@@ -1823,8 +1923,13 @@ Manipulating individual positions
 
    * ``valid_until``
 
+   * ``secret``
+
    Changing parameters such as ``item`` or ``price`` will **not** automatically trigger creation of a new invoice,
    you need to take care of that yourself.
+
+   Changing ``secret`` does not cause a new PDF ticket to be sent to the customer, nor does it cause the old secret
+   to be added to the revocation list, even if your ticket generator uses one.
 
    **Example request**:
 
@@ -1849,6 +1954,7 @@ Manipulating individual positions
 
       (Full order position resource, see above.)
 
+   :query boolean check_quotas: Whether to check quotas before committing item changes, default is ``true``
    :param organizer: The ``slug`` field of the organizer of the event
    :param event: The ``slug`` field of the event
    :param id: The ``id`` field of the order position to update
@@ -1928,6 +2034,7 @@ Manipulating individual positions
 
       (Full order position resource, see above.)
 
+   :query boolean check_quotas: Whether to check quotas before creating the new position, default is ``true``
    :param organizer: The ``slug`` field of the organizer of the event
    :param event: The ``slug`` field of the event
 
@@ -2040,6 +2147,59 @@ Manipulating individual positions
    :statuscode 401: Authentication failure
    :statuscode 403: The requested organizer/event does not exist **or** you have no permission to update this order position.
 
+.. http:post:: /api/v1/organizers/(organizer)/events/(event)/orderpositions/(id)/printlog/
+
+   Creates a print log, stating that this ticket has been printed.
+
+   **Example request**:
+
+   .. sourcecode:: http
+
+      POST /api/v1/organizers/bigevents/events/sampleconf/orderpositions/23442/printlog/ HTTP/1.1
+      Host: pretix.eu
+      Accept: application/json, text/javascript
+      Content-Type: application/json
+
+     {
+       "datetime": "2024-09-19T13:37:00+02:00",
+       "source": "pretixPOS",
+       "type": "badge",
+       "info": {
+         "cashier": 1234
+       }
+     }
+
+   **Example response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 201 Created
+      Vary: Accept
+      Content-Type: application/pdf
+
+     {
+       "id": 1234,
+       "device_id": null,
+       "datetime": "2024-09-19T13:37:00+02:00",
+       "source": "pretixPOS",
+       "type": "badge",
+       "info": {
+         "cashier": 1234
+       }
+     }
+
+   :param organizer: The ``slug`` field of the organizer to create a log for
+   :param event: The ``slug`` field of the event to create a log for
+   :param id: The ``id`` field of the order position to create a log for
+   :statuscode 201: no error
+   :statuscode 401: Authentication failure
+   :statuscode 403: The requested organizer/event does not exist **or** you have no permission to view this resource
+                    **or** downloads are not available for this order position at this time. The response content will
+                    contain more details.
+   :statuscode 404: The requested order position or download provider does not exist.
+   :statuscode 409: The file is not yet ready and will now be prepared. Retry the request after waiting for a few
+                    seconds.
+
 Changing order contents
 -----------------------
 
@@ -2047,10 +2207,6 @@ While you can :ref:`change positions individually <rest-orderpositions-manipulat
 multiple changes to an order at once within one transaction. This makes it possible to e.g. swap the seats of two
 attendees in an order without running into conflicts. This interface also offers some possibilities not available
 otherwise, such as splitting an order or changing fees.
-
-.. versionchanged:: 4.8
-
-   This endpoint has been added to the system.
 
 .. http:post:: /api/v1/organizers/(organizer)/events/(event)/orders/(code)/change/
 
@@ -2072,6 +2228,9 @@ otherwise, such as splitting an order or changing fees.
 
    * ``cancel_fees``: A list of objects with the single key ``fee`` specifying an order fee ID.
 
+   * ``create_fees``: A list of objects describing new order fees with the fields ``fee_type``, ``value``, ``description``,
+     ``internal_type``, ``tax_rule``
+
    * ``recalculate_taxes``: If set to ``"keep_net"``, all taxes will be recalculated based on the tax rule and invoice
      address, the net price will be kept. If set to ``"keep_gross"``, the gross price will be kept. If set to ``null``
      (the default) the taxes are not recalculated.
@@ -2091,22 +2250,22 @@ otherwise, such as splitting an order or changing fees.
       Content-Type: application/json
 
       {
-        "cancel_positions": [
-          {
-            "position": 12373
-          }
-        ],
         "patch_positions": [
           {
             "position": 12374,
             "body": {
               "item": 12,
-              "variation": None,
+              "variation": null,
               "subevent": 562,
               "seat": "seat-guid-2",
               "price": "99.99",
               "tax_rule": 15
             }
+          }
+        ],
+        "cancel_positions": [
+          {
+            "position": 12373
           }
         ],
         "split_positions": [
@@ -2117,7 +2276,7 @@ otherwise, such as splitting an order or changing fees.
         "create_positions": [
           {
             "item": 12,
-            "variation": None,
+            "variation": null,
             "subevent": 562,
             "seat": "seat-guid-2",
             "price": "99.99",
@@ -2125,17 +2284,26 @@ otherwise, such as splitting an order or changing fees.
             "attendee_name": "Peter",
           }
         ],
-        "cancel_fees": [
-          {
-            "fee": 49
-          }
-        ],
-        "change_fees": [
+        "patch_fees": [
           {
             "fee": 51,
             "body": {
               "value": "12.00"
             }
+          }
+        ],
+        "cancel_fees": [
+          {
+            "fee": 49
+          }
+        ],
+        "create_fees": [
+          {
+            "fee_type": "other",
+            "value": "1.50",
+            "description": "Example Fee",
+            "internal_type": "",
+            "tax_rule": 15
           }
         ],
         "reissue_invoice": true,
@@ -2153,6 +2321,7 @@ otherwise, such as splitting an order or changing fees.
 
       (Full order position resource, see above.)
 
+   :query boolean check_quotas: Whether to check quotas before patching or creating positions, default is ``true``
    :param organizer: The ``slug`` field of the organizer of the event
    :param event: The ``slug`` field of the event
    :param code: The ``code`` field of the order to update
@@ -2348,6 +2517,7 @@ Order payment endpoints
 
       {
         "amount": "23.00",
+        "comment": "Overpayment",
         "mark_canceled": false
       }
 

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -35,6 +35,9 @@ class StatisticsApp(AppConfig):
         version = version
         category = 'FEATURE'
         description = _("Get a birds-eye view of your event sales with graphical statistics.")
+        navigation_links = [
+            ((_("Orders"), _("Statistics")), "plugins:statistics:index", {}),
+        ]
 
     def ready(self):
         from . import signals  # NOQA

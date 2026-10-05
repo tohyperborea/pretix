@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -26,6 +26,7 @@ from decimal import Decimal
 
 from django.dispatch import receiver
 from django.utils.formats import date_format
+from django.utils.html import escape, mark_safe
 from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
 
@@ -39,7 +40,8 @@ from pretix.base.settings import PERSON_NAME_SCHEMES, get_name_parts_localized
 from pretix.base.signals import (
     register_mail_placeholders, register_text_placeholders,
 )
-from pretix.helpers.format import SafeFormatter
+from pretix.base.templatetags.rich_text import markdown_compile_email
+from pretix.helpers.format import PlainHtmlAlternativeString, SafeFormatter
 
 logger = logging.getLogger('pretix.base.services.placeholders')
 
@@ -105,6 +107,122 @@ class SimpleFunctionalTextPlaceholder(BaseTextPlaceholder):
             return self._sample(event)
         else:
             return self._sample
+
+
+class BaseRichTextPlaceholder(BaseTextPlaceholder):
+    """
+    This is the base class for all placeholders which can render either to plain text
+    or to a rich HTML element.
+    """
+
+    def __init__(self, identifier, args):
+        self._identifier = identifier
+        self._args = args
+
+    @property
+    def identifier(self):
+        return self._identifier
+
+    @property
+    def allowed_in_plain_content(self):
+        return False
+
+    @property
+    def required_context(self):
+        return self._args
+
+    @property
+    def is_block(self):
+        return False
+
+    def render(self, context):
+        return PlainHtmlAlternativeString(
+            self.render_plain(**{k: context[k] for k in self._args}),
+            self.render_html(**{k: context[k] for k in self._args}),
+            self.is_block,
+        )
+
+    def render_html(self, **kwargs):
+        """
+        HTML rendering of the placeholder. Should return "safe" HTML, i.e. everything needs to be
+        escaped.
+        """
+        raise NotImplementedError
+
+    def render_plain(self, **kwargs):
+        """
+        Plain text rendering of the placeholder.
+        """
+        raise NotImplementedError
+
+    def render_sample(self, event):
+        return PlainHtmlAlternativeString(
+            self.render_sample_plain(event=event),
+            self.render_sample_html(event=event),
+            self.is_block,
+        )
+
+    def render_sample_html(self, event):
+        raise NotImplementedError
+
+    def render_sample_plain(self, event):
+        raise NotImplementedError
+
+
+class SimpleButtonPlaceholder(BaseRichTextPlaceholder):
+    def __init__(self, identifier, args, url_func, text_func, sample_url_func, sample_text_func):
+        super().__init__(identifier, args)
+        self._url_func = url_func
+        self._text_func = text_func
+        self._sample_url_func = sample_url_func
+        self._sample_text_func = sample_text_func
+
+    def render_html(self, **context):
+        text = self._text_func(**{k: context[k] for k in self._args})
+        url = self._url_func(**{k: context[k] for k in self._args})
+        return f'<a href="{url}" class="button">{escape(text)}</a>'
+
+    def render_plain(self, **context):
+        text = self._text_func(**{k: context[k] for k in self._args})
+        url = self._url_func(**{k: context[k] for k in self._args})
+        return f'{text}: {url}'
+
+    def render_sample_html(self, event):
+        text = self._sample_text_func(event)
+        url = self._sample_url_func(event)
+        return f'<a href="{url}" class="button">{escape(text)}</a>'
+
+    def render_sample_plain(self, event):
+        text = self._sample_text_func(event)
+        url = self._sample_url_func(event)
+        return f'{text}: {url}'
+
+
+class MarkdownTextPlaceholder(BaseRichTextPlaceholder):
+    def __init__(self, identifier, args, func, sample, inline):
+        super().__init__(identifier, args)
+        self._func = func
+        self._sample = sample
+        self._snippet = inline
+
+    @property
+    def allowed_in_plain_content(self):
+        return self._snippet
+
+    def render_plain(self, **context):
+        return self._func(**{k: context[k] for k in self._args})
+
+    def render_html(self, **context):
+        return mark_safe(markdown_compile_email(self.render_plain(**context), snippet=self._snippet))
+
+    def render_sample_plain(self, event):
+        if callable(self._sample):
+            return self._sample(event)
+        else:
+            return self._sample
+
+    def render_sample_html(self, event):
+        return mark_safe(markdown_compile_email(self.render_sample_plain(event), snippet=self._snippet))
 
 
 class PlaceholderContext(SafeFormatter):
@@ -209,13 +327,24 @@ def get_best_name(position_or_address, parts=False):
 def base_placeholders(sender, **kwargs):
     from pretix.multidomain.urlreverse import build_absolute_uri
 
+    def _event_sample(event):
+        if event.has_subevents:
+            se = event.subevents.first()
+            if se:
+                return se.name
+        return event.name
+
     ph = [
         SimpleFunctionalTextPlaceholder(
             'event', ['event'], lambda event: event.name, lambda event: event.name
         ),
         SimpleFunctionalTextPlaceholder(
             'event', ['event_or_subevent'], lambda event_or_subevent: event_or_subevent.name,
-            lambda event_or_subevent: event_or_subevent.name
+            _event_sample,
+        ),
+        SimpleFunctionalTextPlaceholder(
+            'event_series_name', ['event', 'event_or_subevent'], lambda event, event_or_subevent: event.name,
+            lambda event: event.name
         ),
         SimpleFunctionalTextPlaceholder(
             'event_slug', ['event'], lambda event: event.slug, lambda event: event.slug
@@ -262,7 +391,7 @@ def base_placeholders(sender, **kwargs):
                 'presale:event.order.open', kwargs={
                     'order': order.code,
                     'secret': order.secret,
-                    'hash': order.email_confirm_hash()
+                    'hash': order.email_confirm_secret()
                 }
             ), lambda event: build_absolute_uri(
                 event,
@@ -272,6 +401,27 @@ def base_placeholders(sender, **kwargs):
                     'hash': '98kusd8ofsj8dnkd'
                 }
             ),
+        ),
+        SimpleButtonPlaceholder(
+            'url_button', ['order', 'event'],
+            url_func=lambda order, event: build_absolute_uri(
+                event,
+                'presale:event.order.open', kwargs={
+                    'order': order.code,
+                    'secret': order.secret,
+                    'hash': order.email_confirm_secret()
+                }
+            ),
+            text_func=lambda order, event: _("View order details"),
+            sample_url_func=lambda event: build_absolute_uri(
+                event,
+                'presale:event.order.open', kwargs={
+                    'order': 'F8VVL',
+                    'secret': '6zzjnumtsx136ddy',
+                    'hash': '98kusd8ofsj8dnkd'
+                }
+            ),
+            sample_text_func=lambda event: _("View order details"),
         ),
         SimpleFunctionalTextPlaceholder(
             'url_info_change', ['order', 'event'], lambda order, event: build_absolute_uri(
@@ -331,6 +481,61 @@ def base_placeholders(sender, **kwargs):
             lambda event: build_absolute_uri(
                 event,
                 'presale:event.order.position', kwargs={
+                    'order': 'F8VVL',
+                    'secret': '6zzjnumtsx136ddy',
+                    'position': '123'
+                }
+            ),
+        ),
+        SimpleButtonPlaceholder(
+            'url_button', ['event', 'position'],
+            url_func=lambda event, position: build_absolute_uri(
+                event,
+                'presale:event.order.position', kwargs={
+                    'order': position.order.code,
+                    'secret': position.web_secret,
+                    'position': position.positionid
+                }
+            ),
+            text_func=lambda event, position: _("View registration details"),
+            sample_url_func=lambda event: build_absolute_uri(
+                event,
+                'presale:event.order.position', kwargs={
+                    'order': 'F8VVL',
+                    'secret': '6zzjnumtsx136ddy',
+                    'position': '123'
+                }
+            ),
+            sample_text_func=lambda event: _("View registration details"),
+        ),
+        SimpleFunctionalTextPlaceholder(
+            'url_info_change', ['position', 'event'], lambda position, event: build_absolute_uri(
+                event,
+                'presale:event.order.position.modify', kwargs={
+                    'order': position.order.code,
+                    'secret': position.web_secret,
+                    'position': position.positionid
+                }
+            ), lambda event: build_absolute_uri(
+                event,
+                'presale:event.order.position.modify', kwargs={
+                    'order': 'F8VVL',
+                    'secret': '6zzjnumtsx136ddy',
+                    'position': '123',
+                }
+            ),
+        ),
+        SimpleFunctionalTextPlaceholder(
+            'url_products_change', ['position', 'event'], lambda position, event: build_absolute_uri(
+                event,
+                'presale:event.order.position.change', kwargs={
+                    'order': position.order.code,
+                    'secret': position.web_secret,
+                    'position': position.positionid
+                }
+            ), lambda event: build_absolute_uri(
+                event,
+                'presale:event.order.position.change', kwargs={
                     'order': 'F8VVL',
                     'secret': '6zzjnumtsx136ddy',
                     'position': '123'
@@ -400,7 +605,7 @@ def base_placeholders(sender, **kwargs):
             'invoice_company', ['invoice_address'], lambda invoice_address: invoice_address.company or '',
             _('Sample Corporation')
         ),
-        SimpleFunctionalTextPlaceholder(
+        MarkdownTextPlaceholder(
             'orders', ['event', 'orders'], lambda event, orders: '\n' + '\n\n'.join(
                 '* {} - {}'.format(
                     order.full_code,
@@ -409,7 +614,7 @@ def base_placeholders(sender, **kwargs):
                         'organizer': event.organizer.slug,
                         'order': order.code,
                         'secret': order.secret,
-                        'hash': order.email_confirm_hash(),
+                        'hash': order.email_confirm_secret(),
                     }),
                 )
                 for order in orders
@@ -430,6 +635,7 @@ def base_placeholders(sender, **kwargs):
                     {'code': 'OPKSB', 'secret': '09pjdksflosk3njd', 'hash': 'stuvwxy2z'}
                 ]
             ),
+            inline=False,
         ),
         SimpleFunctionalTextPlaceholder(
             'hours', ['event', 'waiting_list_entry'], lambda event, waiting_list_entry:
@@ -444,12 +650,13 @@ def base_placeholders(sender, **kwargs):
             'code', ['waiting_list_voucher'], lambda waiting_list_voucher: waiting_list_voucher.code,
             '68CYU2H6ZTP3WLK5'
         ),
-        SimpleFunctionalTextPlaceholder(
+        MarkdownTextPlaceholder(
             # join vouchers with two spaces at end of line so markdown-parser inserts a <br>
             'voucher_list', ['voucher_list'], lambda voucher_list: '  \n'.join(voucher_list),
-            '    68CYU2H6ZTP3WLK5\n    7MB94KKPVEPSMVF2'
+            '68CYU2H6ZTP3WLK5  \n7MB94KKPVEPSMVF2',
+            inline=False,
         ),
-        SimpleFunctionalTextPlaceholder(
+        MarkdownTextPlaceholder(
             # join vouchers with two spaces at end of line so markdown-parser inserts a <br>
             'voucher_url_list', ['event', 'voucher_list'],
             lambda event, voucher_list: '  \n'.join([
@@ -464,6 +671,7 @@ def base_placeholders(sender, **kwargs):
                 ) + '?voucher=' + c
                 for c in ['68CYU2H6ZTP3WLK5', '7MB94KKPVEPSMVF2']
             ]),
+            inline=False,
         ),
         SimpleFunctionalTextPlaceholder(
             'url', ['event', 'voucher_list'], lambda event, voucher_list: build_absolute_uri(event, 'presale:event.index', kwargs={
@@ -482,13 +690,13 @@ def base_placeholders(sender, **kwargs):
             'comment', ['comment'], lambda comment: comment,
             _('An individual text with a reason can be inserted here.'),
         ),
-        SimpleFunctionalTextPlaceholder(
+        MarkdownTextPlaceholder(
             'payment_info', ['order', 'payments'], _placeholder_payments,
-            _('The amount has been charged to your card.'),
+            _('The amount has been charged to your card.'), inline=False,
         ),
-        SimpleFunctionalTextPlaceholder(
+        MarkdownTextPlaceholder(
             'payment_info', ['payment_info'], lambda payment_info: payment_info,
-            _('Please transfer money to this bank account: 9999-9999-9999-9999'),
+            _('Please transfer money to this bank account: 9999-9999-9999-9999'), inline=False,
         ),
         SimpleFunctionalTextPlaceholder(
             'attendee_name', ['position'], lambda position: position.attendee_name,
@@ -545,21 +753,21 @@ def base_placeholders(sender, **kwargs):
         ))
 
     for k, v in sender.meta_data.items():
-        ph.append(SimpleFunctionalTextPlaceholder(
+        ph.append(MarkdownTextPlaceholder(
             'meta_%s' % k, ['event'], lambda event, k=k: event.meta_data[k],
-            v
+            v, inline=True,
         ))
-        ph.append(SimpleFunctionalTextPlaceholder(
+        ph.append(MarkdownTextPlaceholder(
             'meta_%s' % k, ['event_or_subevent'], lambda event_or_subevent, k=k: event_or_subevent.meta_data[k],
-            v
+            v, inline=True,
         ))
 
     return ph
 
 
 class FormPlaceholderMixin:
-    def _set_field_placeholders(self, fn, base_parameters):
-        placeholders = get_available_placeholders(self.event, base_parameters)
+    def _set_field_placeholders(self, fn, base_parameters, rich=False):
+        placeholders = get_available_placeholders(self.event, base_parameters, rich=rich)
         ht = format_placeholders_help_text(placeholders, self.event)
         if self.fields[fn].help_text:
             self.fields[fn].help_text += ' ' + str(ht)
@@ -570,7 +778,7 @@ class FormPlaceholderMixin:
         )
 
 
-def get_available_placeholders(event, base_parameters):
+def get_available_placeholders(event, base_parameters, rich=False):
     if 'order' in base_parameters:
         base_parameters.append('invoice_address')
         base_parameters.append('position_or_address')
@@ -579,6 +787,39 @@ def get_available_placeholders(event, base_parameters):
         if not isinstance(val, (list, tuple)):
             val = [val]
         for v in val:
+            if isinstance(v, BaseRichTextPlaceholder) and not rich and not v.allowed_in_plain_content:
+                continue
             if all(rp in base_parameters for rp in v.required_context):
                 params[v.identifier] = v
     return params
+
+
+def get_sample_context(event, context_parameters, rich=True):
+    context_dict = {}
+    lbl = _('This value will be replaced based on dynamic parameters.')
+    for k, v in get_available_placeholders(event, context_parameters, rich=rich).items():
+        sample = v.render_sample(event)
+        if isinstance(sample, PlainHtmlAlternativeString):
+            context_dict[k] = PlainHtmlAlternativeString(
+                '<{el} class="placeholder" title="{title}">{plain}</{el}>'.format(
+                    el='span',
+                    title=lbl,
+                    plain=escape(sample.plain),
+                ),
+                '<{el} class="placeholder placeholder-html" title="{title}">{html}</{el}>'.format(
+                    el='div' if sample.is_block else 'span',
+                    title=lbl,
+                    html=sample.html,
+                )
+            )
+        elif str(sample).strip().startswith('* ') or str(sample).startswith('  '):
+            context_dict[k] = mark_safe('<div class="placeholder" title="{}">{}</div>'.format(
+                lbl,
+                markdown_compile_email(str(sample))
+            ))
+        else:
+            context_dict[k] = mark_safe('<span class="placeholder" title="{}">{}</span>'.format(
+                lbl,
+                escape(sample)
+            ))
+    return context_dict

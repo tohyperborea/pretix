@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -56,6 +56,7 @@ orga_router.register(r'webhooks', webhooks.WebHookViewSet)
 orga_router.register(r'seatingplans', organizer.SeatingPlanViewSet)
 orga_router.register(r'giftcards', organizer.GiftCardViewSet)
 orga_router.register(r'customers', organizer.CustomerViewSet)
+orga_router.register(r'saleschannels', organizer.SalesChannelViewSet)
 orga_router.register(r'memberships', organizer.MembershipViewSet)
 orga_router.register(r'membershiptypes', organizer.MembershipTypeViewSet)
 orga_router.register(r'reusablemedia', media.ReusableMediaViewSet)
@@ -65,6 +66,7 @@ orga_router.register(r'orders', order.OrganizerOrderViewSet)
 orga_router.register(r'invoices', order.InvoiceViewSet)
 orga_router.register(r'scheduled_exports', exporters.ScheduledOrganizerExportViewSet)
 orga_router.register(r'exporters', exporters.OrganizerExportersViewSet, basename='exporters')
+orga_router.register(r'transactions', order.OrganizerTransactionViewSet)
 
 team_router = routers.DefaultRouter()
 team_router.register(r'members', organizer.TeamMemberViewSet)
@@ -82,17 +84,23 @@ event_router.register(r'quotas', item.QuotaViewSet)
 event_router.register(r'vouchers', voucher.VoucherViewSet)
 event_router.register(r'orders', order.EventOrderViewSet)
 event_router.register(r'orderpositions', order.OrderPositionViewSet)
+event_router.register(r'transactions', order.TransactionViewSet)
 event_router.register(r'invoices', order.InvoiceViewSet)
 event_router.register(r'revokedsecrets', order.RevokedSecretViewSet, basename='revokedsecrets')
 event_router.register(r'blockedsecrets', order.BlockedSecretViewSet, basename='blockedsecrets')
 event_router.register(r'taxrules', event.TaxRuleViewSet)
+event_router.register(r'seats', event.SeatViewSet)
 event_router.register(r'waitinglistentries', waitinglist.WaitingListViewSet)
 event_router.register(r'checkinlists', checkin.CheckinListViewSet)
+event_router.register(r'checkins', checkin.CheckinViewSet)
 event_router.register(r'cartpositions', cart.CartPositionViewSet)
 event_router.register(r'scheduled_exports', exporters.ScheduledEventExportViewSet)
 event_router.register(r'exporters', exporters.EventExportersViewSet, basename='exporters')
 event_router.register(r'shredders', shredders.EventShreddersViewSet, basename='shredders')
 event_router.register(r'item_meta_properties', event.ItemMetaPropertiesViewSet)
+
+subevent_router = routers.DefaultRouter()
+subevent_router.register(r'seats', event.SeatViewSet)
 
 checkinlist_router = routers.DefaultRouter()
 checkinlist_router.register(r'positions', checkin.CheckinListPositionViewSet, basename='checkinlistpos')
@@ -104,6 +112,7 @@ item_router = routers.DefaultRouter()
 item_router.register(r'variations', item.ItemVariationViewSet)
 item_router.register(r'addons', item.ItemAddOnViewSet)
 item_router.register(r'bundles', item.ItemBundleViewSet)
+item_router.register(r'program_times', item.ItemProgramTimeViewSet)
 
 order_router = routers.DefaultRouter()
 order_router.register(r'payments', order.PaymentViewSet)
@@ -125,12 +134,15 @@ urlpatterns = [
             name="checkinrpc.redeem"),
     re_path(r'^organizers/(?P<organizer>[^/]+)/checkinrpc/search/$', checkin.CheckinRPCSearchView.as_view(),
             name="checkinrpc.search"),
+    re_path(r'^organizers/(?P<organizer>[^/]+)/checkinrpc/annul/$', checkin.CheckinRPCAnnulView.as_view(),
+            name="checkinrpc.annul"),
     re_path(r'^organizers/(?P<organizer>[^/]+)/settings/$', organizer.OrganizerSettingsView.as_view(),
             name="organizer.settings"),
     re_path(r'^organizers/(?P<organizer>[^/]+)/giftcards/(?P<giftcard>[^/]+)/', include(giftcard_router.urls)),
     re_path(r'^organizers/(?P<organizer>[^/]+)/events/(?P<event>[^/]+)/settings/$', event.EventSettingsView.as_view(),
             name="event.settings"),
     re_path(r'^organizers/(?P<organizer>[^/]+)/events/(?P<event>[^/]+)/', include(event_router.urls)),
+    re_path(r'^organizers/(?P<organizer>[^/]+)/events/(?P<event>[^/]+)/subevents/(?P<subevent>\d+)/', include(subevent_router.urls)),
     re_path(r'^organizers/(?P<organizer>[^/]+)/teams/(?P<team>[^/]+)/', include(team_router.urls)),
     re_path(r'^organizers/(?P<organizer>[^/]+)/events/(?P<event>[^/]+)/items/(?P<item>[^/]+)/', include(item_router.urls)),
     re_path(r'^organizers/(?P<organizer>[^/]+)/events/(?P<event>[^/]+)/questions/(?P<question>[^/]+)/',

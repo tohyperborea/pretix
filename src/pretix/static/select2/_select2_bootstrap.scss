@@ -90,8 +90,8 @@ $s2bs-form-control-transition: border-color ease-in-out .15s, box-shadow ease-in
 
 // @see http://getbootstrap.com/css/#forms-control-validation
 // @see https://github.com/twbs/bootstrap-sass/blob/master/assets/stylesheets/bootstrap/_forms.scss#L388
-@mixin validation-state-focus($color) {
-  $shadow: inset 0 1px 1px rgba(0,0,0,.075), 0 0 6px lighten($color, 20%);
+@mixin validation-state-focus($color, $color-shadow, $color-hover) {
+  $shadow: inset 0 1px 1px rgba(0,0,0,.075), 0 0 6px $color-shadow;
 
   .select2-dropdown,
   .select2-selection {
@@ -101,14 +101,14 @@ $s2bs-form-control-transition: border-color ease-in-out .15s, box-shadow ease-in
   .select2-container--focus .select2-selection,
   .select2-container--open .select2-selection {
     @include box-shadow($shadow);
-    border-color: darken($color, 10%);
+    border-color: $color-hover;
   }
 
   &.select2-drop-active {
-    border-color: darken($color, 10%);
+    border-color: $color-hover;
 
     &.select2-drop.select2-drop-above {
-      border-top-color: darken($color, 10%);
+      border-top-color: $color-hover;
     }
   }
 }
@@ -456,18 +456,16 @@ $s2bs-form-control-transition: border-color ease-in-out .15s, box-shadow ease-in
     min-height: $s2bs-input-height-base;
     padding: 0;
     height: auto;
+    padding-bottom: 4px;
 
     .select2-selection__rendered {
       box-sizing: border-box;
-      display: block;
       line-height: $s2bs-line-height-base;
       list-style: none;
       margin: 0;
-      overflow: hidden;
       padding: 0;
       width: 100%;
       text-overflow: ellipsis;
-      white-space: nowrap;
     }
 
     .select2-selection__placeholder {
@@ -486,7 +484,7 @@ $s2bs-form-control-transition: border-color ease-in-out .15s, box-shadow ease-in
       border: 1px solid $s2bs-btn-default-border;
       border-radius: $s2bs-selection-choice-border-radius;
       cursor: default;
-      float: left;
+      display: inline-block;
       margin: ($s2bs-padding-base-vertical - 1) 0 0 $s2bs-padding-base-horizontal/2;
       padding: 0 $s2bs-padding-base-vertical;
     }
@@ -512,6 +510,8 @@ $s2bs-form-control-transition: border-color ease-in-out .15s, box-shadow ease-in
       display: inline-block;
       font-weight: bold;
       margin-right: $s2bs-padding-base-vertical / 2;
+      border: none;
+      background: none;
 
       &:hover {
         color: $s2bs-remove-choice-hover-color;
@@ -724,15 +724,15 @@ $s2bs-form-control-transition: border-color ease-in-out .15s, box-shadow ease-in
  */
 
 .has-warning {
-  @include validation-state-focus($state-warning-text);
+  @include validation-state-focus($state-warning-text, $state-warning-shadow, $state-warning-text-hover);
 }
 
 .has-error {
-  @include validation-state-focus($state-danger-text);
+  @include validation-state-focus($state-danger-text, $state-danger-shadow, $state-danger-text-hover);
 }
 
 .has-success {
-  @include validation-state-focus($state-success-text);
+  @include validation-state-focus($state-success-text, $state-success-shadow, $state-success-text-hover);
 }
 
 /**

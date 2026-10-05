@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -20,10 +20,11 @@
 # <https://www.gnu.org/licenses/>.
 #
 
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from decimal import Decimal
 from itertools import groupby
-from typing import Dict, Optional, Tuple
+from math import ceil, inf
+from typing import Dict
 
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
@@ -33,8 +34,11 @@ from django.utils.translation import gettext_lazy as _, pgettext_lazy
 from django_scopes import ScopedManager
 
 from pretix.base.decimal import round_decimal
-from pretix.base.models import fields
 from pretix.base.models.base import LoggedModel
+
+PositionInfo = namedtuple('PositionInfo',
+                          ['item_id', 'subevent_id', 'subevent_date_from', 'line_price_gross', 'addon_to',
+                           'voucher_discount'])
 
 
 class Discount(LoggedModel):
@@ -64,10 +68,14 @@ class Discount(LoggedModel):
         default=0,
         verbose_name=_("Position")
     )
-    sales_channels = fields.MultiStringField(
-        verbose_name=_('Sales channels'),
-        default=['web'],
-        blank=False,
+    all_sales_channels = models.BooleanField(
+        verbose_name=_("All supported sales channels"),
+        default=True,
+    )
+    limit_sales_channels = models.ManyToManyField(
+        "SalesChannel",
+        verbose_name=_("Sales channels"),
+        blank=True,
     )
 
     available_from = models.DateTimeField(
@@ -165,6 +173,17 @@ class Discount(LoggedModel):
                     "access to sold-out quota will still receive the discount."),
     )
 
+    subevent_date_from = models.DateTimeField(
+        verbose_name=pgettext_lazy("subevent", "Available for dates starting from"),
+        null=True,
+        blank=True,
+    )
+    subevent_date_until = models.DateTimeField(
+        verbose_name=pgettext_lazy("subevent", "Available for dates starting until"),
+        null=True,
+        blank=True,
+    )
+
     # more feature ideas:
     # - max_usages_per_order
     # - promote_to_user_if_almost_satisfied
@@ -241,22 +260,62 @@ class Discount(LoggedModel):
             return False
         return True
 
-    def _apply_min_value(self, positions, condition_idx_group, benefit_idx_group, result):
-        if self.condition_min_value and sum(positions[idx][2] for idx in condition_idx_group) < self.condition_min_value:
+    def _apply_min_value(self, positions, condition_idx_group, benefit_idx_group, result, collect_potential_discounts, subevent_id):
+        if self.condition_min_value and sum(positions[idx].line_price_gross for idx in condition_idx_group) < self.condition_min_value:
             return
 
         if self.condition_min_count or self.benefit_only_apply_to_cheapest_n_matches:
             raise ValueError('Validation invariant violated.')
 
         for idx in benefit_idx_group:
-            previous_price = positions[idx][2]
+            previous_price = positions[idx].line_price_gross
             new_price = round_decimal(
                 previous_price * (Decimal('100.00') - self.benefit_discount_matching_percent) / Decimal('100.00'),
                 self.event.currency,
             )
             result[idx] = new_price
 
-    def _apply_min_count(self, positions, condition_idx_group, benefit_idx_group, result):
+        if collect_potential_discounts is not None:
+            for idx in condition_idx_group:
+                collect_potential_discounts[idx] = [(self, inf, -1, subevent_id)]
+
+    def _addon_idx(self, positions, idx):
+        """
+        If we have the following cart:
+
+        - Main product
+          - 10x Addon product 5€
+        - Main product
+          - 10x Addon product 5€
+
+        And we have a discount rule that grants "every 10th product is free", people tend to expect
+
+        - Main product
+          - 9x Addon product 5€
+          - 1x Addon product free
+        - Main product
+          - 9x Addon product 5€
+          - 1x Addon product free
+
+        And get confused if they get
+
+        - Main product
+          - 8x Addon product 5€
+          - 2x Addon product free
+        - Main product
+          - 10x Addon product 5€
+
+        Even if the result is the same. Therefore, we sort positions in the cart not only by price, but also by their
+        relative index within their addon group. This is only a heuristic and there are *still* scenarios where the more
+        unexpected version happens, e.g. if prices are different. We need to accept this as long as discounts work on
+        cart level and not on addon-group level, but this simple sorting reduces the number of support issues by making
+        the weird case less likely.
+        """
+        if not positions[idx].addon_to:
+            return 0
+        return len([1 for i, p in positions.items() if i < idx and p.addon_to == positions[idx].addon_to])
+
+    def _apply_min_count(self, positions, condition_idx_group, benefit_idx_group, result, collect_potential_discounts, subevent_id):
         if len(condition_idx_group) < self.condition_min_count:
             return
 
@@ -264,23 +323,53 @@ class Discount(LoggedModel):
             raise ValueError('Validation invariant violated.')
 
         if self.benefit_only_apply_to_cheapest_n_matches:
-            if not self.condition_min_count:
-                raise ValueError('Validation invariant violated.')
-
-            condition_idx_group = sorted(condition_idx_group, key=lambda idx: (positions[idx][2], -idx))  # sort by line_price
-            benefit_idx_group = sorted(benefit_idx_group, key=lambda idx: (positions[idx][2], -idx))  # sort by line_price
+            # sort by line_price
+            condition_idx_group = sorted(condition_idx_group, key=lambda idx: (positions[idx].line_price_gross, self._addon_idx(positions, idx), -idx))
+            benefit_idx_group = sorted(benefit_idx_group, key=lambda idx: (positions[idx].line_price_gross, self._addon_idx(positions, idx), -idx))
 
             # Prevent over-consuming of items, i.e. if our discount is "buy 2, get 1 free", we only
             # want to match multiples of 3
-            n_groups = min(len(condition_idx_group) // self.condition_min_count, len(benefit_idx_group))
+
+            # how many discount applications are allowed according to condition products in cart
+            possible_applications_cond = len(condition_idx_group) // self.condition_min_count
+
+            # how many discount applications are possible according to benefitting products in cart
+            possible_applications_benefit = ceil(len(benefit_idx_group) / self.benefit_only_apply_to_cheapest_n_matches)
+
+            n_groups = min(possible_applications_cond, possible_applications_benefit)
             consume_idx = condition_idx_group[:n_groups * self.condition_min_count]
             benefit_idx = benefit_idx_group[:n_groups * self.benefit_only_apply_to_cheapest_n_matches]
+
+            if collect_potential_discounts is not None:
+                if n_groups * self.benefit_only_apply_to_cheapest_n_matches > len(benefit_idx_group):
+                    # partially used discount ("for each 1 ticket you buy, get 50% on 2 t-shirts", cart content: 1 ticket
+                    # but only 1 t-shirt) -> 1 shirt definitiv potential discount
+                    for idx in consume_idx:
+                        collect_potential_discounts[idx] = [
+                            (self, n_groups * self.benefit_only_apply_to_cheapest_n_matches - len(benefit_idx_group), -1, subevent_id)
+                        ]
+
+                if possible_applications_cond * self.benefit_only_apply_to_cheapest_n_matches > len(benefit_idx_group):
+                    # unused discount ("for each 1 ticket you buy, get 50% on 2 t-shirts", cart content: 1 ticket
+                    # but 0 t-shirts) -> 2 shirt maybe potential discount (if the 1 ticket is not consumed by a later discount)
+                    for i, idx in enumerate(condition_idx_group[
+                                            n_groups * self.condition_min_count:
+                                            possible_applications_cond * self.condition_min_count
+                                            ]):
+                        collect_potential_discounts[idx] += [
+                            (self, self.benefit_only_apply_to_cheapest_n_matches, i // self.condition_min_count, subevent_id)
+                        ]
+
         else:
             consume_idx = condition_idx_group
             benefit_idx = benefit_idx_group
 
+            if collect_potential_discounts is not None:
+                for idx in consume_idx:
+                    collect_potential_discounts[idx] = [(self, inf, -1, subevent_id)]
+
         for idx in benefit_idx:
-            previous_price = positions[idx][2]
+            previous_price = positions[idx].line_price_gross
             new_price = round_decimal(
                 previous_price * (Decimal('100.00') - self.benefit_discount_matching_percent) / Decimal('100.00'),
                 self.event.currency,
@@ -288,15 +377,16 @@ class Discount(LoggedModel):
             result[idx] = new_price
 
         for idx in consume_idx:
-            result.setdefault(idx, positions[idx][2])
+            result.setdefault(idx, positions[idx].line_price_gross)
 
-    def apply(self, positions: Dict[int, Tuple[int, Optional[int], Decimal, bool, Decimal]]) -> Dict[int, Decimal]:
+    def apply(self, positions: Dict[int, PositionInfo],
+              collect_potential_discounts=None) -> Dict[int, Decimal]:
         """
         Tries to apply this discount to a cart
 
-        :param positions: Dictionary mapping IDs to tuples of the form
-                          ``(item_id, subevent_id, line_price_gross, is_addon_to, voucher_discount)``.
+        :param positions: Dictionary mapping IDs to PositionInfo tuples.
                           Bundled positions may not be included.
+        :param collect_potential_discounts: For detailed description, see pretix.base.services.pricing.apply_discounts
 
         :return: A dictionary mapping keys from the input dictionary to new prices. All positions
                  contained in this dictionary are considered "consumed" and should not be considered
@@ -314,11 +404,15 @@ class Discount(LoggedModel):
         # First, filter out everything not even covered by our product scope
         condition_candidates = [
             idx
-            for idx, (item_id, subevent_id, line_price_gross, is_addon_to, voucher_discount) in positions.items()
+            for idx, (item_id, subevent_id, subevent_date_from, line_price_gross, is_addon_to, voucher_discount) in
+            positions.items()
             if (
                 (self.condition_all_products or item_id in limit_products) and
                 (self.condition_apply_to_addons or not is_addon_to) and
                 (not self.condition_ignore_voucher_discounted or voucher_discount is None or voucher_discount == Decimal('0.00'))
+                and (not subevent_id or (
+                    self.subevent_date_from is None or subevent_date_from >= self.subevent_date_from)) and (
+                        self.subevent_date_until is None or subevent_date_from <= self.subevent_date_until)
             )
         ]
 
@@ -328,7 +422,8 @@ class Discount(LoggedModel):
             benefit_products = {p.pk for p in self.benefit_limit_products.all()}
             benefit_candidates = [
                 idx
-                for idx, (item_id, subevent_id, line_price_gross, is_addon_to, voucher_discount) in positions.items()
+                for idx, (item_id, subevent_id, subevent_date_from, line_price_gross, is_addon_to, voucher_discount) in
+                positions.items()
                 if (
                     item_id in benefit_products and
                     (self.benefit_apply_to_addons or not is_addon_to) and
@@ -338,13 +433,13 @@ class Discount(LoggedModel):
 
         if self.subevent_mode == self.SUBEVENT_MODE_MIXED:  # also applies to non-series events
             if self.condition_min_count:
-                self._apply_min_count(positions, condition_candidates, benefit_candidates, result)
+                self._apply_min_count(positions, condition_candidates, benefit_candidates, result, collect_potential_discounts, None)
             else:
-                self._apply_min_value(positions, condition_candidates, benefit_candidates, result)
+                self._apply_min_value(positions, condition_candidates, benefit_candidates, result, collect_potential_discounts, None)
 
         elif self.subevent_mode == self.SUBEVENT_MODE_SAME:
             def key(idx):
-                return positions[idx][1] or 0  # subevent_id
+                return positions[idx].subevent_id or 0
 
             # Build groups of candidates with the same subevent, then apply our regular algorithm
             # to each group
@@ -353,11 +448,11 @@ class Discount(LoggedModel):
             candidate_groups = [(k, list(g)) for k, g in _groups]
 
             for subevent_id, g in candidate_groups:
-                benefit_g = [idx for idx in benefit_candidates if positions[idx][1] == subevent_id]
+                benefit_g = [idx for idx in benefit_candidates if positions[idx].subevent_id == subevent_id]
                 if self.condition_min_count:
-                    self._apply_min_count(positions, g, benefit_g, result)
+                    self._apply_min_count(positions, g, benefit_g, result, collect_potential_discounts, subevent_id)
                 else:
-                    self._apply_min_value(positions, g, benefit_g, result)
+                    self._apply_min_value(positions, g, benefit_g, result, collect_potential_discounts, subevent_id)
 
         elif self.subevent_mode == self.SUBEVENT_MODE_DISTINCT:
             if self.condition_min_value or not self.benefit_same_products:
@@ -373,9 +468,9 @@ class Discount(LoggedModel):
             # Build a list of subevent IDs in descending order of frequency
             subevent_to_idx = defaultdict(list)
             for idx, p in positions.items():
-                subevent_to_idx[p[1]].append(idx)
+                subevent_to_idx[p.subevent_id].append(idx)
             for v in subevent_to_idx.values():
-                v.sort(key=lambda idx: positions[idx][2])
+                v.sort(key=lambda idx: (positions[idx].line_price_gross, self._addon_idx(positions, idx)))
             subevent_order = sorted(list(subevent_to_idx.keys()), key=lambda s: len(subevent_to_idx[s]), reverse=True)
 
             # Build groups of exactly condition_min_count distinct subevents
@@ -390,7 +485,7 @@ class Discount(LoggedModel):
                     l = [ll for ll in l if ll in condition_candidates and ll not in current_group]
                     if cardinality and len(l) != cardinality:
                         continue
-                    if se not in {positions[idx][1] for idx in current_group}:
+                    if se not in {positions[idx].subevent_id for idx in current_group}:
                         candidates += l
                         cardinality = len(l)
 
@@ -399,7 +494,7 @@ class Discount(LoggedModel):
 
                 # Sort the list by prices, then pick one. For "buy 2 get 1 free" we apply a "pick 1 from the start
                 # and 2 from the end" scheme to optimize price distribution among groups
-                candidates = sorted(candidates, key=lambda idx: positions[idx][2])
+                candidates = sorted(candidates, key=lambda idx: (positions[idx].line_price_gross, self._addon_idx(positions, idx)))
                 if len(current_group) < (self.benefit_only_apply_to_cheapest_n_matches or 0):
                     candidate = candidates[0]
                 else:
@@ -411,14 +506,14 @@ class Discount(LoggedModel):
                 if len(current_group) >= max(self.condition_min_count, 1):
                     candidate_groups.append(current_group)
                     for c in current_group:
-                        subevent_to_idx[positions[c][1]].remove(c)
+                        subevent_to_idx[positions[c].subevent_id].remove(c)
                     current_group = []
 
             # Distribute "leftovers"
             for se in subevent_order:
                 if subevent_to_idx[se]:
                     for group in candidate_groups:
-                        if se not in {positions[idx][1] for idx in group}:
+                        if se not in {positions[idx].subevent_id for idx in group}:
                             group.append(subevent_to_idx[se].pop())
                             if not subevent_to_idx[se]:
                                 break
@@ -428,6 +523,8 @@ class Discount(LoggedModel):
                     positions,
                     [idx for idx in g if idx in condition_candidates],
                     [idx for idx in g if idx in benefit_candidates],
-                    result
+                    result,
+                    None,
+                    None
                 )
         return result

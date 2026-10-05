@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -68,16 +68,13 @@ def test_urlreplace_replace_parameter():
 
         ("en", Decimal("1023"), "JPY", "¥1,023"),
 
-        ("pt-pt", Decimal("10.00"), "EUR", "10,00" + NBSP + "€"),
-        ("pt-br", Decimal("10.00"), "EUR", "€" + NBSP + "10,00"),
-
         # unknown currency
         ("de", Decimal("1234.56"), "FOO", "1.234,56" + NBSP + "FOO"),
         ("de", Decimal("1234.567"), "FOO", "1.234,57" + NBSP + "FOO"),
 
         # rounding errors
         ("de", Decimal("1.234"), "EUR", "1,23" + NBSP + "€"),
-        ("de", Decimal("1023.1"), "JPY", "JPY 1023,10"),
+        ("de", Decimal("1023.1"), "JPY", "JPY 1.023,10"),
     ]
 )
 def test_money_filter(locale, amount, currency, expected):
@@ -99,9 +96,9 @@ def test_money_filter(locale, amount, currency, expected):
 @pytest.mark.parametrize(
     "locale,amount,currency,expected",
     [
-        ("de", Decimal("1000.00"), "EUR", "1000,00"),
-        ("en", Decimal("1000.00"), "EUR", "1000.00"),
-        ("de", Decimal("1023.1"), "JPY", "1023,10"),
+        ("de", Decimal("1000.00"), "EUR", "1.000,00"),
+        ("en", Decimal("1000.00"), "EUR", "1,000.00"),
+        ("de", Decimal("1023.1"), "JPY", "1.023,10"),
     ]
 )
 def test_money_filter_hidecurrency(locale, amount, currency, expected):

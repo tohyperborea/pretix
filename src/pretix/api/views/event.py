@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -40,27 +40,30 @@ from django.utils.timezone import now
 from django_filters.rest_framework import DjangoFilterBackend, FilterSet
 from django_scopes import scopes_disabled
 from rest_framework import serializers, views, viewsets
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.decorators import action
+from rest_framework.exceptions import (
+    NotFound, PermissionDenied, ValidationError,
+)
+from rest_framework.generics import get_object_or_404
 from rest_framework.response import Response
 
 from pretix.api.auth.permission import EventCRUDPermission
 from pretix.api.pagination import TotalOrderingFilter
 from pretix.api.serializers.event import (
     CloneEventSerializer, DeviceEventSettingsSerializer, EventSerializer,
-    EventSettingsSerializer, ItemMetaPropertiesSerializer, SubEventSerializer,
+    EventSettingsSerializer, ItemMetaPropertiesSerializer,
+    SeatBulkBlockInputSerializer, SeatSerializer, SubEventSerializer,
     TaxRuleSerializer,
 )
 from pretix.api.views import ConditionalListView
 from pretix.base.models import (
-    CartPosition, Device, Event, ItemMetaProperty, SeatCategoryMapping,
+    CartPosition, Device, Event, ItemMetaProperty, Seat, SeatCategoryMapping,
     TaxRule, TeamAPIToken,
 )
 from pretix.base.models.event import SubEvent
 from pretix.base.services.quotas import QuotaAvailability
-from pretix.base.settings import SETTINGS_AFFECTING_CSS
 from pretix.helpers.dicts import merge_dicts
 from pretix.helpers.i18n import i18ncomp
-from pretix.presale.style import regenerate_css
 from pretix.presale.views.organizer import filter_qs_by_attr
 
 with scopes_disabled():
@@ -115,7 +118,10 @@ with scopes_disabled():
                 return queryset.exclude(expr)
 
         def sales_channel_qs(self, queryset, name, value):
-            return queryset.filter(sales_channels__contains=value)
+            return queryset.filter(
+                Q(all_sales_channels=True) |
+                Q(limit_sales_channels__identifier=value)
+            )
 
         def search_qs(self, queryset, name, value):
             return queryset.filter(
@@ -137,6 +143,12 @@ class EventViewSet(viewsets.ModelViewSet):
     ordering_fields = ('date_from', 'slug')
     filterset_class = EventFilter
 
+    def get_serializer_context(self):
+        return {
+            **super().get_serializer_context(),
+            "organizer": self.request.organizer,
+        }
+
     def get_copy_from_queryset(self):
         if isinstance(self.request.auth, (TeamAPIToken, Device)):
             return self.request.auth.get_events_with_any_permission()
@@ -155,13 +167,20 @@ class EventViewSet(viewsets.ModelViewSet):
         qs = filter_qs_by_attr(qs, self.request)
 
         if 'with_availability_for' in self.request.GET:
-            qs = Event.annotated(qs, channel=self.request.GET.get('with_availability_for'))
+            qs = Event.annotated(
+                qs,
+                channel=get_object_or_404(
+                    self.request.organizer.sales_channels,
+                    identifier=self.request.GET.get('with_availability_for')
+                )
+            )
 
         return qs.prefetch_related(
             'organizer',
             'meta_values',
             'meta_values__property',
             'item_meta_properties',
+            'limit_sales_channels',
             Prefetch(
                 'seat_category_mappings',
                 to_attr='_seat_category_mappings',
@@ -190,13 +209,21 @@ class EventViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(page, many=True)
         return self.get_paginated_response(serializer.data)
 
+    @transaction.atomic()
     def perform_update(self, serializer):
+        original_data = self.get_serializer(instance=serializer.instance).data
+
         current_live_value = serializer.instance.live
         updated_live_value = serializer.validated_data.get('live', None)
         current_plugins_value = serializer.instance.get_plugins()
         updated_plugins_value = serializer.validated_data.get('plugins', None)
 
         super().perform_update(serializer)
+
+        if serializer.data == original_data:
+            # Performance optimization: If nothing was changed, we do not need to save or log anything.
+            # This costs us a few cycles on save, but avoids thousands of lines in our log.
+            return
 
         if updated_live_value is not None and updated_live_value != current_live_value:
             log_action = 'pretix.event.live.activated' if updated_live_value else 'pretix.event.live.deactivated'
@@ -212,9 +239,9 @@ class EventViewSet(viewsets.ModelViewSet):
             disabled = {m: 'disabled' for m in current_plugins_value if m not in updated_plugins_value}
             changed = merge_dicts(enabled, disabled)
 
-            for module, action in changed.items():
+            for module, operation in changed.items():
                 serializer.instance.log_action(
-                    'pretix.event.plugins.' + action,
+                    'pretix.event.plugins.' + operation,
                     user=self.request.user,
                     auth=self.request.auth,
                     data={'plugin': module}
@@ -262,8 +289,6 @@ class EventViewSet(viewsets.ModelViewSet):
                 new_event.is_public = serializer.validated_data['is_public']
             if 'testmode' in serializer.validated_data:
                 new_event.testmode = serializer.validated_data['testmode']
-            if 'sales_channels' in serializer.validated_data:
-                new_event.sales_channels = serializer.validated_data['sales_channels']
             if 'has_subevents' in serializer.validated_data:
                 new_event.has_subevents = serializer.validated_data['has_subevents']
             if 'date_admission' in serializer.validated_data:
@@ -271,6 +296,11 @@ class EventViewSet(viewsets.ModelViewSet):
             new_event.save()
             if 'timezone' in serializer.validated_data:
                 new_event.settings.timezone = serializer.validated_data['timezone']
+
+            if 'all_sales_channels' in serializer.validated_data and 'sales_channels' in serializer.validated_data:
+                new_event.all_sales_channels = serializer.validated_data['all_sales_channels']
+                if not new_event.all_sales_channels:
+                    new_event.limit_sales_channels.set(serializer.validated_data['limit_sales_channels'])
         else:
             serializer.instance.set_defaults()
 
@@ -343,7 +373,7 @@ with scopes_disabled():
 
         class Meta:
             model = SubEvent
-            fields = ['active', 'event__live']
+            fields = ['is_public', 'active', 'event__live']
 
         def ends_after_qs(self, queryset, name, value):
             expr = Q(
@@ -373,7 +403,10 @@ with scopes_disabled():
                 return queryset.exclude(expr)
 
         def sales_channel_qs(self, queryset, name, value):
-            return queryset.filter(event__sales_channels__contains=value)
+            return queryset.filter(
+                Q(event__all_sales_channels=True) |
+                Q(event__limit_sales_channels__identifier=value)
+            )
 
         def search_qs(self, queryset, name, value):
             return queryset.filter(
@@ -415,13 +448,19 @@ class SubEventViewSet(ConditionalListView, viewsets.ModelViewSet):
         elif self.request.user.is_authenticated:
             qs = SubEvent.objects.filter(
                 event__organizer=self.request.organizer,
-                event__in=self.request.user.get_events_with_any_permission()
+                event__in=self.request.user.get_events_with_any_permission(request=self.request)
             )
 
         qs = filter_qs_by_attr(qs, self.request)
 
         if 'with_availability_for' in self.request.GET:
-            qs = SubEvent.annotated(qs, channel=self.request.GET.get('with_availability_for'))
+            qs = SubEvent.annotated(
+                qs,
+                channel=get_object_or_404(
+                    self.request.organizer.sales_channels,
+                    identifier=self.request.GET.get('with_availability_for')
+                )
+            )
 
         return qs.prefetch_related(
             'event',
@@ -541,6 +580,11 @@ class TaxRuleViewSet(ConditionalListView, viewsets.ModelViewSet):
         )
         super().perform_destroy(instance)
 
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["event"] = self.request.event
+        return ctx
+
 
 class ItemMetaPropertiesViewSet(viewsets.ModelViewSet):
     serializer_class = ItemMetaPropertiesSerializer
@@ -622,15 +666,109 @@ class EventSettingsView(views.APIView):
         s.is_valid(raise_exception=True)
         with transaction.atomic():
             s.save()
-            self.request.event.log_action(
-                'pretix.event.settings', user=self.request.user, auth=self.request.auth, data={
-                    k: v for k, v in s.validated_data.items()
-                }
-            )
-        if any(p in s.changed_data for p in SETTINGS_AFFECTING_CSS):
-            regenerate_css.apply_async(args=(request.event.pk,))
+            if s.changed_data:
+                self.request.event.log_action(
+                    'pretix.event.settings', user=self.request.user, auth=self.request.auth, data={
+                        k: v for k, v in s.validated_data.items()
+                    }
+                )
         s = EventSettingsSerializer(
             instance=request.event.settings, event=request.event, context={
                 'request': request
             })
         return Response(s.data)
+
+
+class SeatFilter(FilterSet):
+    is_available = django_filters.BooleanFilter(method="is_available_qs")
+
+    def is_available_qs(self, queryset, name, value):
+        expr = (
+            Q(orderposition_id__isnull=True, cartposition_id__isnull=True, voucher_id__isnull=True)
+        )
+        if self.request.event.settings.seating_minimal_distance:
+            expr = expr & Q(has_closeby_taken=False)
+        if value:
+            return queryset.filter(expr)
+        else:
+            return queryset.exclude(expr)
+
+    class Meta:
+        model = Seat
+        fields = ('zone_name', 'row_name', 'row_label', 'seat_number', 'seat_label', 'seat_guid', 'blocked',)
+
+
+class SeatViewSet(ConditionalListView, viewsets.ModelViewSet):
+    serializer_class = SeatSerializer
+    queryset = Seat.objects.none()
+    write_permission = 'can_change_event_settings'
+    filter_backends = (DjangoFilterBackend, )
+    filterset_class = SeatFilter
+
+    def get_queryset(self):
+        if self.request.event.has_subevents and 'subevent' in self.request.resolver_match.kwargs:
+            try:
+                subevent = self.request.event.subevents.get(pk=self.request.resolver_match.kwargs['subevent'])
+            except SubEvent.DoesNotExist:
+                raise NotFound('Subevent not found')
+            qs = Seat.annotated(
+                event_id=self.request.event.id,
+                subevent=subevent,
+                qs=subevent.seats.all(),
+                annotate_ids=True,
+                minimal_distance=self.request.event.settings.seating_minimal_distance,
+                distance_only_within_row=self.request.event.settings.seating_distance_only_within_row,
+            )
+        elif not self.request.event.has_subevents and 'subevent' not in self.request.resolver_match.kwargs:
+            qs = Seat.annotated(
+                event_id=self.request.event.id,
+                subevent=None,
+                qs=self.request.event.seats.all(),
+                annotate_ids=True,
+                minimal_distance=self.request.event.settings.seating_minimal_distance,
+                distance_only_within_row=self.request.event.settings.seating_distance_only_within_row,
+            )
+        else:
+            raise NotFound('Please use the subevent-specific endpoint' if self.request.event.has_subevents
+                           else 'This event has no subevents')
+
+        return qs
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['expand_fields'] = self.request.query_params.getlist('expand')
+        ctx['order_context'] = {
+            'event': self.request.event,
+            'pdf_data': None,
+        }
+        return ctx
+
+    def perform_update(self, serializer):
+        super().perform_update(serializer)
+        serializer.instance.event.log_action(
+            "pretix.event.seats.blocks.changed",
+            user=self.request.user,
+            auth=self.request.auth,
+            data={"seats": [serializer.instance.pk]},
+        )
+
+    def bulk_change_blocked(self, blocked):
+        s = SeatBulkBlockInputSerializer(
+            data=self.request.data,
+            context={"event": self.request.event, "queryset": self.get_queryset()},
+        )
+        s.is_valid(raise_exception=True)
+
+        seats = s.validated_data["seats"]
+        for seat in seats:
+            seat.blocked = blocked
+        Seat.objects.bulk_update(seats, ["blocked"], batch_size=1000)
+        return Response({})
+
+    @action(methods=["POST"], detail=False)
+    def bulk_block(self, request, *args, **kwargs):
+        return self.bulk_change_blocked(True)
+
+    @action(methods=["POST"], detail=False)
+    def bulk_unblock(self, request, *args, **kwargs):
+        return self.bulk_change_blocked(False)

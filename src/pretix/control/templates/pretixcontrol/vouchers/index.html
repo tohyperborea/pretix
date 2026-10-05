@@ -15,7 +15,7 @@
     <form class="form-inline"
             action="{% url "control:event.vouchers.go" event=request.event.slug organizer=request.event.organizer.slug %}">
         <p class="input-group">
-            <input type="text" name="code" class="form-control" placeholder="{% trans "Voucher code" %}" autofocus>
+            <input type="text" name="code" class="form-control" placeholder="{% trans "Voucher code" %}">
             <span class="input-group-btn">
                     <button class="btn btn-primary" type="submit">{% trans "Go!" %}</button>
                 </span>
@@ -165,7 +165,7 @@
                                 {% if v.budget|default_if_none:"NONE" != "NONE" %}
                                     <br>
                                     <small class="text-muted">
-                                        {{ v.budget_used_orders|money:request.event.currency }} / {{ v.budget|money:request.event.currency }}
+                                        {{ v.budget_used|money:request.event.currency }} / {{ v.budget|money:request.event.currency }}
                                     </small>
                                 {% endif %}
                             </td>
@@ -188,10 +188,7 @@
                             </td>
                             {% if request.event.has_subevents %}
                                 <td>
-                                    {{ v.subevent.name }} – {{ v.subevent.get_date_range_display }}
-                                    {% if request.event.settings.show_times %}
-                                        {{ v.subevent.date_from|date:"TIME_FORMAT" }}
-                                    {% endif %}
+                                    {{ v.subevent.name }} – {{ v.subevent.get_date_range_display_with_times }}
                                 </td>
                             {% endif %}
                             <td class="text-right flip">

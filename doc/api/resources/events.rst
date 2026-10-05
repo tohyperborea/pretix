@@ -49,33 +49,17 @@ item_meta_properties                  object                     Item-specific m
 valid_keys                            object                     Cryptographic keys for non-default signature schemes.
                                                                  For performance reason, value is omitted in lists and
                                                                  only contained in detail views. Value can be cached.
-sales_channels                        list                       A list of sales channels this event is available for
-                                                                 sale on.
+all_sales_channels                    boolean                    If ``true`` (default), the event is available on all sales channels.
+limit_sales_channels                  list of strings            List of sales channel identifiers the event is available on
+                                                                 if ``all_sales_channels`` is ``false``.
+sales_channels                        list of strings            **DEPRECATED.** Legacy interface, use ``all_sales_channels``
+                                                                 and ``limit_sales_channels`` instead.
 public_url                            string                     The public, customer-facing URL of the event (read-only).
 ===================================== ========================== =======================================================
 
 
 Endpoints
 ---------
-
-.. versionchanged:: 4.0
-
-    The ``clone_from`` parameter has been added to the event creation endpoint.
-
-.. versionchanged:: 4.1
-
-    The ``with_availability_for`` parameter has been added.
-
-    The ``search`` query parameter has been added to filter events by their slug, name, or location in any language.
-
-.. versionchanged:: 4.17
-
-    The ``public_url`` field has been added.
-
-.. versionchanged:: 5.0
-
-    The ``date_from_before``, ``date_from_after``, ``date_to_before``, and ``date_to_after`` query parameters have been
-    added.
 
 .. http:get:: /api/v1/organizers/(organizer)/events/
 
@@ -131,11 +115,13 @@ Endpoints
               "pretix.plugins.paypal",
               "pretix.plugins.ticketoutputpdf"
             ],
-            "sales_channels": [
+            "all_sales_channels": false,
+            "limit_sales_channels": [
               "web",
               "pretixpos",
               "resellers"
             ],
+            "sales_channels": [],
             "public_url": "https://pretix.eu/bigevents/sampleconf/"
           }
         ]
@@ -225,6 +211,8 @@ Endpoints
             "LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUNvd0JRWURLMlZ3QXlFQTdBRDcvdkZBMzNFc1k0ejJQSHI3aVpQc1o4bjVkaDBhalA4Z3l6Tm1tSXM9Ci0tLS0tRU5EIFBVQkxJQyBLRVktLS0tLQo="
           ]
         },
+        "all_sales_channels": true,
+        "limit_sales_channels": [],
         "sales_channels": [
           "web",
           "pretixpos",
@@ -282,11 +270,8 @@ Endpoints
           "pretix.plugins.stripe",
           "pretix.plugins.paypal"
         ],
-        "sales_channels": [
-          "web",
-          "pretixpos",
-          "resellers"
-        ]
+        "all_sales_channels": true,
+        "limit_sales_channels": []
       }
 
    **Example response**:
@@ -322,6 +307,8 @@ Endpoints
           "pretix.plugins.stripe",
           "pretix.plugins.paypal"
         ],
+        "all_sales_channels": true,
+        "limit_sales_channels": [],
         "sales_channels": [
           "web",
           "pretixpos",
@@ -387,11 +374,8 @@ Endpoints
           "pretix.plugins.stripe",
           "pretix.plugins.paypal"
         ],
-        "sales_channels": [
-          "web",
-          "pretixpos",
-          "resellers"
-        ]
+        "all_sales_channels": true,
+        "limit_sales_channels": []
       }
 
    **Example response**:
@@ -427,6 +411,8 @@ Endpoints
           "pretix.plugins.stripe",
           "pretix.plugins.paypal"
         ],
+        "all_sales_channels": true,
+        "limit_sales_channels": [],
         "sales_channels": [
           "web",
           "pretixpos",
@@ -438,9 +424,9 @@ Endpoints
    :param organizer: The ``slug`` field of the organizer of the event to create.
    :param event: The ``slug`` field of the event to copy settings and items from.
    :statuscode 201: no error
-   :statuscode 400: The event could not be created due to invalid submitted data.
+   :statuscode 400: The event could not be updated due to invalid submitted data.
    :statuscode 401: Authentication failure
-   :statuscode 403: The requested organizer does not exist **or** you have no permission to create this resource.
+   :statuscode 403: The requested organizer does not exist **or** you have no permission to update this resource.
 
 
 .. http:patch:: /api/v1/organizers/(organizer)/events/(event)/
@@ -502,6 +488,8 @@ Endpoints
           "pretix.plugins.paypal",
           "pretix.plugins.pretixdroid"
         ],
+        "all_sales_channels": true,
+        "limit_sales_channels": [],
         "sales_channels": [
           "web",
           "pretixpos",
@@ -622,10 +610,6 @@ organizer level.
    :statuscode 200: no error
    :statuscode 401: Authentication failure
    :statuscode 403: The requested organizer/event does not exist **or** you have no permission to view this resource.
-
-   .. versionchanged:: 4.18
-
-       The ``readonly`` flag has been added.
 
 .. http:patch:: /api/v1/organizers/(organizer)/events/(event)/settings/
 

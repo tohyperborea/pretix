@@ -1,6 +1,7 @@
 {% load i18n %}
 {% load bootstrap3 %}
 {% load formset_tags %}
+{% load static %}
 {% load getitem %}
 <div class="formset" data-formset data-formset-prefix="{{ formset.prefix }}" id="item_variations">
     {{ formset.management_form }}
@@ -40,9 +41,14 @@
                                   title="{% trans "Require a valid membership" %}"></span>
                         </div>
                         <div class="col-md-2 col-xs-6">
-                            {% for k, c in sales_channels.items %}
-                                <span class="fa fa-fw fa-{{ c.icon }} text-muted variation-channel-{{ k }} variation-icon-hidden"
-                                      data-toggle="tooltip" title="{% trans c.verbose_name %}"></span>
+                            {% for c in sales_channels %}
+                                {% if "." in c.icon %}
+                                    <img src="{% static c.icon %}" class="fa-like-image variation-channel-{{ c.id }} variation-icon-hidden"
+                                         data-toggle="tooltip" title="{{ c.label }}">
+                                {% else %}
+                                    <span class="fa fa-fw fa-{{ c.icon }} text-muted variation-channel-{{ c.id }} variation-icon-hidden"
+                                          data-toggle="tooltip" title="{{ c.label }}"></span>
+                                {% endif %}
                             {% endfor %}
                         </div>
                         <div class="col-md-1 col-xs-6 text-right flip variation-price">
@@ -61,10 +67,22 @@
                 <div class="panel-body form-horizontal">
                     {% if form.instance.pk and not form.instance.quotas.exists %}
                         <div class="alert alert-warning">
-                            {% blocktrans trimmed %}
-                                Please note that your variation will <strong>not</strong> be available for sale
-                                until you have added it to an existing or newly created quota.
-                            {% endblocktrans %}
+                            <div class="row">
+                                <div class="col-lg-8">
+                                    {% blocktrans trimmed %}
+                                        Please note that your variation will <strong>not</strong> be available for sale
+                                        until you have added it to an existing or newly created quota.
+                                    {% endblocktrans %}
+                                </div>
+                                <div class="col-lg-4 text-right">
+                                    <a class="btn btn-default btn-xs" href="{% url "control:event.items.quotas" organizer=request.event.organizer.slug event=request.event.slug %}">
+                                        <i class="fa fa-wrench"></i> {% trans "Manage quotas" %}
+                                    </a>
+                                    <a class="btn btn-default btn-xs" href="{% url "control:event.items.quotas.add" organizer=request.event.organizer.slug event=request.event.slug %}?product={{ form.instance.item.pk }}-{{ form.instance.pk }}">
+                                        <i class="fa fa-plus"></i> {% trans "Create a new quota" %}
+                                    </a>
+                                </div>
+                            </div>
                         </div>
                     {% endif %}
                     {% bootstrap_form_errors form %}
@@ -97,7 +115,8 @@
                     {% endif %}
                     {% bootstrap_field form.available_from visibility_field=form.available_from_mode layout="control_with_visibility"  %}
                     {% bootstrap_field form.available_until visibility_field=form.available_until_mode layout="control_with_visibility" %}
-                    {% bootstrap_field form.sales_channels layout="control" %}
+                    {% bootstrap_field form.all_sales_channels layout="control" %}
+                    {% bootstrap_field form.limit_sales_channels layout="control" %}
                     {% bootstrap_field form.hide_without_voucher layout="control" %}
                     {% bootstrap_field form.require_approval layout="control" %}
                     {% if form.require_membership %}
@@ -148,9 +167,14 @@
                                   title="{% trans "Require a valid membership" %}"></span>
                         </div>
                         <div class="col-md-2 col-xs-6">
-                            {% for k, c in sales_channels.items %}
-                                <span class="fa fa-fw fa-{{ c.icon }} text-muted variation-channel-{{ k }} variation-icon-hidden"
-                                      data-toggle="tooltip" title="{% trans c.verbose_name %}"></span>
+                            {% for c in sales_channels %}
+                                {% if "." in c.icon %}
+                                    <img src="{% static c.icon %}" class="fa-like-image variation-channel-{{ c.id }} variation-icon-hidden"
+                                         data-toggle="tooltip" title="{{ c.label }}">
+                                {% else %}
+                                    <span class="fa fa-fw fa-{{ c.icon }} text-muted variation-channel-{{ c.id }} variation-icon-hidden"
+                                          data-toggle="tooltip" title="{{ c.label }}"></span>
+                                {% endif %}
                             {% endfor %}
                         </div>
                         <div class="col-md-1 col-xs-6 text-right flip variation-price">
@@ -196,8 +220,8 @@
                     {% endif %}
                     {% bootstrap_field formset.empty_form.available_from visibility_field=formset.empty_form.available_from_mode layout="control_with_visibility"  %}
                     {% bootstrap_field formset.empty_form.available_until visibility_field=formset.empty_form.available_until_mode layout="control_with_visibility" %}
-                    {% bootstrap_field formset.empty_form.available_until layout="control" %}
-                    {% bootstrap_field formset.empty_form.sales_channels layout="control" %}
+                    {% bootstrap_field formset.empty_form.all_sales_channels layout="control" %}
+                    {% bootstrap_field formset.empty_form.limit_sales_channels layout="control" %}
                     {% bootstrap_field formset.empty_form.hide_without_voucher layout="control" %}
                     {% bootstrap_field formset.empty_form.require_approval layout="control" %}
                     {% if formset.empty_form.require_membership %}

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -53,7 +53,7 @@ from pretix.plugins.banktransfer.tasks import process_banktransfers
 
 @pytest.fixture
 def env():
-    o = Organizer.objects.create(name='Dummy', slug='dummy')
+    o = Organizer.objects.create(name='Dummy', slug='dummy', plugins='pretix.plugins.banktransfer')
     event = Event.objects.create(
         organizer=o, name='Dummy', slug='dummy',
         date_from=now(), plugins='pretix.plugins.banktransfer,pretix.plugins.paypal'
@@ -68,19 +68,22 @@ def env():
         code='1Z3AS', event=event, email='admin@localhost',
         status=Order.STATUS_PENDING,
         datetime=now(), expires=now() + timedelta(days=10),
-        total=23
+        total=23,
+        sales_channel=o.sales_channels.get(identifier="web"),
     )
     o2 = Order.objects.create(
         code='6789Z', event=event,
         status=Order.STATUS_CANCELED,
         datetime=now(), expires=now() + timedelta(days=10),
-        total=23
+        total=23,
+        sales_channel=o.sales_channels.get(identifier="web"),
     )
     Order.objects.create(
         code='GS89Z', event=event,
         status=Order.STATUS_CANCELED,
         datetime=now(), expires=now() + timedelta(days=10),
-        total=23
+        total=23,
+        sales_channel=o.sales_channels.get(identifier="web"),
     )
     quota = Quota.objects.create(name="Test", size=2, event=event)
     item1 = Item.objects.create(event=event, name="Ticket", default_price=23)
@@ -383,6 +386,20 @@ def test_mark_paid_organizer_dash_in_slug(env, orga_job):
 
 
 @pytest.mark.django_db
+def test_mark_paid_organizer_dash_in_slug_missing(env, orga_job):
+    env[0].slug = "foo-bar"
+    env[0].save()
+    process_banktransfers(orga_job, [{
+        'payer': 'Karla Kundin',
+        'reference': 'Bestellung FOOBAR1234S',
+        'date': '2016-01-26',
+        'amount': '23.00'
+    }])
+    env[2].refresh_from_db()
+    assert env[2].status == Order.STATUS_PAID
+
+
+@pytest.mark.django_db
 def test_mark_paid_organizer_varying_order_code_length(env, orga_job):
     env[2].code = "123412341234"
     env[2].save()
@@ -442,12 +459,14 @@ def test_keep_unmatched(env, orga_job):
 
 @pytest.mark.django_db
 def test_split_payment_success(env, orga_job):
-    o4 = Order.objects.create(
-        code='99999', event=env[0],
-        status=Order.STATUS_PENDING,
-        datetime=now(), expires=now() + timedelta(days=10),
-        total=12
-    )
+    with scopes_disabled():
+        o4 = Order.objects.create(
+            code='99999', event=env[0],
+            status=Order.STATUS_PENDING,
+            datetime=now(), expires=now() + timedelta(days=10),
+            total=12,
+            sales_channel=env[0].organizer.sales_channels.get(identifier="web"),
+        )
     process_banktransfers(orga_job, [{
         'payer': 'Karla Kundin',
         'reference': 'Bestellungen DUMMY-1Z3AS DUMMY-99999',
@@ -467,13 +486,42 @@ def test_split_payment_success(env, orga_job):
 
 
 @pytest.mark.django_db
+def test_valid_plus_invalid_match(env, orga_job):
+    with scopes_disabled():
+        o4 = Order.objects.create(
+            code='99999', event=env[0],
+            status=Order.STATUS_PAID,
+            datetime=now(), expires=now() + timedelta(days=10),
+            total=12,
+            sales_channel=env[0].organizer.sales_channels.get(identifier="web"),
+        )
+        o4.payments.create(
+            provider='paypal',
+            state=OrderPayment.PAYMENT_STATE_CONFIRMED,
+            amount=o4.total
+        )
+    process_banktransfers(orga_job, [{
+        'payer': 'Karla Kundin',
+        'reference': 'Bestellungen DUMMY-1Z3AS DUMMY-99999',
+        'date': '2016-01-26',
+        'amount': '2.00'
+    }])
+    with scopes_disabled():
+        job = BankImportJob.objects.last()
+        t = job.transactions.last()
+        assert t.state == BankTransaction.STATE_NOMATCH
+
+
+@pytest.mark.django_db
 def test_split_payment_mismatch(env, orga_job):
-    o4 = Order.objects.create(
-        code='99999', event=env[0],
-        status=Order.STATUS_PENDING,
-        datetime=now(), expires=now() + timedelta(days=10),
-        total=12
-    )
+    with scopes_disabled():
+        o4 = Order.objects.create(
+            code='99999', event=env[0],
+            status=Order.STATUS_PENDING,
+            datetime=now(), expires=now() + timedelta(days=10),
+            total=12,
+            sales_channel=env[0].organizer.sales_channels.get(identifier="web"),
+        )
     process_banktransfers(orga_job, [{
         'payer': 'Karla Kundin',
         'reference': 'Bestellungen DUMMY-1Z3AS DUMMY-99999',
@@ -540,7 +588,7 @@ def test_pending_paypal_drop_fee(env, job):
         env[2].save()
         p = env[2].payments.create(
             provider='paypal',
-            state=OrderPayment.PAYMENT_STATE_PENDING,
+            state=OrderPayment.PAYMENT_STATE_CREATED,
             fee=fee,
             amount=env[2].total
         )
@@ -756,3 +804,33 @@ def test_ignore_by_external_id(env, job):
     }])
     with scopes_disabled():
         assert BankTransaction.objects.count() == 2
+
+
+@pytest.mark.django_db
+def test_ambigious_date_without_region(env, job):
+    process_banktransfers(job, [{
+        'payer': 'Karla Kundin',
+        'reference': 'Bestellung DUMMY1Z3AS',
+        'date': '03/05/2016',
+        'amount': '23.00'
+    }])
+    env[2].refresh_from_db()
+
+    with scopes_disabled():
+        assert env[2].payments.last().info_data["date"] == "2016-03-05"
+
+
+@pytest.mark.django_db
+def test_ambigious_date_with_region(env, job):
+    env[0].settings.region = "GB"
+
+    process_banktransfers(job, [{
+        'payer': 'Karla Kundin',
+        'reference': 'Bestellung DUMMY1Z3AS',
+        'date': '03/05/2016',
+        'amount': '23.00'
+    }])
+    env[2].refresh_from_db()
+
+    with scopes_disabled():
+        assert env[2].payments.last().info_data["date"] == "2016-05-03"

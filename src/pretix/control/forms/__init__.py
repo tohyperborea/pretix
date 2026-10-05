@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -438,3 +438,20 @@ class ButtonGroupRadioSelect(forms.RadioSelect):
         attrs['icon'] = self.option_icons[value]
         opt = super().create_option(name, value, label, selected, index, subindex, attrs)
         return opt
+
+
+class SalesChannelCheckboxSelectMultiple(forms.CheckboxSelectMultiple):
+    option_template_name = 'pretixbase/forms/widgets/checkbox_sales_channel_option.html'
+
+    def __init__(self, event, attrs=None, choices=()):
+        self.event = event
+        super().__init__(attrs, choices)
+
+    def create_option(
+        self, name, value, label, selected, index, subindex=None, attrs=None
+    ):
+        plugin = value.instance.type_instance.required_event_plugin
+        return {
+            **super().create_option(name, value, label, selected, index, subindex, attrs),
+            "plugin_missing": plugin and plugin not in self.event.get_plugins(),
+        }

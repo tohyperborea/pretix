@@ -28,7 +28,6 @@ def presale_copy_env():
             now().year + 1, 12, 26, 14, 0, tzinfo=datetime.timezone.utc
         ),
         live=True,
-        sales_channels=["web", "bar"],
         plugins="pretix_sideburn_lottery",
     )
     event.settings.set("waiting_list_enabled", True)
@@ -86,6 +85,23 @@ def test_event_page_sold_out_lottery_copy(client, presale_copy_env):
     content = response.content.decode()
     assert "assigned by lottery" in content
     assert "Register here" in content
+
+
+@pytest.mark.django_db
+def test_event_page_sold_out_free_product_lottery_copy(client, presale_copy_env):
+    """A sold-out free product shows the same lottery copy as a paid one, not "FULLY BOOKED"."""
+    organizer = presale_copy_env["organizer"]
+    event = presale_copy_env["event"]
+    with scopes_disabled():
+        Item.objects.filter(pk=presale_copy_env["item"].pk).update(default_price=Decimal("0.00"))
+
+    login_customer(client, organizer)
+    response = client.get(f"/{organizer.slug}/{event.slug}/")
+    assert response.status_code == 200
+    content = response.content.decode()
+    assert "assigned by lottery" in content
+    assert "Register here" in content
+    assert "FULLY BOOKED" not in content
 
 
 @pytest.mark.django_db

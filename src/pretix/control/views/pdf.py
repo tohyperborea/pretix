@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -44,7 +44,9 @@ from pypdf.errors import PdfReadError
 from reportlab.lib.units import mm
 
 from pretix.base.i18n import language
-from pretix.base.models import CachedFile, InvoiceAddress, OrderPosition
+from pretix.base.models import (
+    CachedFile, InvoiceAddress, ItemProgramTime, OrderPosition,
+)
 from pretix.base.pdf import get_images, get_variables
 from pretix.base.settings import PERSON_NAME_SCHEMES
 from pretix.control.permissions import EventPermissionRequiredMixin
@@ -95,17 +97,38 @@ class BaseEditorView(EventPermissionRequiredMixin, TemplateView):
                                                description=_("Sample product description"))
         item2 = self.request.event.items.create(name=_("Sample workshop"), default_price=Decimal('23.40'))
 
+        ItemProgramTime.objects.create(start=now(), end=now(), item=item)
+        ItemProgramTime.objects.create(start=now(), end=now(), item=item2)
+
         from pretix.base.models import Order
         order = self.request.event.orders.create(status=Order.STATUS_PENDING, datetime=now(),
                                                  email='sample@pretix.eu',
+                                                 sales_channel=self.request.event.organizer.sales_channels.get(identifier="web"),
                                                  locale=self.request.event.settings.locale,
                                                  expires=now(), code="PREVIEW1234", total=Decimal('119.00'))
 
         scheme = PERSON_NAME_SCHEMES[self.request.event.settings.name_scheme]
         sample = {k: str(v) for k, v in scheme['sample'].items()}
-        p = order.positions.create(item=item, attendee_name_parts=sample, price=item.default_price)
-        order.positions.create(item=item2, attendee_name_parts=sample, price=item.default_price, addon_to=p)
-        order.positions.create(item=item2, attendee_name_parts=sample, price=item.default_price, addon_to=p)
+        p = order.positions.create(
+            item=item,
+            attendee_name_parts=sample,
+            company=_("Sample company"),
+            price=item.default_price
+        )
+        order.positions.create(
+            item=item2,
+            attendee_name_parts=sample,
+            company=_("Sample company"),
+            price=item.default_price,
+            addon_to=p
+        )
+        order.positions.create(
+            item=item2,
+            attendee_name_parts=sample,
+            company=_("Sample company"),
+            price=item.default_price,
+            addon_to=p
+        )
 
         InvoiceAddress.objects.create(order=order, name_parts=sample, company=_("Sample company"))
         return p
@@ -224,7 +247,7 @@ class BaseEditorView(EventPermissionRequiredMixin, TemplateView):
         cf = None
         if request.POST.get("background", "").strip():
             try:
-                cf = CachedFile.objects.get(id=request.POST.get("background"))
+                cf = CachedFile.objects.get(id=request.POST.get("background"), web_download=True)
             except CachedFile.DoesNotExist:
                 pass
 

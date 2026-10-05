@@ -27,7 +27,8 @@
                             {% endif %}</strong>
                         </h4>
                     </summary>
-                    <div id="invoice">
+                    <div id="invoice"
+                         data-address-information-url="{% url "js_helpers.address_form" %}?invoice=true&organizer={{ request.event.organizer.slug|urlencode }}&event={{ request.event.slug|urlencode }}">
                         <div class="panel-body">
                             {% bootstrap_form invoice_form layout="horizontal" %}
                         </div>
@@ -46,11 +47,13 @@
                     <div id="cp{{ pos.id }}">
                         <div class="panel-body">
                             {% for form in forms %}
-                                {% if form.pos.item != pos.item %}
-                                    {# Add-Ons #}
-                                    <legend>+ {{ form.pos.item }}</legend>
-                                {% endif %}
-                                {% bootstrap_form form layout="control" %}
+                                <div class="profile-scope">
+                                    {% if form.pos.item != pos.item %}
+                                        {# Add-Ons #}
+                                        <legend>+ {{ form.pos.item }}</legend>
+                                    {% endif %}
+                                    {% bootstrap_form form layout="control" %}
+                                </div>
                             {% endfor %}
                         </div>
                     </div>

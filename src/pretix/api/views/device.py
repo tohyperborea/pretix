@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -20,6 +20,7 @@
 # <https://www.gnu.org/licenses/>.
 #
 import base64
+import copy
 import logging
 
 from cryptography.hazmat.backends.openssl.backend import Backend
@@ -146,6 +147,8 @@ class InitializeView(APIView):
     permission_classes = ()
 
     def post(self, request, format=None):
+        from pretix.base.signals import device_info_updated
+
         serializer = InitializationRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -159,6 +162,8 @@ class InitializeView(APIView):
 
         if device.revoked:
             raise ValidationError({'token': ['This initialization token has been revoked.']})
+
+        old_instance = copy.copy(device)
 
         device.initialized = now()
         device.hardware_brand = serializer.validated_data.get('hardware_brand')
@@ -174,6 +179,10 @@ class InitializeView(APIView):
 
         device.log_action('pretix.device.initialized', data=serializer.validated_data, auth=device)
 
+        device_info_updated.send(
+            sender=Device, old_device=old_instance, new_device=device
+        )
+
         serializer = DeviceSerializer(device)
         return Response(serializer.data)
 
@@ -182,9 +191,12 @@ class UpdateView(APIView):
     authentication_classes = (DeviceTokenAuthentication,)
 
     def post(self, request, format=None):
+        from pretix.base.signals import device_info_updated
+
         serializer = UpdateRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         device = request.auth
+        old_instance = copy.copy(device)
         device.hardware_brand = serializer.validated_data.get('hardware_brand')
         device.hardware_model = serializer.validated_data.get('hardware_model')
         device.os_name = serializer.validated_data.get('os_name')
@@ -199,6 +211,10 @@ class UpdateView(APIView):
         device.info = serializer.validated_data.get('info')
         device.save()
         device.log_action('pretix.device.updated', data=serializer.validated_data, auth=device)
+
+        device_info_updated.send(
+            sender=Device, old_device=old_instance, new_device=device
+        )
 
         serializer = DeviceSerializer(device)
         return Response(serializer.data)

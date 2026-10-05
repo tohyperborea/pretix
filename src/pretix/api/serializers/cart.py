@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -33,7 +33,7 @@ from pretix.api.serializers.i18n import I18nAwareModelSerializer
 from pretix.api.serializers.order import (
     AnswerCreateSerializer, AnswerSerializer, InlineSeatSerializer,
 )
-from pretix.base.models import Seat, Voucher
+from pretix.base.models import SalesChannel, Seat, Voucher
 from pretix.base.models.orders import CartPosition
 
 
@@ -180,7 +180,7 @@ class BaseCartPositionCreateSerializer(I18nAwareModelSerializer):
 
     def create(self, validated_data):
         validated_data.pop('_quotas')
-        answers_data = validated_data.pop('answers')
+        answers_data = validated_data.pop('answers', [])
 
         attendee_name = validated_data.pop('attendee_name', '')
         if attendee_name and not validated_data.get('attendee_name_parts'):
@@ -216,7 +216,11 @@ class CartPositionCreateSerializer(BaseCartPositionCreateSerializer):
     addons = BaseCartPositionCreateSerializer(many=True, required=False)
     bundled = BaseCartPositionCreateSerializer(many=True, required=False)
     seat = serializers.CharField(required=False, allow_null=True)
-    sales_channel = serializers.CharField(required=False, default='sales_channel')
+    sales_channel = serializers.SlugRelatedField(
+        slug_field='identifier',
+        queryset=SalesChannel.objects.none(),
+        required=False,
+    )
     voucher = serializers.CharField(required=False, allow_null=True)
 
     class Meta:
@@ -225,13 +229,17 @@ class CartPositionCreateSerializer(BaseCartPositionCreateSerializer):
             'cart_id', 'expires', 'addons', 'bundled', 'seat', 'sales_channel', 'voucher'
         )
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["sales_channel"].queryset = self.context["event"].organizer.sales_channels.all()
+
     def validate_cart_id(self, cid):
         if cid and not cid.endswith('@api'):
             raise ValidationError('Cart ID should end in @api or be empty.')
         return cid
 
     def create(self, validated_data):
-        validated_data.pop('sales_channel')
+        validated_data.pop('sales_channel', None)
         addons_data = validated_data.pop('addons', None)
         bundled_data = validated_data.pop('bundled', None)
 

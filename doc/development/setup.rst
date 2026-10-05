@@ -5,7 +5,7 @@ Development setup
 
 This tutorial helps you to get started hacking with pretix on your own computer. You need this to
 be able to contribute to pretix, but it might also be helpful if you want to write your own plugins.
-If you want to install pretix on a server for actual usage, go to the :ref:`admindocs` instead.
+If you want to install pretix on a server for actual usage, go to the `administrator documentation`_ instead.
 
 Obtain a copy of the source code
 --------------------------------
@@ -18,7 +18,7 @@ External Dependencies
 ---------------------
 Your should install the following on your system:
 
-* Python 3.5 or newer
+* Python 3.9 or newer
 * ``pip`` for Python 3 (Debian package: ``python3-pip``)
 * ``python-dev`` for Python 3 (Debian package: ``python3-dev``)
 * On Debian/Ubuntu: ``python-venv`` for Python 3 (Debian package: ``python3-venv``)
@@ -33,7 +33,7 @@ Your should install the following on your system:
 Your local python environment
 -----------------------------
 
-Please execute ``python -V`` or ``python3 -V`` to make sure you have Python 3.4
+Please execute ``python -V`` or ``python3 -V`` to make sure you have Python 3.9
 (or newer) installed. Also make sure you have pip for Python 3 installed, you can
 execute ``pip3 -V`` to check. Then use Python's internal tools to create a virtual
 environment and activate it for your current session::
@@ -136,9 +136,7 @@ It is a good idea to put this command into your git hook ``.git/hooks/pre-commit
 for example, to check for any errors in any staged files when committing::
 
     #!/bin/bash
-    cd $GIT_DIR/../src
-    export GIT_WORK_TREE=../
-    export GIT_DIR=../.git
+
     source ../env/bin/activate  # Adjust to however you activate your virtual environment
     for file in $(git diff --cached --name-only | grep -E '\.py$' | grep -Ev "migrations|mt940\.py|pretix/settings\.py|make_testdata\.py|testutils/settings\.py|tests/settings\.py|pretix/base/models/__init__\.py|.*_pb2\.py")
     do
@@ -211,5 +209,16 @@ with the documentation a lot, you might find it useful to use sphinx-autobuild::
 Then, go to http://localhost:8081 for a version of the documentation that automatically re-builds
 whenever you change a source file.
 
+Working with frontend assets
+----------------------------
+
+To update the frontend styles of shops with a custom styling, run the following commands inside
+your virtual environment.::
+
+    python -m pretix collectstatic --noinput
+    python -m pretix updateassets
+
+
 .. _Django's documentation: https://docs.djangoproject.com/en/1.11/ref/django-admin/#runserver
 .. _pretixdroid: https://github.com/pretix/pretixdroid
+.. _administrator documentation: https://docs.pretix.eu/self-hosting/
