@@ -20,19 +20,8 @@
     </div>
 {% elif avail <= 10 %}
     <div class="col-md-2 col-sm-3 col-xs-6 availability-box gone">
-        {% if price or original_price %}
-            {# Sideburn: replaces upstream's "SOLD OUT" + waiting-list link so plugins can change it. #}
-            {% sold_out_availability_tag event item var %}
-        {% else %}
-            <strong>{% trans "FULLY BOOKED" %}</strong>
-            {% if allow_waitinglist and item.allow_waitinglist %}
-                <br/>
-                <a href="{% eventurl event "presale:event.waitinglist" cart_namespace=cart_namespace|default_if_none:"" %}?item={{ item.pk }}{% if var %}&var={{ var.pk }}{% endif %}{% if subevent %}&subevent={{ subevent.pk }}{% endif %}" class="btn btn-default btn-block">
-                    <span class="fa fa-plus-circle" aria-hidden="true"></span>
-                    {% trans "Waiting list" %}
-                </a>
-            {% endif %}
-        {% endif %}
+        {# Sideburn: replaces upstream's "SOLD OUT"/"FULLY BOOKED" + waiting-list link so plugins can change it; free and paid products look the same. #}
+        {% sold_out_availability_tag event item var %}
     </div>
 {% elif avail < 100 %}
     <div class="col-md-2 col-sm-3 col-xs-6 availability-box unavailable">

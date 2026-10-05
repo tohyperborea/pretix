@@ -88,12 +88,8 @@
                         <div class="col-md-2 col-sm-3 col-xs-6 availability-box">
                             {% if not event.settings.show_variations_expanded %}
                                 {% if item.best_variation_availability <= 10 %}
-                                    {% if not item.min_price %}
-                                        <strong class="gone">{% trans "FULLY BOOKED" %}</strong>
-                                    {% else %}
-                                        {# Sideburn: replaces upstream's "SOLD OUT" + "Waiting list" so plugins can change it. #}
-                                        {% sold_out_availability_tag event item compact=True %}
-                                    {% endif %}
+                                    {# Sideburn: replaces upstream's "SOLD OUT"/"FULLY BOOKED" + "Waiting list" so plugins can change it; free and paid products look the same. #}
+                                    {% sold_out_availability_tag event item compact=True %}
                                     <br>
                                 {% elif avail < 100 %}
                                     <strong class="unavailable">{% trans "Reserved" %}</strong>
