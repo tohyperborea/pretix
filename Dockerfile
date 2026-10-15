@@ -1,5 +1,8 @@
 FROM pretix/standalone:stable
-USER pretixuser
+USER root
+
+ENV LC_ALL=C.UTF-8 \
+    DJANGO_SETTINGS_MODULE=production_settings
 
 COPY pretix-sideburn-twilio /pretix/pretix-sideburn-twilio
 COPY pretix-sideburn-lottery /pretix/pretix-sideburn-lottery
