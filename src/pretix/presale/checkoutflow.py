@@ -35,8 +35,10 @@ import copy
 import inspect
 import uuid
 from collections import defaultdict
+from datetime import time
 from decimal import Decimal
 
+from django import forms
 from django.conf import settings
 from django.contrib import messages
 from django.core.cache import caches
@@ -50,6 +52,8 @@ from django.http import HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import redirect
 from django.utils import translation
 from django.utils.functional import cached_property
+from django.utils.html import conditional_escape
+from django.utils.timezone import now
 from django.utils.translation import (
     get_language, gettext_lazy as _, pgettext_lazy,
 )
@@ -69,6 +73,8 @@ from pretix.base.services.cart import (
 from pretix.base.services.cross_selling import CrossSellingService
 from pretix.base.services.memberships import validate_memberships_in_order
 from pretix.base.services.orders import perform_order
+from pretix.base.services.payment import compute_payment_deadline
+from pretix.base.services.pricing import get_price
 from pretix.base.services.tasks import EventTask
 from pretix.base.settings import PERSON_NAME_SCHEMES
 from pretix.base.signals import validate_cart_addons
@@ -84,6 +90,7 @@ from pretix.presale.forms.checkout import (
     ContactForm, InvoiceAddressForm, InvoiceNameForm, MembershipForm,
 )
 from pretix.presale.forms.customer import AuthenticationForm, RegistrationForm
+from pretix.presale.productlist import prepare_item_list_for_shop
 from pretix.presale.signals import (
     checkout_all_optional, checkout_confirm_messages, checkout_flow_steps,
     contact_form_fields, contact_form_fields_overrides,
@@ -96,8 +103,7 @@ from pretix.presale.views.cart import (
     _items_from_post_data, cart_session, create_empty_cart_id,
     get_or_create_cart_id,
 )
-from pretix.presale.views.event import get_grouped_items
-from pretix.presale.views.questions import QuestionsViewMixin
+from pretix.presale.views.questions import CartQuestionsViewMixin
 
 
 class BaseCheckoutFlowStep:
@@ -522,6 +528,48 @@ class AddOnsStep(CartMixin, AsyncAction, TemplateFlowStep):
         self._completed = True
         return True
 
+    def _get_initial_val_price(self, current_addon_products, cartpos, item, variation):
+        val = None
+        price = None
+
+        if self.request.POST:
+            if variation:
+                field = f'cp_{cartpos.pk}_variation_{item.pk}_{variation.pk}'
+            else:
+                field = f'cp_{cartpos.pk}_item_{item.pk}'
+
+            try:
+                val = int(self.request.POST.get(field) or '0')
+            except ValueError:
+                pass
+            if val and item.free_price:
+                custom_price = forms.DecimalField(localize=True).to_python(self.request.POST.get(f'{field}_price') or '0')
+                price = get_price(
+                    item, variation, voucher=cartpos.voucher, custom_price=custom_price, subevent=cartpos.subevent,
+                    custom_price_is_net=self.event.settings.display_net_prices,
+                    invoice_address=self.invoice_address,
+                )
+            else:
+                price = variation.suggested_price if variation else item.suggested_price
+
+        else:
+            current_products = current_addon_products[item.pk, variation.pk if variation else None]
+            val = len(current_products)
+            if current_products and item.free_price:
+                a = current_products[0]
+                price = TaxedPrice(
+                    net=a.price - a.tax_value,
+                    gross=a.price,
+                    tax=a.tax_value,
+                    name=a.item.tax_rule.name if a.item.tax_rule else "",
+                    rate=a.tax_rate,
+                    code=a.item.tax_rule.code if a.item.tax_rule else None,
+                )
+            else:
+                price = variation.suggested_price if variation else item.suggested_price
+
+        return val, price
+
     @cached_property
     def forms(self):
         """
@@ -551,7 +599,7 @@ class AddOnsStep(CartMixin, AsyncAction, TemplateFlowStep):
 
                 if ckey not in item_cache:
                     # Get all items to possibly show
-                    items, _btn = get_grouped_items(
+                    items, _btn = prepare_item_list_for_shop(
                         self.request.event,
                         subevent=cartpos.subevent,
                         voucher=None,
@@ -580,34 +628,10 @@ class AddOnsStep(CartMixin, AsyncAction, TemplateFlowStep):
 
                     if i.has_variations:
                         for v in i.available_variations:
-                            v.initial = len(current_addon_products[i.pk, v.pk])
-                            if v.initial and i.free_price:
-                                a = current_addon_products[i.pk, v.pk][0]
-                                v.initial_price = TaxedPrice(
-                                    net=a.price - a.tax_value,
-                                    gross=a.price,
-                                    tax=a.tax_value,
-                                    name=a.item.tax_rule.name if a.item.tax_rule else "",
-                                    rate=a.tax_rate,
-                                    code=a.item.tax_rule.code if a.item.tax_rule else None,
-                                )
-                            else:
-                                v.initial_price = v.suggested_price
+                            v.initial, v.initial_price = self._get_initial_val_price(current_addon_products, cartpos, i, v)
                         i.expand = any(v.initial for v in i.available_variations)
                     else:
-                        i.initial = len(current_addon_products[i.pk, None])
-                        if i.initial and i.free_price:
-                            a = current_addon_products[i.pk, None][0]
-                            i.initial_price = TaxedPrice(
-                                net=a.price - a.tax_value,
-                                gross=a.price,
-                                tax=a.tax_value,
-                                name=a.item.tax_rule.name if a.item.tax_rule else "",
-                                rate=a.tax_rate,
-                                code=a.item.tax_rule.code if a.item.tax_rule else None,
-                            )
-                        else:
-                            i.initial_price = i.suggested_price
+                        i.initial, i.initial_price = self._get_initial_val_price(current_addon_products, cartpos, i, None)
 
                 if items:
                     formsetentry['categories'].append({
@@ -744,7 +768,7 @@ class AddOnsStep(CartMixin, AsyncAction, TemplateFlowStep):
                        sales_channel=request.sales_channel.identifier, override_now_dt=time_machine_now(default=None))
 
 
-class QuestionsStep(QuestionsViewMixin, CartMixin, TemplateFlowStep):
+class QuestionsStep(CartQuestionsViewMixin, CartMixin, TemplateFlowStep):
     priority = 50
     identifier = "questions"
     template_name = "pretixpresale/event/checkout_questions.html"
@@ -812,6 +836,8 @@ class QuestionsStep(QuestionsViewMixin, CartMixin, TemplateFlowStep):
                     f.fields[fname].disabled = val['disabled']
                 if 'validators' in val and fname in f.fields:
                     f.fields[fname].validators += val['validators']
+                if 'label' in val and fname in f.fields:
+                    f.fields[fname].label = val['label']
 
         return f
 
@@ -839,6 +865,28 @@ class QuestionsStep(QuestionsViewMixin, CartMixin, TemplateFlowStep):
             o.append({
                 'attendee_name_parts': d
             })
+
+        wd = self.cart_session.get('widget_data', {})
+        if wd.get('attendee-fix', '') == 'true':
+            for k, v in wd.items():
+                if v and k.startswith('attendee-name'):
+                    o.append({
+                        'attendee_name_parts': {
+                            'disabled': True,
+                        }
+                    })
+                elif v and k.startswith('email'):
+                    o.append({
+                        'attendee_email': {
+                            'disabled': True,
+                        }
+                    })
+                elif v and k.startswith('question-'):
+                    o.append({
+                        k[9:].upper(): {
+                            'disabled': True,
+                        }
+                    })
 
         return o
 
@@ -916,6 +964,8 @@ class QuestionsStep(QuestionsViewMixin, CartMixin, TemplateFlowStep):
                     f.fields[fname].disabled = val['disabled']
                 if 'validators' in val and fname in f.fields:
                     f.fields[fname].validators += val['validators']
+                if 'label' in val and fname in f.fields:
+                    f.fields[fname].label = val['label']
 
         return f
 
@@ -1097,6 +1147,7 @@ class QuestionsStep(QuestionsViewMixin, CartMixin, TemplateFlowStep):
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
+        ctx['order_questions_form'] = self.order_questions_form
         ctx['formgroups'] = self.formdict.items()
         ctx['contact_form'] = self.contact_form
         ctx['invoice_form'] = self.invoice_form
@@ -1131,7 +1182,7 @@ class QuestionsStep(QuestionsViewMixin, CartMixin, TemplateFlowStep):
                 for a in addresses:
                     data = {
                         "_pk": a.pk,
-                        "_country_for_address": a.country.name,
+                        "_country_for_address": a.country.name if a.country else '',
                         "_state_for_address": a.state_for_address,
                         "_name": a.name,
                         "is_business": "business" if a.is_business else "individual",
@@ -1174,7 +1225,7 @@ class QuestionsStep(QuestionsViewMixin, CartMixin, TemplateFlowStep):
             for p in profiles:
                 data = {
                     "_pk": p.pk,
-                    "_country_for_address": p.country.name,
+                    "_country_for_address": p.country.name if p.country else '',
                     "_state_for_address": p.state_for_address,
                     "_attendee_name": p.attendee_name,
                 }
@@ -1311,6 +1362,11 @@ class PaymentStep(CartMixin, TemplateFlowStep):
         self.request = request
         self.request.pci_dss_payment_page = True
 
+        if "postpone" in request.POST and self._allow_postpone:
+            self.cart_session['payments_postpone'] = True
+            self.cart_session['payments'] = []
+            return redirect_to_url(self.get_next_url(request))
+
         if "remove_payment" in request.POST:
             self._remove_payment(request.POST["remove_payment"])
             return redirect_to_url(self.get_step_url(request))
@@ -1399,20 +1455,41 @@ class PaymentStep(CartMixin, TemplateFlowStep):
         ctx['providers'] = self.provider_forms
         ctx['show_fees'] = any(p['fee'] for p in self.provider_forms)
 
-        if len(self.provider_forms) == 1:
-            ctx['selected'] = self.provider_forms[0]['provider'].identifier
-        elif 'payment' in self.request.POST:
+        if 'payment' in self.request.POST:
             ctx['selected'] = self.request.POST['payment']
+        elif self.cart_session.get('payments_postpone') and self._allow_postpone:
+            ctx['selected'] = ''
+        elif len(self.provider_forms) == 1:
+            ctx['selected'] = self.provider_forms[0]['provider'].identifier
         elif self.single_use_payment:
             ctx['selected'] = self.single_use_payment['provider']
         else:
             ctx['selected'] = ''
+
+        ctx['allow_postpone'] = self._allow_postpone
+        if self._allow_postpone:
+            now_dt = now()
+            ctx['payment_deadline'] = compute_payment_deadline(
+                event=self.request.event,
+                sales_channel=self.request.sales_channel,
+                subevents={p.subevent for p in ctx['cart']['raw']},
+                now_dt=now_dt,
+            )
+            if ctx['payment_deadline'].time() != time(hour=23, minute=59, second=59):
+                ctx['payment_deadline_minutes'] = int((ctx['payment_deadline'] - now_dt).total_seconds() // 60)
         return ctx
+
+    @cached_property
+    def _allow_postpone(self):
+        return self.request.sales_channel.identifier in self.request.event.settings.payment_choice_postpone_allowed_channels
 
     def _is_allowed(self, prov, request):
         return prov.is_allowed(request, total=self._total_order_value)
 
     def is_completed(self, request, warn=False):
+        if self.cart_session.get('payments_postpone') and self._allow_postpone:
+            return True
+
         if not self.cart_session.get('payments'):
             if warn:
                 messages.error(request, _('Please select a payment method to proceed.'))
@@ -1535,6 +1612,7 @@ class ConfirmStep(CartMixin, AsyncAction, TemplateFlowStep):
         ctx['addr'] = self.invoice_address
         ctx['confirm_messages'] = self.confirm_messages
         ctx['cart_session'] = self.cart_session
+        ctx['checkout_session'] = self.checkout_session
         ctx['invoice_address_asked'] = self.address_asked
         ctx['customer'] = self.cart_customer
 
@@ -1607,7 +1685,7 @@ class ConfirmStep(CartMixin, AsyncAction, TemplateFlowStep):
         meta_info = {
             'contact_form_data': self.cart_session.get('contact_form_data', {}),
             'confirm_messages': [
-                str(m) for m in self.confirm_messages.values()
+                conditional_escape(str(m)) for m in self.confirm_messages.values()
             ]
         }
         api_meta = {}
@@ -1632,6 +1710,7 @@ class ConfirmStep(CartMixin, AsyncAction, TemplateFlowStep):
             customer=self.cart_session.get('customer'),
             override_now_dt=time_machine_now(default=None),
             api_meta=api_meta,
+            cart_id=get_or_create_cart_id(request),
         )
 
     def get_success_message(self, value):

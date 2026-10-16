@@ -22,6 +22,7 @@
 import logging
 from decimal import Decimal
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Count, Exists, IntegerField, OuterRef, Q, Subquery
 from django.utils.crypto import get_random_string
@@ -45,7 +46,6 @@ from pretix.base.services.tax import split_fee_for_taxes
 from pretix.base.templatetags.money import money_filter
 from pretix.celery_app import app
 from pretix.helpers import OF_SELF
-from pretix.helpers.format import format_map
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ def _send_wle_mail(wle: WaitingListEntry, subject: LazyI18nString, message: Lazy
         email_context = get_email_context(event_or_subevent=subevent or wle.event, event=wle.event)
         mail(
             wle.email,
-            format_map(subject, email_context),
+            str(subject),
             message,
             email_context,
             wle.event,
@@ -73,9 +73,8 @@ def _send_mail(order: Order, subject: LazyI18nString, message: LazyI18nString, s
 
         email_context = get_email_context(event_or_subevent=subevent or order.event, refund_amount=refund_amount,
                                           order=order, position_or_address=ia, event=order.event)
-        real_subject = format_map(subject, email_context)
         order.send_mail(
-            real_subject, message, email_context,
+            subject, message, email_context,
             'pretix.event.order.email.event_canceled',
             user,
         )
@@ -85,14 +84,13 @@ def _send_mail(order: Order, subject: LazyI18nString, message: LazyI18nString, s
                 continue
 
             if p.addon_to_id is None and p.attendee_email and p.attendee_email != order.email:
-                real_subject = format_map(subject, email_context)
                 email_context = get_email_context(event_or_subevent=p.subevent or order.event,
                                                   event=order.event,
                                                   refund_amount=refund_amount,
                                                   position_or_address=p,
                                                   order=order, position=p)
                 order.send_mail(
-                    real_subject, message, email_context,
+                    subject, message, email_context,
                     'pretix.event.order.email.event_canceled',
                     position=p,
                     user=user
@@ -380,12 +378,13 @@ def cancel_event(self, event: Event, subevent: int, auto_refund: bool,
         confirmation_code = get_random_string(8, allowed_chars="01234567890")
         mail(
             user.email,
-            subject=gettext('Bulk-refund confirmation'),
+            subject=gettext('Confirm event cancellation and bulk refund'),
             template='pretixbase/email/cancel_confirm.txt',
             context={
                 "event": str(event),
                 "amount": money_filter(refund_total, event.currency),
                 "confirmation_code": confirmation_code,
+                "instance": settings.PRETIX_INSTANCE_NAME,
             },
             locale=user.locale,
         )

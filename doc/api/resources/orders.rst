@@ -117,6 +117,8 @@ cancellation_date                     datetime                   Time of order c
                                                                  reliable for orders that have been cancelled,
                                                                  reactivated and cancelled again.
 plugin_data                           object                     Additional data added by plugins.
+use_gift_cards                        list of strings            List of unique gift card secrets that are used to pay
+                                                                 for this order.
 ===================================== ========================== =======================================================
 
 
@@ -155,6 +157,10 @@ plugin_data                           object                     Additional data
 .. versionchanged:: 2025.10
 
    The ``tax_rounding_mode`` attribute has been added.
+
+.. versionchanged:: 2026.03
+
+   The ``use_gift_cards`` attribute has been added.
 
 .. _order-position-resource:
 
@@ -858,6 +864,9 @@ Generating new secrets
 
    Triggers generation of new ``secret`` and ``web_secret`` attributes for both the order and all order positions.
 
+   Ticket secrets of order positions that have been used to issue a gift card can not
+   be changed. Only the link (``web_secret``) will be changed in this case.
+
    **Example request**:
 
    .. sourcecode:: http
@@ -888,6 +897,9 @@ Generating new secrets
 .. http:post:: /api/v1/organizers/(organizer)/events/(event)/orderpositions/(id)/regenerate_secrets/
 
    Triggers generation of a new ``secret`` and ``web_secret`` attribute for a single order position.
+
+   Ticket secrets of order positions that have been used to issue a gift card can not
+   be changed. Only the link (``web_secret``) will be changed in this case.
 
    **Example request**:
 
@@ -987,8 +999,6 @@ Creating orders
 
        * does not support file upload questions
 
-       * does not support redeeming gift cards
-
        * does not support or validate memberships
 
 
@@ -1065,7 +1075,7 @@ Creating orders
       * ``valid_from`` (optional, if both ``valid_from`` and ``valid_until`` are **missing** (not ``null``) the availability will be computed from the given product)
       * ``valid_until`` (optional, if both ``valid_from`` and ``valid_until`` are **missing** (not ``null``) the availability will be computed from the given product)
       * ``requested_valid_from`` (optional, can be set **instead** of ``valid_from`` and ``valid_until`` to signal a user choice for the start time that may or may not be respected)
-      * ``use_reusable_medium`` (optional, causes the new ticket to take over the given reusable medium, identified by its ID)
+      * ``use_reusable_medium`` (optional, causes the new ticket to be connected to the given reusable medium, identified by its ID)
       * ``discount`` (optional, only possible if ``price`` is set; attention: if this is set to not-``null`` on any position, automatic calculation of discounts will not run)
       * ``answers``
 
@@ -1095,6 +1105,14 @@ Creating orders
      whether these emails are enabled for certain sales channels. If set to ``null``, behavior will be controlled by pretix'
      settings based on the sales channels (added in pretix 4.7). Defaults to ``false``.
      Used to be ``send_mail`` before pretix 3.14.
+   * ``use_gift_cards`` (optional) The provided gift cards will be used to pay for this order. They will be debited and
+     all the necessary payment records for these transactions will be created. The gift cards will be used in sequence to
+     pay for the order. Processing of the gift cards stops as soon as the order is payed for. All gift card transactions
+     are listed under ``payments`` in the response.
+     This option can only be used with orders that are in the pending state.
+     The ``use_gift_cards`` attribute can not be combined with ``payment_info`` and ``payment_provider`` fields. If the
+     order isn't completely paid after its creation with ``use_gift_cards``, then a subsequent request to the payment
+     endpoint is needed.
 
    If you want to use add-on products, you need to set the ``positionid`` fields of all positions manually
    to incrementing integers starting with ``1``. Then, you can reference one of these
@@ -1719,6 +1737,56 @@ List of all order positions
    :statuscode 401: Authentication failure
    :statuscode 403: The requested organizer/event does not exist **or** you have no permission to view this resource.
 
+.. http:get:: /api/v1/organizers/(organizer)/orderpositions/
+
+   Returns a list of all order positions within all events of a given organizer (with sufficient access permissions).
+
+   The supported query parameters and output format of this endpoint are almost identical to those of the list endpoint
+   within an event.
+   The only changes are that responses also contain the ``event`` attribute in each result and that the 'pdf_data'
+   parameter is not supported.
+
+   **Example request**:
+
+   .. sourcecode:: http
+
+      GET /api/v1/organizers/bigevents/orderpositions/ HTTP/1.1
+      Host: pretix.eu
+      Accept: application/json, text/javascript
+
+   **Example response**:
+
+   .. sourcecode:: http
+
+      HTTP/1.1 200 OK
+      Vary: Accept
+      Content-Type: application/json
+      X-Page-Generated: 2017-12-01T10:00:00Z
+
+      {
+        "count": 1,
+        "next": null,
+        "previous": null,
+        "results": [
+          {
+            "id:": 23442
+            "event": "sampleconf",
+            "order": "ABC12",
+            "positionid": 1,
+            "canceled": false,
+            "item": 1345,
+            ...
+          }
+        ]
+      }
+
+   :param organizer: The ``slug`` field of the organizer to fetch
+   :statuscode 200: no error
+   :statuscode 401: Authentication failure
+   :statuscode 403: The requested organizer/event does not exist **or** you have no permission to view this resource.
+
+
+
 Fetching individual positions
 -----------------------------
 
@@ -1970,7 +2038,7 @@ Manipulating individual positions
 
    * ``order`` (mandatory, specified as a string mapping to a ``code``)
 
-   * ``addon_to`` (optional, specified as an integer mapping to the ``positionid`` of the parent position)
+   * ``addon_to`` (optional, specified as an integer mapping to ``positionid`` - the number of the position within the order, see :ref:`_order-position-resource` - of the parent position)
 
    * ``item`` (mandatory)
 
@@ -2280,7 +2348,7 @@ otherwise, such as splitting an order or changing fees.
             "subevent": 562,
             "seat": "seat-guid-2",
             "price": "99.99",
-            "addon_to": 12374,
+            "addon_to": 1,
             "attendee_name": "Peter",
           }
         ],

@@ -57,9 +57,9 @@ class ItemFormTest(SoupTest):
             date_from=datetime.datetime(2013, 12, 26, tzinfo=datetime.timezone.utc),
         )
         self.item1 = Item.objects.create(event=self.event1, name="Standard", default_price=0, position=1)
-        t = Team.objects.create(organizer=self.orga1, can_change_event_settings=True, can_change_items=True)
-        t.members.add(self.user)
-        t.limit_events.add(self.event1)
+        self.team = Team.objects.create(organizer=self.orga1, all_event_permissions=True)
+        self.team.members.add(self.user)
+        self.team.limit_events.add(self.event1)
         self.client.login(email='dummy@dummy.dummy', password='dummy')
 
 
@@ -269,6 +269,14 @@ class QuestionsTest(ItemFormTest):
         doc = self.get_doc('/control/event/%s/%s/questions/%s/?status=p' % (self.orga1.slug, self.event1.slug, c.id))
         tbl = doc.select('.container-fluid table.table-bordered tbody')[0]
         assert tbl.select('tr')[0].select('td')[0].text.strip() == '42'
+
+        # Test permission requirement
+        self.team.all_event_permissions = False
+        self.team.limit_event_permissions = {}
+        self.team.save()
+        doc = self.get_doc('/control/event/%s/%s/questions/%s/' % (self.orga1.slug, self.event1.slug, c.id))
+        assert not doc.select('.container-fluid table.table-bordered tbody')
+        assert doc.select('.empty-collection')
 
     def test_set_dependency(self):
         with scopes_disabled():
@@ -684,7 +692,8 @@ class ItemsTest(ItemFormTest):
         self.item2.program_times.create(start=datetime.datetime(2017, 12, 27, 0, 0, 0,
                                                                 tzinfo=datetime.timezone.utc),
                                         end=datetime.datetime(2017, 12, 28, 0, 0, 0,
-                                                              tzinfo=datetime.timezone.utc))
+                                                              tzinfo=datetime.timezone.utc),
+                                        location={"en": "Testlocation", "de": "Testort"})
 
         doc = self.get_doc('/control/event/%s/%s/items/add?copy_from=%d' % (self.orga1.slug, self.event1.slug, self.item2.pk))
         data = extract_form_fields(doc.select("form")[0])
@@ -715,6 +724,7 @@ class ItemsTest(ItemFormTest):
             assert set([str(v.value) for v in i_new.variations.all()]) == set([str(v.value) for v in i_old.variations.all()])
             assert i_old.program_times.first().start == i_new.program_times.first().start
             assert i_old.program_times.first().end == i_new.program_times.first().end
+            assert i_old.program_times.first().location == i_new.program_times.first().location
 
     def test_add_to_existing_quota(self):
         with scopes_disabled():

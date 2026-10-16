@@ -41,7 +41,7 @@ from collections import OrderedDict, defaultdict
 from decimal import Decimal
 from io import BytesIO
 from itertools import groupby
-from urllib.parse import urlparse, urlsplit
+from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo
 
 import bleach
@@ -60,11 +60,10 @@ from django.http import (
     Http404, HttpResponse, HttpResponseBadRequest, HttpResponseNotAllowed,
     JsonResponse,
 )
-from django.shortcuts import get_object_or_404, redirect
+from django.shortcuts import redirect
 from django.urls import NoReverseMatch, reverse
 from django.utils.functional import cached_property
 from django.utils.html import conditional_escape, format_html
-from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.safestring import mark_safe
 from django.utils.timezone import now
 from django.utils.translation import gettext, gettext_lazy as _, gettext_noop
@@ -83,7 +82,7 @@ from pretix.base.models import Event, LogEntry, Order, TaxRule, Voucher
 from pretix.base.models.event import EventMetaValue
 from pretix.base.services import tickets
 from pretix.base.services.invoices import build_preview_invoice_pdf
-from pretix.base.signals import register_ticket_outputs
+from pretix.base.signals import get_defining_app, register_ticket_outputs
 from pretix.base.templatetags.rich_text import markdown_compile_email
 from pretix.control.forms.event import (
     CancelSettingsForm, CommentForm, ConfirmTextFormset, EventDeleteForm,
@@ -97,7 +96,9 @@ from pretix.control.permissions import EventPermissionRequiredMixin
 from pretix.control.views.mailsetup import MailSettingsSetupView
 from pretix.control.views.user import RecentAuthenticationRequiredMixin
 from pretix.helpers.database import rolledback_transaction
-from pretix.multidomain.urlreverse import build_absolute_uri, get_event_domain
+from pretix.multidomain.urlreverse import (
+    eventreverse_absolute, get_event_domain,
+)
 from pretix.presale.views.widget import (
     version_default as widget_version_default,
 )
@@ -106,6 +107,7 @@ from ...base.i18n import language
 from ...base.models.items import (
     Item, ItemCategory, ItemMetaProperty, Question, Quota,
 )
+from ...base.permissions import AnyPermissionOf
 from ...base.plugins import (
     PLUGIN_LEVEL_EVENT, PLUGIN_LEVEL_EVENT_ORGANIZER_HYBRID,
     PLUGIN_LEVEL_ORGANIZER,
@@ -117,8 +119,9 @@ from ...helpers.compat import CompatDeleteView
 from ...helpers.format import (
     PlainHtmlAlternativeString, SafeFormatter, format_map,
 )
+from ..forms.filter import LogFilterForm
 from ..logdisplay import OVERVIEW_BANLIST
-from . import CreateView, PaginationMixin, UpdateView
+from . import CreateView, LargeResultSetPaginator, PaginationMixin, UpdateView
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +158,7 @@ class MetaDataEditorMixin:
             property=p,
             disabled=(
                 p.protected and
-                not self.request.user.has_organizer_permission(self.request.organizer, 'can_change_organizer_settings', request=self.request)
+                not self.request.user.has_organizer_permission(self.request.organizer, 'organizer.settings.general:write', request=self.request)
             ),
             instance=val_instances.get(p.pk, self.meta_model(property=p, event=self.object)),
             data=(self.request.POST if self.request.method == "POST" else None)
@@ -187,7 +190,7 @@ class EventUpdate(DecoupleMixin, EventSettingsViewMixin, EventPermissionRequired
     model = Event
     form_class = EventUpdateForm
     template_name = 'pretixcontrol/event/settings.html'
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
 
     @cached_property
     def object(self) -> Event:
@@ -233,13 +236,21 @@ class EventUpdate(DecoupleMixin, EventSettingsViewMixin, EventPermissionRequired
             self.request.event.log_action('pretix.event.footerlinks.changed', user=self.request.user, data={
                 'data': self.footer_links_formset.cleaned_data
             })
-        if form.has_changed():
-            self.request.event.log_action('pretix.event.changed', user=self.request.user, data={
-                k: (form.cleaned_data.get(k).name
-                    if isinstance(form.cleaned_data.get(k), File)
-                    else form.cleaned_data.get(k))
-                for k in form.changed_data
-            })
+
+        change_data = {
+            k: (form.cleaned_data.get(k).name
+                if isinstance(form.cleaned_data.get(k), File)
+                else form.cleaned_data.get(k))
+            for k in form.changed_data
+        }
+        meta_changed = {}
+        for f in self.meta_forms:
+            if f.has_changed():
+                meta_changed[f.property.name] = f.cleaned_data["value"]
+        if meta_changed:
+            change_data['meta_data'] = meta_changed
+        if change_data:
+            self.request.event.log_action('pretix.event.changed', user=self.request.user, data=change_data)
 
         tickets.invalidate_cache.apply_async(kwargs={'event': self.request.event.pk})
         messages.success(self.request, _('Your changes have been saved.'))
@@ -346,7 +357,7 @@ class EventUpdate(DecoupleMixin, EventSettingsViewMixin, EventPermissionRequired
 class EventPlugins(EventSettingsViewMixin, EventPermissionRequiredMixin, TemplateView, SingleObjectMixin):
     model = Event
     context_object_name = 'event'
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
     template_name = 'pretixcontrol/event/plugins.html'
 
     def get_object(self, queryset=None) -> Event:
@@ -431,6 +442,7 @@ class EventPlugins(EventSettingsViewMixin, EventPermissionRequiredMixin, Templat
         plugins_available = {
             p.module: p for p in self.available_plugins(self.object)
         }
+        plugin_enabled = None
 
         with transaction.atomic():
             save_organizer = False
@@ -447,15 +459,14 @@ class EventPlugins(EventSettingsViewMixin, EventPermissionRequiredMixin, Templat
                             continue
 
                         if getattr(pluginmeta, 'level', PLUGIN_LEVEL_EVENT) == PLUGIN_LEVEL_EVENT_ORGANIZER_HYBRID:
-                            if not request.user.has_organizer_permission(request.organizer, "can_change_organizer_settings", request):
-                                messages.error(
-                                    request,
-                                    _("You do not have sufficient permission to enable plugins that need to be enabled "
-                                      "for the entire organizer account.")
-                                )
-                                continue
-
                             if module not in self.object.organizer.get_plugins():
+                                if not request.user.has_organizer_permission(request.organizer, "organizer.settings.general:write", request):
+                                    messages.error(
+                                        request,
+                                        _("You do not have sufficient permission to enable plugins that need to be enabled "
+                                          "for the entire organizer account.")
+                                    )
+                                    continue
                                 self.object.organizer.log_action('pretix.organizer.plugins.enabled', user=self.request.user,
                                                                  data={'plugin': module})
                                 self.object.organizer.enable_plugin(module, allow_restricted=request.event.settings.allowed_restricted_plugins)
@@ -481,6 +492,7 @@ class EventPlugins(EventSettingsViewMixin, EventPermissionRequiredMixin, Templat
                                 format_html(_('The plugin {} is now active.'),
                                             format_html("<strong>{}</strong>", pluginmeta.name)),
                             ]
+                        plugin_enabled = module
                         messages.success(self.request, mark_safe("".join(info)))
                     else:
                         self.request.event.log_action('pretix.event.plugins.disabled', user=self.request.user,
@@ -490,19 +502,25 @@ class EventPlugins(EventSettingsViewMixin, EventPermissionRequiredMixin, Templat
             self.object.save()
             if save_organizer:
                 self.object.organizer.save()
-        return redirect(self.get_success_url())
+        return redirect(self.get_success_url(plugin_enabled))
 
-    def get_success_url(self) -> str:
-        return reverse('control:event.settings.plugins', kwargs={
-            'organizer': self.request.organizer.slug,
-            'event': self.request.event.slug,
-        })
+    def get_success_url(self, plugin_enabled) -> str:
+        if plugin_enabled and self.request.POST.get('go') == 'payment':
+            return reverse('control:event.settings.payment', kwargs={
+                'organizer': self.request.organizer.slug,
+                'event': self.request.event.slug,
+            }) + '?highlight=' + quote(plugin_enabled) + '#'
+        else:
+            return reverse('control:event.settings.plugins', kwargs={
+                'organizer': self.request.organizer.slug,
+                'event': self.request.event.slug,
+            })
 
 
 class PaymentProviderSettings(EventSettingsViewMixin, EventPermissionRequiredMixin, TemplateView, SingleObjectMixin):
     model = Event
     context_object_name = 'event'
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.payment:write'
     template_name = 'pretixcontrol/event/payment_provider.html'
 
     def get_success_url(self) -> str:
@@ -581,7 +599,7 @@ class PaymentProviderSettings(EventSettingsViewMixin, EventPermissionRequiredMix
 
 class EventSettingsFormView(EventPermissionRequiredMixin, DecoupleMixin, FormView):
     model = Event
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
 
     def get_context_data(self, *args, **kwargs) -> dict:
         context = super().get_context_data(*args, **kwargs)
@@ -618,10 +636,28 @@ class EventSettingsFormView(EventPermissionRequiredMixin, DecoupleMixin, FormVie
             return self.render_to_response(self.get_context_data(form=form))
 
 
-class PaymentSettings(EventSettingsViewMixin, EventSettingsFormView):
+class WritePermissionMixin:
+    def post(self, request, *args, **kwargs):
+        # Special case, we want to allow different access for read and write
+        if not request.user.has_event_permission(request.organizer, request.event, self.write_permission,
+                                                 request=request):
+            raise PermissionDenied()
+        return super().post(request, *args, **kwargs)
+
+    def get_form(self, *args, **kwargs):
+        form = super().get_form(*args, **kwargs)
+        if not self.request.user.has_event_permission(
+                self.request.organizer, self.request.event, self.write_permission, request=self.request):
+            for f in form.fields.values():
+                f.disabled = True
+        return form
+
+
+class PaymentSettings(WritePermissionMixin, EventSettingsViewMixin, EventSettingsFormView):
     template_name = 'pretixcontrol/event/payment.html'
     form_class = PaymentSettingsForm
-    permission = 'can_change_event_settings'
+    permission = AnyPermissionOf('event.settings.payment:write', 'event.settings.general:write')
+    write_permission = 'event.settings.payment:write'
 
     def get_success_url(self) -> str:
         return reverse('control:event.settings.payment', kwargs={
@@ -644,13 +680,16 @@ class PaymentSettings(EventSettingsViewMixin, EventSettingsFormView):
             p.sales_channels = [sales_channels[channel] for channel in p.settings.get('_restrict_to_sales_channels', as_type=list, default=['web'])]
             if p.is_meta:
                 p.show_enabled = p.settings._enabled in (True, 'True')
+            if self.request.GET.get('highlight') and getattr(get_defining_app(p), 'name', None) == self.request.GET.get('highlight'):
+                p.highlight = True
         return context
 
 
-class TaxSettings(EventSettingsViewMixin, EventSettingsFormView):
+class TaxSettings(WritePermissionMixin, EventSettingsViewMixin, EventSettingsFormView):
     template_name = 'pretixcontrol/event/tax.html'
     form_class = TaxSettingsForm
-    permission = 'can_change_event_settings'
+    permission = AnyPermissionOf('event.settings.tax:write', 'event.settings.general:write')
+    write_permission = 'event.settings.tax:write'
 
     def get_success_url(self) -> str:
         return reverse('control:event.settings.tax', kwargs={
@@ -666,11 +705,12 @@ class TaxSettings(EventSettingsViewMixin, EventSettingsFormView):
         return context
 
 
-class InvoiceSettings(EventSettingsViewMixin, EventSettingsFormView):
+class InvoiceSettings(WritePermissionMixin, EventSettingsViewMixin, EventSettingsFormView):
     model = Event
     form_class = InvoiceSettingsForm
     template_name = 'pretixcontrol/event/invoicing.html'
-    permission = 'can_change_event_settings'
+    permission = AnyPermissionOf('event.settings.invoicing:write', 'event.settings.general:write')
+    write_permission = 'event.settings.invoicing:write'
 
     def get_context_data(self, **kwargs):
         types = get_transmission_types()
@@ -704,7 +744,7 @@ class CancelSettings(EventSettingsViewMixin, EventSettingsFormView):
     model = Event
     form_class = CancelSettingsForm
     template_name = 'pretixcontrol/event/cancel.html'
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
 
     def get_success_url(self) -> str:
         return reverse('control:event.settings.cancel', kwargs={
@@ -738,22 +778,17 @@ class CancelSettings(EventSettingsViewMixin, EventSettingsFormView):
 
 
 class InvoicePreview(EventPermissionRequiredMixin, View):
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.invoicing:write'
 
     def get(self, request, *args, **kwargs):
         fname, ftype, fcontent = build_preview_invoice_pdf(request.event)
         resp = HttpResponse(fcontent, content_type=ftype)
-        if settings.DEBUG:
-            # attachment is more secure as we're dealing with user-generated stuff here, but inline is much more convenient during debugging
-            resp['Content-Disposition'] = 'inline; filename="{}"'.format(fname)
-            resp._csp_ignore = True
-        else:
-            resp['Content-Disposition'] = 'attachment; filename="{}"'.format(fname)
+        resp['Content-Disposition'] = 'inline; filename="{}"'.format(fname)
         return resp
 
 
 class DangerZone(EventPermissionRequiredMixin, TemplateView):
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
     template_name = 'pretixcontrol/event/dangerzone.html'
 
 
@@ -769,7 +804,7 @@ class MailSettings(EventSettingsViewMixin, EventSettingsFormView):
     model = Event
     form_class = MailSettingsForm
     template_name = 'pretixcontrol/event/mail.html'
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
 
     def get_success_url(self) -> str:
         return reverse('control:event.settings.mail', kwargs={
@@ -801,7 +836,7 @@ class MailSettings(EventSettingsViewMixin, EventSettingsFormView):
 
 
 class MailSettingsSetup(EventPermissionRequiredMixin, MailSettingsSetupView):
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
     basetpl = 'pretixcontrol/event/base.html'
 
     def get_success_url(self) -> str:
@@ -817,7 +852,7 @@ class MailSettingsSetup(EventPermissionRequiredMixin, MailSettingsSetupView):
 
 
 class MailSettingsPreview(EventPermissionRequiredMixin, View):
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
 
     # create index-language mapping
     @cached_property
@@ -887,7 +922,7 @@ class MailSettingsPreview(EventPermissionRequiredMixin, View):
 
 
 class MailSettingsRendererPreview(MailSettingsPreview):
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
 
     def post(self, request, *args, **kwargs):
         return HttpResponse(status=405)
@@ -928,14 +963,19 @@ class MailSettingsRendererPreview(MailSettingsPreview):
                     context=context,
                 )
                 r = HttpResponse(v, content_type='text/html')
-                r._csp_ignore = True
+                r['Content-Security-Policy'] = (
+                    # Plugin-provided email templates will contain inline styles or remote images
+                    # but emails should not contain JS
+                    "style-src 'unsafe-inline'; "
+                    "img-src https: data:"
+                )
                 return r
         else:
             raise Http404(_('Unknown email renderer.'))
 
 
 class TicketSettingsPreview(EventPermissionRequiredMixin, View):
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
 
     @cached_property
     def output(self):
@@ -967,7 +1007,7 @@ class TicketSettings(EventSettingsViewMixin, EventPermissionRequiredMixin, FormV
     model = Event
     form_class = TicketSettingsForm
     template_name = 'pretixcontrol/event/tickets.html'
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
 
     def get_context_data(self, *args, **kwargs) -> dict:
         context = super().get_context_data(*args, **kwargs)
@@ -1078,7 +1118,7 @@ class EventPermissions(EventSettingsViewMixin, EventPermissionRequiredMixin, Tem
 
 
 class EventLive(EventPermissionRequiredMixin, TemplateView):
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
     template_name = 'pretixcontrol/event/live.html'
 
     def get_context_data(self, **kwargs):
@@ -1125,8 +1165,11 @@ class EventLive(EventPermissionRequiredMixin, TemplateView):
             if request.POST.get("delete") == "yes":
                 try:
                     with transaction.atomic():
-                        for order in request.event.orders.filter(testmode=True):
-                            order.gracefully_delete(user=self.request.user)
+                        Order.gracefully_delete_bulk(
+                            request.event,
+                            request.event.orders.filter(testmode=True),
+                            user=self.request.user
+                        )
                 except ProtectedError:
                     messages.error(self.request, _('An order could not be deleted as some constraints (e.g. data '
                                                    'created by plug-ins) do not allow it.'))
@@ -1145,12 +1188,12 @@ class EventLive(EventPermissionRequiredMixin, TemplateView):
 
 
 class EventTransferSession(EventPermissionRequiredMixin, TemplateView):
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
     template_name = 'pretixcontrol/event/transfer_session.html'
 
 
 class EventDelete(RecentAuthenticationRequiredMixin, EventPermissionRequiredMixin, FormView):
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
     template_name = 'pretixcontrol/event/delete.html'
     form_class = EventDeleteForm
 
@@ -1211,6 +1254,7 @@ class EventDelete(RecentAuthenticationRequiredMixin, EventPermissionRequiredMixi
 class EventLog(EventPermissionRequiredMixin, PaginationMixin, ListView):
     template_name = 'pretixcontrol/event/logs.html'
     model = LogEntry
+    paginator_class = LargeResultSetPaginator
     context_object_name = 'logs'
 
     def get_queryset(self):
@@ -1218,20 +1262,20 @@ class EventLog(EventPermissionRequiredMixin, PaginationMixin, ListView):
             'user', 'content_type', 'api_token', 'oauth_application', 'device'
         ).order_by('-datetime', '-pk')
         qs = qs.exclude(action_type__in=OVERVIEW_BANLIST)
-        if not self.request.user.has_event_permission(self.request.organizer, self.request.event, 'can_view_orders',
+        if not self.request.user.has_event_permission(self.request.organizer, self.request.event, 'event.orders:read',
                                                       request=self.request):
             qs = qs.exclude(content_type=ContentType.objects.get_for_model(Order))
-        if not self.request.user.has_event_permission(self.request.organizer, self.request.event, 'can_view_vouchers',
+        if not self.request.user.has_event_permission(self.request.organizer, self.request.event, 'event.vouchers:read',
                                                       request=self.request):
             qs = qs.exclude(content_type=ContentType.objects.get_for_model(Voucher))
         if not self.request.user.has_event_permission(self.request.organizer, self.request.event,
-                                                      'can_change_event_settings', request=self.request):
+                                                      'event.settings.general:write', request=self.request):
             allowed_types = [
                 ContentType.objects.get_for_model(Voucher),
                 ContentType.objects.get_for_model(Order)
             ]
             if self.request.user.has_event_permission(self.request.organizer, self.request.event,
-                                                      'can_change_items', request=self.request):
+                                                      'event.items:write', request=self.request):
                 allowed_types += [
                     ContentType.objects.get_for_model(Item),
                     ContentType.objects.get_for_model(ItemCategory),
@@ -1240,35 +1284,23 @@ class EventLog(EventPermissionRequiredMixin, PaginationMixin, ListView):
                 ]
             qs = qs.filter(content_type__in=allowed_types)
 
-        if self.request.GET.get('user') == 'yes':
-            qs = qs.filter(user__isnull=False)
-        elif self.request.GET.get('user') == 'no':
-            qs = qs.filter(user__isnull=True)
-        elif self.request.GET.get('user', '').startswith('d-'):
-            qs = qs.filter(device_id=self.request.GET.get('user')[2:])
-        elif self.request.GET.get('user'):
-            qs = qs.filter(user_id=self.request.GET.get('user'))
-
-        if self.request.GET.get('action_type'):
-            qs = qs.filter(action_type=self.request.GET['action_type'])
-
-        if self.request.GET.get('content_type'):
-            qs = qs.filter(content_type=get_object_or_404(ContentType, pk=self.request.GET.get('content_type')))
-
-            if self.request.GET.get('object'):
-                qs = qs.filter(object_id=self.request.GET.get('object'))
+        if self.filter_form.is_valid():
+            qs = self.filter_form.filter_qs(qs)
 
         return qs
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data()
-        ctx['userlist'] = self.request.event.logentry_set.order_by().distinct().values('user__id', 'user__email')
-        ctx['devicelist'] = self.request.event.logentry_set.order_by('device__name').distinct().values('device__id', 'device__name')
+        ctx['filter_form'] = self.filter_form
         return ctx
+
+    @cached_property
+    def filter_form(self):
+        return LogFilterForm(data=self.request.GET, organizer=self.request.organizer)
 
 
 class EventComment(EventPermissionRequiredMixin, View):
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
 
     def post(self, *args, **kwargs):
         form = CommentForm(self.request.POST)
@@ -1297,7 +1329,7 @@ class TaxCreate(EventSettingsViewMixin, EventPermissionRequiredMixin, CreateView
     model = TaxRule
     form_class = TaxRuleForm
     template_name = 'pretixcontrol/event/tax_edit.html'
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.tax:write'
     context_object_name = 'taxrule'
 
     def get_success_url(self) -> str:
@@ -1358,7 +1390,7 @@ class TaxUpdate(EventSettingsViewMixin, EventPermissionRequiredMixin, UpdateView
     model = TaxRule
     form_class = TaxRuleForm
     template_name = 'pretixcontrol/event/tax_edit.html'
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.tax:write'
     context_object_name = 'rule'
 
     def get_object(self, queryset=None) -> TaxRule:
@@ -1401,11 +1433,16 @@ class TaxUpdate(EventSettingsViewMixin, EventPermissionRequiredMixin, UpdateView
         form.instance.custom_rules = json.dumps([
             f.cleaned_data for f in self.formset.ordered_forms if f not in self.formset.deleted_forms
         ], cls=I18nJSONEncoder)
-        if form.has_changed():
+        if form.has_changed() or self.formset.has_changed():
+            change_data = {
+                k: form.cleaned_data.get(k) for k in form.changed_data
+            }
+            if self.formset.has_changed():
+                change_data["custom_rules"] = [
+                    f.cleaned_data for f in self.formset.ordered_forms if f not in self.formset.deleted_forms
+                ]
             self.object.log_action(
-                'pretix.event.taxrule.changed', user=self.request.user, data={
-                    k: form.cleaned_data.get(k) for k in form.changed_data
-                }
+                'pretix.event.taxrule.changed', user=self.request.user, data=change_data
             )
         return super().form_valid(form)
 
@@ -1422,7 +1459,7 @@ class TaxUpdate(EventSettingsViewMixin, EventPermissionRequiredMixin, UpdateView
 
 class TaxDefault(EventSettingsViewMixin, EventPermissionRequiredMixin, DetailView):
     model = TaxRule
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.tax:write'
 
     def get_object(self, queryset=None) -> TaxRule:
         try:
@@ -1467,7 +1504,7 @@ class TaxDefault(EventSettingsViewMixin, EventPermissionRequiredMixin, DetailVie
 class TaxDelete(EventSettingsViewMixin, EventPermissionRequiredMixin, CompatDeleteView):
     model = TaxRule
     template_name = 'pretixcontrol/event/tax_delete.html'
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.tax:write'
     context_object_name = 'taxrule'
 
     def get_object(self, queryset=None) -> TaxRule:
@@ -1504,7 +1541,7 @@ class TaxDelete(EventSettingsViewMixin, EventPermissionRequiredMixin, CompatDele
 
 class WidgetSettings(EventSettingsViewMixin, EventPermissionRequiredMixin, FormView):
     template_name = 'pretixcontrol/event/widget.html'
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
     form_class = WidgetCodeForm
 
     def get_form_kwargs(self):
@@ -1531,9 +1568,9 @@ class WidgetSettings(EventSettingsViewMixin, EventPermissionRequiredMixin, FormV
         return ctx
 
 
-class QuickSetupView(FormView):
+class QuickSetupView(EventPermissionRequiredMixin, FormView):
     template_name = 'pretixcontrol/event/quick_setup.html'
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
     form_class = QuickSetupForm
 
     def dispatch(self, request, *args, **kwargs):
@@ -1711,10 +1748,10 @@ class EventQRCode(EventPermissionRequiredMixin, View):
     permission = None
 
     def get(self, request, *args, filetype, **kwargs):
-        url = build_absolute_uri(request.event, 'presale:event.index')
+        url = eventreverse_absolute(request.event, 'presale:event.index')
 
         if "url" in request.GET:
-            if url_has_allowed_host_and_scheme(request.GET["url"], allowed_hosts=[urlparse(url).netloc]):
+            if request.GET["url"].startswith(url):
                 url = request.GET["url"]
             else:
                 raise PermissionDenied("Untrusted URL")

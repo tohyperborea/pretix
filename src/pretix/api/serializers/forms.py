@@ -45,6 +45,12 @@ class PrimaryKeyRelatedField(serializers.PrimaryKeyRelatedField):
             return value
         return super().to_representation(value)
 
+    def to_internal_value(self, data):
+        value = super().to_internal_value(data)
+        if value is not None:
+            return value.pk
+        return value
+
 
 class FormFieldWrapperField(serializers.Field):
     def __init__(self, *args, **kwargs):
@@ -65,8 +71,9 @@ def form_field_to_serializer_field(field):
         if isinstance(field, m_from):
             return m_to(
                 required=field.required,
-                allow_null=not field.required,
+                allow_null=not field.required and not isinstance(field, forms.BooleanField),
                 validators=field.validators,
+                initial=field.initial,
                 **{kwarg: getattr(field, kwarg, None) for kwarg in m_kwargs}
             )
 

@@ -67,13 +67,14 @@ from pretix.base.services.cart import (
 from pretix.base.timemachine import time_machine_now
 from pretix.base.views.tasks import AsyncAction
 from pretix.helpers.http import redirect_to_url
+from pretix.helpers.safedownload import check_token
 from pretix.multidomain.urlreverse import eventreverse
+from pretix.presale.productlist import (
+    get_item_option_count, item_group_by_category, prepare_item_list_for_shop,
+)
 from pretix.presale.views import (
     CartMixin, EventViewMixin, allow_cors_if_namespaced,
     allow_frame_if_namespaced, get_cart, iframe_entry_view_wrapper,
-)
-from pretix.presale.views.event import (
-    get_grouped_items, item_group_by_category,
 )
 from pretix.presale.views.robots import NoSearchIndexViewMixin
 
@@ -238,9 +239,9 @@ def _items_from_post_data(request, warn_if_empty=True):
 
     # Compatibility patch that makes the frontend code a lot easier
     req_items = list(request.POST.lists())
-    if '_voucher_item' in request.POST and '_voucher_code' in request.POST:
+    if '_selected_item' in request.POST:
         req_items.append((
-            '%s' % request.POST['_voucher_item'], ('1',)
+            '%s' % request.POST['_selected_item'], ('1',)
         ))
         pass
 
@@ -388,6 +389,7 @@ def get_or_create_cart_id(request, create=True):
             if 'carts' in request.session:
                 request.session['carts'][current_id] = {}
         else:
+            # We found a valid, existing cart.
             return current_id
 
     cart_data = {}
@@ -398,6 +400,7 @@ def get_or_create_cart_id(request, create=True):
             cart_data['widget_data'] = cached_widget_data
     else:
         if not create:
+            # There is no existing cart for this request and we're not supposed to create a new one.
             return None
         new_id = generate_cart_id(request, prefix=prefix)
 
@@ -417,7 +420,7 @@ def get_or_create_cart_id(request, create=True):
     return new_id
 
 
-def cart_session(request):
+def cart_session(request, create=True):
     """
     Before pretix 1.8.0, all checkout-related information (like the entered email address) was stored
     in the user's regular session dictionary. This led to data interference and leaks for example if a
@@ -428,7 +431,9 @@ def cart_session(request):
     active cart session sub-dictionary for read and write access.
     """
     request.session.modified = True
-    cart_id = get_or_create_cart_id(request)
+    cart_id = get_or_create_cart_id(request, create=create)
+    if not cart_id and not create:
+        return None
     return request.session['carts'][cart_id]
 
 
@@ -553,6 +558,18 @@ class CartClear(EventViewMixin, CartActionMixin, AsyncAction, View):
                        request.sales_channel.identifier, time_machine_now(default=None))
 
 
+@method_decorator(allow_cors_if_namespaced, 'dispatch')
+class CartCreate(EventViewMixin, CartActionMixin, View):
+    def get(self, request, *args, **kwargs):
+        if 'ajax' in self.request.GET:
+            cart_id = get_or_create_cart_id(self.request, create=True)
+            return JsonResponse({
+                'cart_id': cart_id,
+            })
+        else:
+            return redirect_to_url(self.get_success_url())
+
+
 @method_decorator(allow_frame_if_namespaced, 'dispatch')
 class CartExtendReservation(EventViewMixin, CartActionMixin, AsyncAction, View):
     task = extend_cart_reservation
@@ -652,10 +669,10 @@ class RedeemView(NoSearchIndexViewMixin, EventViewMixin, CartMixin, TemplateView
         context = super().get_context_data(**kwargs)
 
         context['voucher'] = self.voucher
-        context['max_times'] = self.voucher.max_usages - self.voucher.redeemed
+        context['max_choices'] = self.voucher.max_usages - self.voucher.redeemed
 
         # Fetch all items
-        items, display_add_to_cart = get_grouped_items(
+        items, display_add_to_cart = prepare_item_list_for_shop(
             self.request.event,
             subevent=self.subevent,
             voucher=self.voucher,
@@ -670,8 +687,7 @@ class RedeemView(NoSearchIndexViewMixin, EventViewMixin, CartMixin, TemplateView
 
         # Calculate how many options the user still has. If there is only one option, we can
         # check the box right away ;)
-        context['options'] = sum([(len(item.available_variations) if item.has_variations else 1)
-                                  for item in items])
+        context['itemnum'] = get_item_option_count(items)
 
         context['allfree'] = all(
             item.display_price.gross == Decimal('0.00') and not item.mandatory_priced_addons
@@ -833,18 +849,27 @@ class RedeemView(NoSearchIndexViewMixin, EventViewMixin, CartMixin, TemplateView
 class AnswerDownload(EventViewMixin, View):
     def get(self, request, *args, **kwargs):
         answid = kwargs.get('answer')
+        token = request.GET.get('token', '')
+        cart_id = get_or_create_cart_id(self.request)
         answer = get_object_or_404(
             QuestionAnswer,
-            cartposition__cart_id=get_or_create_cart_id(self.request),
+            Q(cartposition__cart_id=cart_id) | Q(checkoutsession__cart_id=cart_id),
             id=answid
         )
         if not answer.file:
             return Http404()
+        if not check_token(request, answer, token):
+            raise Http404(_("This link is no longer valid. Please go back, refresh the page, and try again."))
 
-        ftype, _ = mimetypes.guess_type(answer.file.name)
-        resp = FileResponse(answer.file, content_type=ftype or 'application/binary')
-        resp['Content-Disposition'] = 'attachment; filename="{}-cart-{}"'.format(
+        ftype, _1 = mimetypes.guess_type(answer.file.name)
+        filename = '{}-cart-{}'.format(
             self.request.event.slug.upper(),
             os.path.basename(answer.file.name).split('.', 1)[1]
-        ).encode("ascii", "ignore")
+        )
+        resp = FileResponse(
+            answer.file,
+            filename=filename,
+            as_attachment=True,
+            content_type=ftype or 'application/binary'
+        )
         return resp

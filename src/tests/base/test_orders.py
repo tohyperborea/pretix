@@ -28,8 +28,9 @@ from zoneinfo import ZoneInfo
 import pytest
 from django.conf import settings
 from django.core import mail as djmail
+from django.db import transaction
 from django.db.models import F, Sum
-from django.test import TestCase, override_settings
+from django.test import TestCase, TransactionTestCase, override_settings
 from django.utils.timezone import make_aware, now
 from django_countries.fields import Country
 from django_scopes import scope
@@ -203,7 +204,7 @@ def test_expiry_last_relative(event):
     event.date_from = now() + timedelta(days=5)
     event.save()
     event.settings.set('payment_term_last', RelativeDateWrapper(
-        RelativeDate(days=2, time=None, base_date_name='date_from', minutes=None)
+        RelativeDate(days=2, time=None, base_date_name='event__date_from', minutes=None)
     ))
     order = _create_order(event, email='dummy@example.org', positions=[],
                           now_dt=today,
@@ -244,7 +245,7 @@ def test_expiry_last_relative_subevents(event):
     )
 
     event.settings.set('payment_term_last', RelativeDateWrapper(
-        RelativeDate(days=2, time=None, base_date_name='date_from', minutes=None)
+        RelativeDate(days=2, time=None, base_date_name='event__date_from', minutes=None)
     ))
     order = _create_order(event, email='dummy@example.org', positions=[cp1, cp2],
                           now_dt=today,
@@ -283,6 +284,30 @@ def test_expiry_dst(event):
                           locale='de')[0]
     localex = order.expires.astimezone(tz)
     assert (localex.hour, localex.minute) == (23, 59)
+
+
+@pytest.mark.django_db
+def test_expiry_per_channel(event):
+    today = now()
+    event.settings.set('payment_term_mode', 'minutes')
+    event.settings.set('payment_term_minutes', 30)
+    event.settings.set('payment_term_mode_baz', 'minutes')
+    event.settings.set('payment_term_minutes_baz', 15)
+    order = _create_order(event, email='dummy@example.org', positions=[],
+                          now_dt=today,
+                          sales_channel=event.organizer.sales_channels.get(identifier="baz"),
+                          payment_requests=[{
+                              "id": "test0",
+                              "provider": "free",
+                              "max_value": None,
+                              "min_value": None,
+                              "multi_use_supported": False,
+                              "info_data": {},
+                              "pprov": FreeOrderProvider(event),
+                          }],
+                          locale='de')[0]
+    assert (order.expires - today).days == 0
+    assert (order.expires - today).seconds == 15 * 60
 
 
 @pytest.mark.django_db
@@ -1225,12 +1250,6 @@ class DownloadReminderTests(TestCase):
         assert len(djmail.outbox) == 0
 
 
-@pytest.fixture
-def class_monkeypatch(request, monkeypatch):
-    request.cls.monkeypatch = monkeypatch
-
-
-@pytest.mark.usefixtures("class_monkeypatch")
 class OrderCancelTests(TestCase):
     def setUp(self):
         super().setUp()
@@ -1258,7 +1277,6 @@ class OrderCancelTests(TestCase):
             self.order.create_transactions()
             generate_invoice(self.order)
             djmail.outbox = []
-        self.monkeypatch.setattr("django.db.transaction.on_commit", lambda t: t())
 
     @classscope(attr='o')
     def test_cancel_canceled(self):
@@ -1351,14 +1369,14 @@ class OrderCancelTests(TestCase):
         self.order.status = Order.STATUS_PAID
         self.order.save()
         djmail.outbox = []
-        cancel_order(self.order.pk, send_mail=True)
-        print([s.subject for s in djmail.outbox])
-        print([s.to for s in djmail.outbox])
+        with self.captureOnCommitCallbacks(execute=True):
+            cancel_order(self.order.pk, send_mail=True)
+
         assert len(djmail.outbox) == 2
-        assert ["invoice@example.org"] == djmail.outbox[0].to
-        assert any(["Invoice_" in a[0] for a in djmail.outbox[0].attachments])
-        assert ["dummy@dummy.test"] == djmail.outbox[1].to
-        assert not any(["Invoice_" in a[0] for a in djmail.outbox[1].attachments])
+        assert ["dummy@dummy.test"] == djmail.outbox[0].to
+        assert not any(["Invoice_" in a[0] for a in djmail.outbox[0].attachments])
+        assert ["invoice@example.org"] == djmail.outbox[1].to
+        assert any(["Invoice_" in a[0] for a in djmail.outbox[1].attachments])
 
     @classscope(attr='o')
     def test_cancel_paid_with_too_high_fee(self):
@@ -1488,8 +1506,7 @@ class OrderCancelTests(TestCase):
         assert self.order.all_logentries().filter(action_type='pretix.event.order.refund.requested').exists()
 
 
-@pytest.mark.usefixtures("class_monkeypatch")
-class OrderChangeManagerTests(TestCase):
+class BaseOrderChangeManagerTestCase:
     def setUp(self):
         super().setUp()
         self.o = Organizer.objects.create(name='Dummy', slug='dummy', plugins='pretix.plugins.banktransfer')
@@ -1552,7 +1569,6 @@ class OrderChangeManagerTests(TestCase):
             self.seat_a1 = self.event.seats.create(seat_number="A1", product=self.stalls, seat_guid="A1")
             self.seat_a2 = self.event.seats.create(seat_number="A2", product=self.stalls, seat_guid="A2")
             self.seat_a3 = self.event.seats.create(seat_number="A3", product=self.stalls, seat_guid="A3")
-        self.monkeypatch.setattr("django.db.transaction.on_commit", lambda t: t())
 
     def _enable_reverse_charge(self):
         self.tr7.eu_reverse_charge = True
@@ -1566,6 +1582,8 @@ class OrderChangeManagerTests(TestCase):
             country=Country('AT')
         )
 
+
+class OrderChangeManagerTests(BaseOrderChangeManagerTestCase, TestCase):
     @classscope(attr='o')
     def test_multiple_commits_forbidden(self):
         self.ocm.change_price(self.op1, Decimal('10.00'))
@@ -2402,6 +2420,15 @@ class OrderChangeManagerTests(TestCase):
         q1 = self.event.quotas.create(name='Test', size=0)
         q1.items.add(self.shirt)
         self.ocm.add_position(self.shirt, None, None, None)
+        with self.assertRaises(OrderError):
+            self.ocm.commit()
+        assert self.order.positions.count() == 2
+
+    @classscope(attr='o')
+    def test_add_item_quota_partial(self):
+        q1 = self.event.quotas.create(name='Test', size=1)
+        q1.items.add(self.shirt)
+        self.ocm.add_position(self.shirt, None, None, None, count=2)
         with self.assertRaises(OrderError):
             self.ocm.commit()
         assert self.order.positions.count() == 2
@@ -3895,15 +3922,16 @@ class OrderChangeManagerTests(TestCase):
 
     @classscope(attr='o')
     def test_set_valid_until(self):
-        self.event.settings.ticket_secret_generator = "pretix_sig1"
-        assign_ticket_secret(self.event, self.op1, force_invalidate=True, save=True)
-        old_secret = self.op1.secret
+        with transaction.atomic():
+            self.event.settings.ticket_secret_generator = "pretix_sig1"
+            assign_ticket_secret(self.event, self.op1, force_invalidate=True, save=True)
+            old_secret = self.op1.secret
 
-        dt = make_aware(datetime(2022, 9, 20, 15, 0, 0, 0))
-        self.ocm.change_valid_until(self.op1, dt)
-        self.ocm.commit()
-        self.op1.refresh_from_db()
-        assert self.op1.secret != old_secret
+            dt = make_aware(datetime(2022, 9, 20, 15, 0, 0, 0))
+            self.ocm.change_valid_until(self.op1, dt)
+            self.ocm.commit()
+            self.op1.refresh_from_db()
+            assert self.op1.secret != old_secret
 
     @classscope(attr='o')
     def test_unset_valid_from_until(self):
@@ -3928,6 +3956,8 @@ class OrderChangeManagerTests(TestCase):
         assert len(djmail.outbox) == 1
         assert len(["Invoice_" in a[0] for a in djmail.outbox[0].attachments]) == 2
 
+
+class OrderChangeManagerTransactionalTests(BaseOrderChangeManagerTestCase, TransactionTestCase):
     @classscope(attr='o')
     def test_new_invoice_send_somewhere_else(self):
         generate_invoice(self.order)
@@ -4117,8 +4147,8 @@ def test_giftcard_multiple(event):
     for p in order.payments.all():
         p.payment_provider.execute_payment(None, p)
 
-    assert order.payments.get(info__icontains=gc1.pk).amount == Decimal('12.00')
-    assert order.payments.get(info__icontains=gc2.pk).amount == Decimal('11.00')
+    assert order.payments.get(amount=Decimal("12.00")).info_data["gift_card"] == gc1.pk
+    assert order.payments.get(amount=Decimal("11.00")).info_data["gift_card"] == gc2.pk
     gc1 = GiftCard.objects.get(pk=gc1.pk)
     assert gc1.value == 0
     gc2 = GiftCard.objects.get(pk=gc2.pk)

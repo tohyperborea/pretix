@@ -56,18 +56,11 @@ from pretix.base.services.placeholders import FormPlaceholderMixin  # noqa
 class BaseMailForm(FormPlaceholderMixin, forms.Form):
     subject = forms.CharField(label=_("Subject"))
     message = forms.CharField(label=_("Message"))
-    attachment = CachedFileField(
-        label=_("Attachment"),
-        required=False,
-        ext_whitelist=settings.FILE_UPLOAD_EXTENSIONS_EMAIL_ATTACHMENT,
-        help_text=_('Sending an attachment increases the chance of your email not arriving or being sorted into spam folders. We recommend only using PDFs '
-                    'of no more than 2 MB in size.'),
-        max_size=settings.FILE_UPLOAD_MAX_SIZE_EMAIL_ATTACHMENT
-    )
 
     def __init__(self, *args, **kwargs):
         event = self.event = kwargs.pop('event')
         context_parameters = kwargs.pop('context_parameters')
+        request = kwargs.pop('request')
         super().__init__(*args, **kwargs)
         self.fields['subject'] = I18nFormField(
             label=_('Subject'),
@@ -78,6 +71,16 @@ class BaseMailForm(FormPlaceholderMixin, forms.Form):
             label=_('Message'),
             widget=I18nMarkdownTextarea, required=True,
             locales=event.settings.get('locales'),
+        )
+        self.fields['attachment'] = CachedFileField(
+            label=_("Attachment"),
+            required=False,
+            ext_whitelist=settings.FILE_UPLOAD_EXTENSIONS_EMAIL_ATTACHMENT,
+            help_text=_(
+                'Sending an attachment increases the chance of your email not arriving or being sorted into spam folders. We recommend only using PDFs '
+                'of no more than 2 MB in size.'),
+            max_size=settings.FILE_UPLOAD_MAX_SIZE_EMAIL_ATTACHMENT,
+            request=request,
         )
         self._set_field_placeholders('subject', context_parameters, rich=False)
         self._set_field_placeholders('message', context_parameters, rich=True)
@@ -230,10 +233,15 @@ class OrderMailForm(BaseMailForm):
             self.fields['attach_tickets'].help_text = _("Attachment of tickets is disabled in this event's email "
                                                         "settings.")
 
-        choices = [(e, l) for e, l in Order.STATUS_CHOICE if e != 'n']
-        choices.insert(0, ('valid_if_pending', _('payment pending but already confirmed')))
-        choices.insert(0, ('na', _('payment pending (except unapproved or already confirmed)')))
-        choices.insert(0, ('pa', _('approval pending')))
+        choices = [
+            (Order.STATUS_PAID, _('Paid (or canceled with paid fee)')),
+            ('valid_if_pending', _('payment pending but already confirmed')),
+            ('na', _('payment pending (except unapproved or already confirmed)')),
+            ('pa', _('approval pending')),
+            (Order.STATUS_CANCELED, _('Canceled (fully)')),
+            (Order.STATUS_EXPIRED, _("Expired")),
+        ]
+
         if not event.settings.get('payment_term_expire_automatically', as_type=bool):
             choices.append(
                 ('overdue', _('pending with payment overdue'))
@@ -379,14 +387,18 @@ class RuleForm(FormPlaceholderMixin, I18nModelForm):
             ]
         )
 
-        self._set_field_placeholders('subject', ['event', 'order', 'event_or_subevent'])
-        self._set_field_placeholders('template', ['event', 'order', 'event_or_subevent'], rich=True)
+        self._set_field_placeholders('subject', ['event', 'order', 'event_or_subevent', 'position_or_address'])
+        self._set_field_placeholders('template', ['event', 'order', 'event_or_subevent', 'position_or_address'], rich=True)
 
-        choices = [(e, l) for e, l in Order.STATUS_CHOICE if e != 'n']
-        choices.insert(0, ('n__valid_if_pending', _('payment pending but already confirmed')))
-        choices.insert(0, ('n__not_pending_approval_and_not_valid_if_pending',
-                           _('payment pending (except unapproved or already confirmed)')))
-        choices.insert(0, ('n__pending_approval', _('approval pending')))
+        choices = [
+            (Order.STATUS_PAID, _('Paid (or canceled with paid fee)')),
+            ('n__valid_if_pending', _('payment pending but already confirmed')),
+            ('n__not_pending_approval_and_not_valid_if_pending',
+                _('payment pending (except unapproved or already confirmed)')),
+            ('n__pending_approval', _('approval pending')),
+            (Order.STATUS_CANCELED, _('Canceled (fully)')),
+            (Order.STATUS_EXPIRED, _("Expired")),
+        ]
         if not self.event.settings.get('payment_term_expire_automatically', as_type=bool):
             choices.append(
                 ('n__pending_overdue', _('pending with payment overdue'))

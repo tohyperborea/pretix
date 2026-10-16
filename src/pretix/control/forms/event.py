@@ -62,7 +62,8 @@ from pretix.base.forms import (
 )
 from pretix.base.models import Event, Organizer, TaxRule, Team
 from pretix.base.models.event import EventFooterLink, EventMetaValue, SubEvent
-from pretix.base.models.tax import TAX_CODE_LISTS
+from pretix.base.models.organizer import TeamQuerySet
+from pretix.base.models.tax import TAX_CODE_LISTS, VAT_ID_COUNTRIES
 from pretix.base.reldate import RelativeDateField, RelativeDateTimeField
 from pretix.base.services.placeholders import FormPlaceholderMixin
 from pretix.base.settings import (
@@ -72,14 +73,14 @@ from pretix.base.settings import (
 )
 from pretix.base.validators import multimail_validate
 from pretix.control.forms import (
-    MultipleLanguagesWidget, SalesChannelCheckboxSelectMultiple, SlugWidget,
-    SplitDateTimeField, SplitDateTimePickerWidget,
+    FontSelect, MultipleLanguagesWidget, SalesChannelCheckboxSelectMultiple,
+    SlugWidget, SplitDateTimeField, SplitDateTimePickerWidget,
 )
 from pretix.control.forms.widgets import Select2
 from pretix.helpers.countries import CachedCountries
 from pretix.multidomain.models import AlternativeDomainAssignment, KnownDomain
 from pretix.multidomain.urlreverse import (
-    build_absolute_uri, get_organizer_domain,
+    eventreverse_absolute, get_organizer_domain,
 )
 from pretix.plugins.banktransfer.payment import BankTransfer
 from pretix.presale.style import get_fonts
@@ -100,11 +101,12 @@ class EventWizardFoundationForm(forms.Form):
     def __init__(self, *args, **kwargs):
         self.user = kwargs.pop('user')
         self.session = kwargs.pop('session')
+        self.clone_from = kwargs.pop('clone_from')
         super().__init__(*args, **kwargs)
         qs = Organizer.objects.all()
         if not self.user.has_active_staff_session(self.session.session_key):
             qs = qs.filter(
-                id__in=self.user.teams.filter(can_create_events=True).values_list('organizer', flat=True)
+                id__in=self.user.teams.filter(TeamQuerySet.organizer_permission_q("organizer.events:create")).values_list('organizer', flat=True)
             )
         self.fields['organizer'] = forms.ModelChoiceField(
             label=_("Organizer"),
@@ -124,6 +126,16 @@ class EventWizardFoundationForm(forms.Form):
             organizer = self.fields['organizer'].queryset.first()
             self.fields['organizer'].initial = organizer
             self.fields['locales'].initial = organizer.settings.locales
+
+    def clean(self):
+        d = super().clean()
+        if d.get('organizer') and self.clone_from and not self.user.has_active_staff_session(self.session.session_key):
+            if not self.clone_from.allow_copy_data(d['organizer'], self.user):
+                raise ValidationError({
+                    "organizer": _("You do not have a sufficient level of access on the event you selected "
+                                   "to copy it to the desired organizer.")
+                })
+        return d
 
 
 class EventWizardBasicsForm(I18nModelForm):
@@ -185,10 +197,10 @@ class EventWizardBasicsForm(I18nModelForm):
             'presale_end': SplitDateTimeField,
         }
         widgets = {
-            'date_from': SplitDateTimePickerWidget(),
-            'date_to': SplitDateTimePickerWidget(attrs={'data-date-after': '#id_basics-date_from_0'}),
-            'presale_start': SplitDateTimePickerWidget(),
-            'presale_end': SplitDateTimePickerWidget(attrs={'data-date-after': '#id_basics-presale_start_0'}),
+            'date_from': SplitDateTimePickerWidget(without_seconds=True),
+            'date_to': SplitDateTimePickerWidget(attrs={'data-date-after': '#id_basics-date_from_0'}, without_seconds=True),
+            'presale_start': SplitDateTimePickerWidget(without_seconds=True),
+            'presale_end': SplitDateTimePickerWidget(attrs={'data-date-after': '#id_basics-presale_start_0'}, without_seconds=True),
             'slug': SlugWidget,
         }
 
@@ -198,6 +210,7 @@ class EventWizardBasicsForm(I18nModelForm):
         self.has_subevents = kwargs.pop('has_subevents')
         self.user = kwargs.pop('user')
         self.session = kwargs.pop('session')
+        self.clone_from = kwargs.pop('clone_from')
         super().__init__(*args, **kwargs)
         if 'timezone' not in self.initial:
             self.initial['timezone'] = get_current_timezone_name()
@@ -206,7 +219,7 @@ class EventWizardBasicsForm(I18nModelForm):
         self.fields['location'].widget.attrs['placeholder'] = _(
             'Sample Conference Center\nHeidelberg, Germany'
         )
-        self.fields['slug'].widget.prefix = build_absolute_uri(self.organizer, 'presale:organizer.index')
+        self.fields['slug'].widget.prefix = eventreverse_absolute(self.organizer, 'presale:organizer.index')
         self.fields['tax_rate']._required = True  # Do not render as optional because it is conditionally required
         if self.has_subevents:
             del self.fields['presale_start']
@@ -238,6 +251,16 @@ class EventWizardBasicsForm(I18nModelForm):
                               'check "{field}" above.').format(field=self.fields["no_taxes"].label)
             })
 
+        if self.clone_from and not self.user.has_active_staff_session(self.session.session_key):
+            if data.get("team"):
+                source_event_perms = self.user.get_event_permission_set(self.organizer, self.clone_from)
+                team_perms = data["team"].event_permission_set(include_legacy=False)
+                if any(t not in source_event_perms for t in team_perms):
+                    raise ValidationError({
+                        "team": _("You cannot choose a team that would give you more access than you have on "
+                                  "the event you are copying.")
+                    })
+
         # change timezone
         zone = ZoneInfo(data.get('timezone'))
         data['date_from'] = self.reset_timezone(zone, data.get('date_from'))
@@ -261,9 +284,12 @@ class EventWizardBasicsForm(I18nModelForm):
 
     @staticmethod
     def has_control_rights(user, organizer, session):
+        # It's mostly pointless to let a user create an event where they can't event change the name or create products,
+        # so we detect if the user has sufficient access for that on a new event.
         return user.teams.filter(
-            organizer=organizer, all_events=True, can_change_event_settings=True, can_change_items=True,
-            can_change_orders=True, can_change_vouchers=True
+            TeamQuerySet.event_permission_q("event.settings.general:write"),
+            organizer=organizer,
+            all_events=True,
         ).exists() or user.has_active_staff_session(session.session_key)
 
 
@@ -293,18 +319,24 @@ class EventWizardCopyForm(forms.Form):
         if user.has_active_staff_session(session.session_key):
             return Event.objects.all()
         return Event.objects.filter(
+            # It is generally pointless to let users copy events when they would not even be able to change the
+            # date of the event they have just created. Therefore, even if it looks wrong, we're checking a write
+            # permission for read access.
             Q(organizer_id__in=user.teams.filter(
-                all_events=True, can_change_event_settings=True, can_change_items=True
+                TeamQuerySet.event_permission_q("event.settings.general:write"),
+                all_events=True,
             ).values_list('organizer', flat=True)) | Q(id__in=user.teams.filter(
-                can_change_event_settings=True, can_change_items=True
+                TeamQuerySet.event_permission_q("event.settings.general:write"),
             ).values_list('limit_events__id', flat=True))
         )
 
     def __init__(self, *args, **kwargs):
-        kwargs.pop('organizer')
+        self.organizer = kwargs.pop('organizer')
         kwargs.pop('locales')
         self.session = kwargs.pop('session')
+        self.team = kwargs.pop('team')
         kwargs.pop('has_subevents')
+        kwargs.pop('clone_from')
         self.user = kwargs.pop('user')
         super().__init__(*args, **kwargs)
 
@@ -322,6 +354,24 @@ class EventWizardCopyForm(forms.Form):
             required=False
         )
         self.fields['copy_from_event'].widget.choices = self.fields['copy_from_event'].choices
+
+    def clean(self):
+        d = super().clean()
+        if d.get('copy_from_event') and not self.user.has_active_staff_session(self.session.session_key):
+            if not d['copy_from_event'].allow_copy_data(self.organizer, self.user):
+                raise ValidationError({
+                    "copy_from_event": _("You do not have a sufficient level of access on the event you selected "
+                                         "to copy it to the desired organizer.")
+                })
+            if self.team:
+                source_event_perms = self.user.get_event_permission_set(self.organizer, d['copy_from_event'])
+                team_perms = self.team.event_permission_set(include_legacy=False)
+                if any(t not in source_event_perms for t in team_perms):
+                    raise ValidationError({
+                        "copy_from_event": _("You cannot choose an event on which you have less access than the "
+                                             "team you selected in the previous step.")
+                    })
+        return d
 
 
 class EventMetaValueForm(forms.ModelForm):
@@ -350,10 +400,10 @@ class EventMetaValueForm(forms.ModelForm):
         if self.disabled:
             self.fields['value'].widget.attrs['readonly'] = 'readonly'
 
-    def clean_slug(self):
+    def clean_value(self):
         if self.disabled:
             return self.instance.value if self.instance else None
-        return self.cleaned_data['slug']
+        return self.cleaned_data['value']
 
     class Meta:
         model = EventMetaValue
@@ -471,15 +521,22 @@ class EventUpdateForm(I18nModelForm):
             'limit_sales_channels': SafeModelMultipleChoiceField,
         }
         widgets = {
-            'date_from': SplitDateTimePickerWidget(),
-            'date_to': SplitDateTimePickerWidget(attrs={'data-date-after': '#id_date_from_0'}),
-            'date_admission': SplitDateTimePickerWidget(attrs={'data-date-default': '#id_date_from_0'}),
-            'presale_start': SplitDateTimePickerWidget(),
-            'presale_end': SplitDateTimePickerWidget(attrs={'data-date-after': '#id_presale_start_0'}),
+            'date_from': SplitDateTimePickerWidget(without_seconds=True),
+            'date_to': SplitDateTimePickerWidget(attrs={'data-date-after': '#id_date_from_0'}, without_seconds=True),
+            'date_admission': SplitDateTimePickerWidget(attrs={'data-date-default': '#id_date_from_0'}, without_seconds=True),
+            'presale_start': SplitDateTimePickerWidget(without_seconds=True),
+            'presale_end': SplitDateTimePickerWidget(attrs={'data-date-after': '#id_presale_start_0'}, without_seconds=True),
         }
 
 
 class EventSettingsValidationMixin:
+
+    def clean_invoice_address_from_vat_id(self):
+        value = self.cleaned_data.get('invoice_address_from_vat_id')
+        country = self.cleaned_data.get('invoice_address_from_country')
+        if value and country and country not in VAT_ID_COUNTRIES:
+            return None
+        return value
 
     def clean(self):
         data = super().clean()
@@ -543,6 +600,7 @@ class EventSettingsForm(EventSettingsValidationMixin, FormPlaceholderMixin, Sett
         'imprint_url',
         'checkout_email_helptext',
         'presale_has_ended_text',
+        'event_list_empty_text',
         'voucher_explanation_text',
         'checkout_success_text',
         'show_dates_on_frontpage',
@@ -568,6 +626,7 @@ class EventSettingsForm(EventSettingsValidationMixin, FormPlaceholderMixin, Sett
         'max_items_per_order',
         'reservation_time',
         'contact_mail',
+        'contact_url',
         'show_variations_expanded',
         'hide_sold_out',
         'meta_noindex',
@@ -614,6 +673,11 @@ class EventSettingsForm(EventSettingsValidationMixin, FormPlaceholderMixin, Sett
 
     base_context = {
         'frontpage_text': ['event'],
+        'presale_has_ended_text': ['event'],
+        'voucher_explanation_text': ['event'],
+        'banner_text': ['event'],
+        'banner_text_bottom': ['event'],
+        'event_info_text': ['event'],
     }
 
     def _resolve_virtual_keys_input(self, data, prefix=''):
@@ -671,8 +735,9 @@ class EventSettingsForm(EventSettingsValidationMixin, FormPlaceholderMixin, Sett
             del self.fields['event_list_available_only']
             del self.fields['event_list_filters']
             del self.fields['event_calendar_future_only']
+            del self.fields['event_list_empty_text']
         self.fields['primary_font'].choices = [('Open Sans', 'Open Sans')] + sorted([
-            (a, {"title": a, "data": v}) for a, v in get_fonts(self.event, pdf_support_required=False).items()
+            (a, FontSelect.FontOption(title=a, data=v)) for a, v in get_fonts(self.event, pdf_support_required=False).items()
         ], key=lambda a: a[0])
 
         # create "virtual" fields for better UX when editing <name>_asked and <name>_required fields
@@ -773,9 +838,10 @@ class CancelSettingsForm(SettingsForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if self.obj.settings.giftcard_expiry_years is not None:
-            self.fields['cancel_allow_user_paid_refund_as_giftcard'].help_text = gettext(
-                'You have configured gift cards to be valid {} years plus the year the gift card is issued in.'
-            ).format(self.obj.settings.giftcard_expiry_years)
+            self.fields['cancel_allow_user_paid_refund_as_giftcard'].help_text = format_html(
+                gettext('You have configured gift cards to be valid {} years plus the year the gift card is issued in.'),
+                self.obj.settings.giftcard_expiry_years
+            )
 
 
 class PaymentSettingsForm(EventSettingsValidationMixin, SettingsForm):
@@ -790,8 +856,59 @@ class PaymentSettingsForm(EventSettingsValidationMixin, SettingsForm):
         'payment_term_accept_late',
         'payment_pending_hidden',
         'payment_explanation',
+        'payment_choice_postpone_allowed_channels',
         'tax_rule_payment',
     ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        channels = list(self.obj.organizer.sales_channels.all())
+        self.fields['payment_choice_postpone_allowed_channels'].choices = [
+            (c.identifier, c.label) for c in channels
+            if c.type_instance.payment_restrictions_supported
+        ]
+
+        self.term_channel_fields = {}
+        for c in channels:
+            if c.type_instance.payment_restrictions_supported and c.identifier != "web":
+                # At the moment, it seems sufficient to allow this for the same channel types as other payment settings
+                # We can always introduce more flags later if needed
+                suffix = '_' + c.identifier.replace(".", "_")
+                self.term_channel_fields[c] = [
+                    'payment_term_mode' + suffix,
+                    'payment_term_days' + suffix,
+                    'payment_term_minutes' + suffix,
+                ]
+                self.fields['payment_term_mode' + suffix] = DEFAULTS['payment_term_mode']['form_class'](
+                    label=_("Payment term"),
+                    widget=forms.RadioSelect,
+                    required=False,
+                    choices=(
+                        ('', _("same as above")),
+                        ('days', _("different payment term in days")),
+                        ('minutes', _("different payment term in minutes"))
+                    ),
+                )
+                self.fields['payment_term_days' + suffix] = DEFAULTS['payment_term_days']['form_class'](
+                    required=False,
+                    **DEFAULTS['payment_term_days']['form_kwargs'](suffix, 1),
+                )
+                self.fields['payment_term_minutes' + suffix] = DEFAULTS['payment_term_minutes']['form_class'](
+                    required=False,
+                    **DEFAULTS['payment_term_minutes']['form_kwargs'](suffix, 2),
+                )
+
+    def clean(self):
+        data = super().clean()
+        for c in self.term_channel_fields.keys():
+            suffix = '_' + c.identifier.replace(".", "_")
+            mode = self.cleaned_data.get(f'payment_term_mode{suffix}')
+            if mode == 'days' and self.cleaned_data.get(f'payment_term_days{suffix}') is None:
+                raise ValidationError({f'payment_term_days{suffix}': _("This field is required.")})
+            if mode == 'minutes' and self.cleaned_data.get(f'payment_term_minutes{suffix}') is None:
+                raise ValidationError({f'payment_term_minutes{suffix}': _("This field is required.")})
+        return data
 
     def clean_payment_term_days(self):
         value = self.cleaned_data.get('payment_term_days')
@@ -1519,10 +1636,15 @@ class MailSettingsForm(FormPlaceholderMixin, SettingsForm):
             self._set_field_placeholders(k, v, rich=k.startswith('mail_text_') and k not in self.plain_rendering)
 
         for k, v in list(self.fields.items()):
-            if k.endswith('_attendee') and not event.settings.attendee_emails_asked:
-                # If we don't ask for attendee emails, we can't send them anything and we don't need to clutter
-                # the user interface with it
-                del self.fields[k]
+            if k.endswith('_attendee'):
+                if not event.settings.attendee_emails_asked:
+                    # If we don't ask for attendee emails, we can't send them anything and we don't need to clutter
+                    # the user interface with it
+                    del self.fields[k]
+                elif 'subject' in k and k.replace("subject", "send") in self.fields:
+                    v.widget.attrs["data-display-dependency"] = f'#id_{k.replace("subject", "send")}'
+                elif 'text' in k and k.replace("text", "send") in self.fields:
+                    v.widget.attrs["data-display-dependency"] = f'#id_{k.replace("text", "send")}'
 
 
 class TicketSettingsForm(SettingsForm):
@@ -1616,7 +1738,7 @@ class CountriesAndEUAndStates(CountriesAndEU):
 
 class TaxRuleLineForm(I18nForm):
     country = LazyTypedChoiceField(
-        choices=CountriesAndEUAndStates(),
+        choices=lazy(lambda: CountriesAndEUAndStates(), CountriesAndEUAndStates),
         required=False
     )
     address_type = forms.ChoiceField(

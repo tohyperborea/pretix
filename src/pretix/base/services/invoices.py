@@ -51,12 +51,14 @@ from django_scopes import scope, scopes_disabled
 from i18nfield.strings import LazyI18nString
 
 from pretix.base.i18n import language
+from pretix.base.invoicing.pdf import InvoiceNotReadyException
 from pretix.base.invoicing.transmission import (
     get_transmission_types, transmission_providers,
 )
 from pretix.base.models import (
     ExchangeRate, Invoice, InvoiceAddress, InvoiceLine, Order, OrderFee,
 )
+from pretix.base.models.orders import OrderPayment
 from pretix.base.models.tax import EU_CURRENCIES
 from pretix.base.services.tasks import (
     TransactionAwareProfiledEventTask, TransactionAwareTask,
@@ -101,7 +103,7 @@ def build_invoice(invoice: Invoice) -> Invoice:
         introductory = invoice.event.settings.get('invoice_introductory_text', as_type=LazyI18nString)
         additional = invoice.event.settings.get('invoice_additional_text', as_type=LazyI18nString)
         footer = invoice.event.settings.get('invoice_footer_text', as_type=LazyI18nString)
-        if lp and lp.payment_provider:
+        if lp and lp.payment_provider and lp.state not in (OrderPayment.PAYMENT_STATE_FAILED, OrderPayment.PAYMENT_STATE_CANCELED):
             if 'payment' in inspect.signature(lp.payment_provider.render_invoice_text).parameters:
                 payment = str(lp.payment_provider.render_invoice_text(invoice.order, lp))
             else:
@@ -203,6 +205,19 @@ def build_invoice(invoice: Invoice) -> Invoice:
                         invoice.foreign_currency_rate = rate.rate.quantize(Decimal('0.0001'), ROUND_HALF_UP)
                         invoice.foreign_currency_rate_date = rate.source_date
                         invoice.foreign_currency_source = 'cz:cnb:rate-fixing-daily'
+            elif invoice.event.settings.invoice_eu_currencies == 'PLN' and invoice.event.currency != 'PLN':
+                invoice.foreign_currency_display = 'PLN'
+                if settings.FETCH_ECB_RATES:
+                    rate = ExchangeRate.objects.filter(
+                        source='pl:nbp:table-a',
+                        source_currency=invoice.event.currency,
+                        other_currency=invoice.foreign_currency_display,
+                        source_date__gt=now().date() - timedelta(days=7)
+                    ).first()
+                    if rate:
+                        invoice.foreign_currency_rate = rate.rate.quantize(Decimal('0.0001'), ROUND_HALF_UP)
+                        invoice.foreign_currency_rate_date = rate.source_date
+                        invoice.foreign_currency_source = 'pl:nbp:table-a'
 
         except InvoiceAddress.DoesNotExist:
             ia = None
@@ -504,7 +519,7 @@ def generate_invoice(order: Order, trigger_pdf=True):
     return invoice
 
 
-@app.task(base=TransactionAwareTask)
+@app.task(base=TransactionAwareTask, throws=(InvoiceNotReadyException,))
 def invoice_pdf_task(invoice: int):
     with scopes_disabled():
         i = Invoice.objects.get(pk=invoice)

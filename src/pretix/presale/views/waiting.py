@@ -44,8 +44,8 @@ from pretix.presale.views import EventViewMixin, iframe_entry_view_wrapper
 from ...base.i18n import get_language_without_region
 from ...base.models import Voucher, WaitingListEntry
 from ..forms.waitinglist import WaitingListForm
+from ..productlist import prepare_item_list_for_shop
 from . import allow_frame_if_namespaced
-from .event import get_grouped_items
 
 
 @method_decorator(allow_frame_if_namespaced, 'dispatch')
@@ -70,7 +70,7 @@ class WaitingView(EventViewMixin, FormView):
     @cached_property
     def itemvars(self):
         customer = getattr(self.request, 'customer', None)
-        items, display_add_to_cart = get_grouped_items(
+        items, display_add_to_cart = prepare_item_list_for_shop(
             self.request.event,
             subevent=self.subevent,
             require_seat=None,
@@ -83,22 +83,27 @@ class WaitingView(EventViewMixin, FormView):
                 if customer else None
             ),
         )
-        choices = []
+        groups = {}
         for i in items:
             if not i.allow_waitinglist:
                 continue
+
+            category_name = str(i.category.name) if i.category else ''
+            group = groups.setdefault(category_name, [])
 
             if i.has_variations:
                 for v in i.available_variations:
                     if v.cached_availability[0] == Quota.AVAILABILITY_OK:
                         continue
-                    choices.append((f'{i.pk}-{v.pk}', f'{i.name} – {v.value}'))
+                    group.append((f'{i.pk}-{v.pk}', f'{i.name} – {v.value}'))
 
             else:
                 if i.cached_availability[0] == Quota.AVAILABILITY_OK:
                     continue
-                choices.append((f'{i.pk}', f'{i.name}'))
-        return choices
+                group.append((f'{i.pk}', f'{i.name}'))
+
+        # Remove categories where all items were available (no waiting list choices)
+        return [(cat, choices) for cat, choices in groups.items() if choices]
 
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
@@ -137,7 +142,6 @@ class WaitingView(EventViewMixin, FormView):
                     request.event, "presale:event.waitinglist", kwargs={'cart_namespace': kwargs.get('cart_namespace')}
                 ) + '?' + url_replace(request, 'require_cookie', '', 'iframe', '', 'locale', request.GET.get('locale', get_language_without_region()))
             })
-            r._csp_ignore = True
             return r
 
         if not self.itemvars:

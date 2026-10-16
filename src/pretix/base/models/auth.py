@@ -38,6 +38,7 @@ import operator
 import secrets
 from datetime import timedelta
 from functools import reduce
+from typing import Protocol
 
 from django.conf import settings
 from django.contrib.auth.models import (
@@ -49,13 +50,14 @@ from django.core.exceptions import BadRequest, PermissionDenied
 from django.db import IntegrityError, models, transaction
 from django.db.models import Q
 from django.utils.crypto import get_random_string, salted_hmac
+from django.utils.functional import cached_property
 from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
 from django_otp.models import Device
 from django_scopes import scopes_disabled
 
 from pretix.base.i18n import language
-from pretix.helpers.urls import build_absolute_uri
+from pretix.helpers.urls import mainreverse_absolute
 
 from ...helpers.countries import FastCountryField
 from ...helpers.u2f import pub_key_from_der, websafe_decode
@@ -64,6 +66,14 @@ from .base import LoggingMixin
 
 class EmailAddressTakenError(IntegrityError):
     pass
+
+
+class PermissionHolder(Protocol):
+    def has_event_permission(self, organizer, event, perm_name=None, request=None, session_key=None) -> bool:
+        ...
+
+    def has_organizer_permission(self, organizer, perm_name=None, request=None):
+        ...
 
 
 class UserManager(BaseUserManager):
@@ -212,6 +222,28 @@ class SuperuserPermissionSet:
         return True
 
 
+class EventPermissionSet(set):
+    def __contains__(self, item):
+        from pretix.base.permissions import assert_valid_event_permission
+
+        if super().__contains__(item):
+            return True
+
+        assert_valid_event_permission(item, allow_tuple=False)
+        return False
+
+
+class OrganizerPermissionSet(set):
+    def __contains__(self, item):
+        from pretix.base.permissions import assert_valid_organizer_permission
+
+        if super().__contains__(item):
+            return True
+
+        assert_valid_organizer_permission(item, allow_tuple=False)
+        return False
+
+
 class User(AbstractBaseUser, PermissionsMixin, LoggingMixin):
     """
     This is the user model used by pretix for authentication.
@@ -341,12 +373,13 @@ class User(AbstractBaseUser, PermissionsMixin, LoggingMixin):
 
         mail(
             email or self.email,
-            _('Account information changed'),
+            _('Changes to your account'),
             'pretixcontrol/email/security_notice.txt',
             {
                 'user': self,
                 'messages': msg,
-                'url': build_absolute_uri('control:user.settings')
+                'url': mainreverse_absolute('control:user.settings'),
+                'instance': settings.PRETIX_INSTANCE_NAME,
             },
             event=None,
             user=self,
@@ -367,12 +400,13 @@ class User(AbstractBaseUser, PermissionsMixin, LoggingMixin):
 
         with language(self.locale):
             if reason == 'email_change':
-                msg = str(_('to confirm changing your email address from {old_email}\nto {new_email}, use the following code:').format(
+                msg = str(_('To change your email address from {old_email} to {new_email}, use the following code:').format(
                     old_email=self.email, new_email=email,
                 ))
             elif reason == 'email_verify':
-                msg = str(_('to confirm that your email address {email} belongs to your pretix account, use the following code:').format(
+                msg = str(_('To verify your email address {email} on {instance}, use the following code:').format(
                     email=self.email,
+                    instance=settings.PRETIX_INSTANCE_NAME,
                 ))
             else:
                 raise Exception('Invalid confirmation code reason')
@@ -385,12 +419,13 @@ class User(AbstractBaseUser, PermissionsMixin, LoggingMixin):
         }
         mail(
             email or self.email,
-            _('pretix confirmation code'),
+            _('Your confirmation code'),
             'pretixcontrol/email/confirmation_code.txt',
             {
                 'user': self,
                 'reason': msg,
                 'code': code,
+                'instance': settings.PRETIX_INSTANCE_NAME,
             },
             event=None,
             user=self,
@@ -428,10 +463,13 @@ class User(AbstractBaseUser, PermissionsMixin, LoggingMixin):
         from pretix.base.services.mail import mail
 
         mail(
-            self.email, _('Password recovery'), 'pretixcontrol/email/forgot.txt',
+            self.email,
+            _('Reset your password'),
+            'pretixcontrol/email/forgot.txt',
             {
+                'instance': settings.PRETIX_INSTANCE_NAME,
                 'user': self,
-                'url': (build_absolute_uri('control:auth.forgot.recover')
+                'url': (mainreverse_absolute('control:auth.forgot.recover')
                         + '?id=%d&token=%s' % (self.id, default_token_generator.make_token(self)))
             },
             None, locale=self.locale, user=self
@@ -469,7 +507,7 @@ class User(AbstractBaseUser, PermissionsMixin, LoggingMixin):
         :return: set
         """
         teams = self._get_teams_for_event(organizer, event)
-        sets = [t.permission_set() for t in teams]
+        sets = [t.event_permission_set() for t in teams]
         if sets:
             return set.union(*sets)
         else:
@@ -483,7 +521,7 @@ class User(AbstractBaseUser, PermissionsMixin, LoggingMixin):
         :return: set
         """
         teams = self._get_teams_for_organizer(organizer)
-        sets = [t.permission_set() for t in teams]
+        sets = [t.organizer_permission_set() for t in teams]
         if sets:
             return set.union(*sets)
         else:
@@ -498,7 +536,7 @@ class User(AbstractBaseUser, PermissionsMixin, LoggingMixin):
 
         :param organizer: The organizer of the event
         :param event: The event to check
-        :param perm_name: The permission, e.g. ``can_change_teams``
+        :param perm_name: The permission, e.g. ``event.orders:read``
         :param request: The current request (optional)
         :param session_key: The current session key (optional)
         :return: bool
@@ -510,8 +548,8 @@ class User(AbstractBaseUser, PermissionsMixin, LoggingMixin):
         if teams:
             self._teamcache['e{}'.format(event.pk)] = teams
             if isinstance(perm_name, (tuple, list)):
-                return any([any(team.has_permission(p) for team in teams) for p in perm_name])
-            if not perm_name or any([team.has_permission(perm_name) for team in teams]):
+                return any([any(team.has_event_permission(p) for team in teams) for p in perm_name])
+            if not perm_name or any([team.has_event_permission(perm_name) for team in teams]):
                 return True
         return False
 
@@ -521,7 +559,7 @@ class User(AbstractBaseUser, PermissionsMixin, LoggingMixin):
         to the organizer ``organizer``.
 
         :param organizer: The organizer to check
-        :param perm_name: The permission, e.g. ``can_change_teams``
+        :param perm_name: The permission, e.g. ``organizer.events:create``
         :param request: The current request (optional). Required to detect staff sessions properly.
         :return: bool
         """
@@ -530,8 +568,8 @@ class User(AbstractBaseUser, PermissionsMixin, LoggingMixin):
         teams = self._get_teams_for_organizer(organizer)
         if teams:
             if isinstance(perm_name, (tuple, list)):
-                return any([any(team.has_permission(p) for team in teams) for p in perm_name])
-            if not perm_name or any([team.has_permission(perm_name) for team in teams]):
+                return any([any(team.has_organizer_permission(p) for team in teams) for p in perm_name])
+            if not perm_name or any([team.has_organizer_permission(perm_name) for team in teams]):
                 return True
         return False
 
@@ -562,14 +600,15 @@ class User(AbstractBaseUser, PermissionsMixin, LoggingMixin):
         :return: Iterable of Events
         """
         from .event import Event
+        from .organizer import TeamQuerySet
 
         if request and self.has_active_staff_session(request.session.session_key):
             return Event.objects.all()
 
         if isinstance(permission, (tuple, list)):
-            q = reduce(operator.or_, [Q(**{p: True}) for p in permission])
+            q = reduce(operator.or_, [TeamQuerySet.event_permission_q(p) for p in permission])
         else:
-            q = Q(**{permission: True})
+            q = TeamQuerySet.event_permission_q(permission)
 
         return Event.objects.filter(
             Q(organizer_id__in=self.teams.filter(q, all_events=True).values_list('organizer', flat=True))
@@ -602,35 +641,31 @@ class User(AbstractBaseUser, PermissionsMixin, LoggingMixin):
         :return: Iterable of Organizers
         """
         from .event import Organizer
+        from .organizer import TeamQuerySet
 
         if request and self.has_active_staff_session(request.session.session_key):
             return Organizer.objects.all()
 
-        kwargs = {permission: True}
-
         return Organizer.objects.filter(
-            id__in=self.teams.filter(**kwargs).values_list('organizer', flat=True)
+            id__in=self.teams.filter(TeamQuerySet.organizer_permission_q(permission)).values_list('organizer', flat=True)
         )
 
-    def has_active_staff_session(self, session_key=None):
+    def has_active_staff_session(self, session_key):
         """
         Returns whether or not a user has an active staff session (formerly known as superuser session)
         with the given session key.
         """
         return self.get_active_staff_session(session_key) is not None
 
-    def get_active_staff_session(self, session_key=None):
-        if not self.is_staff:
+    def get_active_staff_session(self, session_key):
+        if not self.is_staff or not session_key:
             return None
         if not hasattr(self, '_staff_session_cache'):
             self._staff_session_cache = {}
         if session_key not in self._staff_session_cache:
-            qs = StaffSession.objects.filter(
-                user=self, date_end__isnull=True
-            )
-            if session_key:
-                qs = qs.filter(session_key=session_key)
-            sess = qs.first()
+            sess = StaffSession.objects.filter(
+                user=self, date_end__isnull=True, session_key=session_key
+            ).first()
             if sess:
                 if sess.date_start < now() - timedelta(seconds=settings.PRETIX_SESSION_TIMEOUT_ABSOLUTE):
                     sess.date_end = now()
@@ -663,6 +698,23 @@ class User(AbstractBaseUser, PermissionsMixin, LoggingMixin):
     def update_session_token(self):
         self.session_token = generate_session_token()
         self.save(update_fields=['session_token'])
+
+    @cached_property
+    @scopes_disabled()
+    def is_in_any_teams(self):
+        return self.teams.exists()
+
+
+class UserWithStaffSession:
+    # Wrapper around a User object with a staff session, implementing the PermissionHolder Protocol
+    def __init__(self, user):
+        self.user = user
+
+    def has_event_permission(self, organizer, event, perm_name=None, request=None, session_key=None) -> bool:
+        return True
+
+    def has_organizer_permission(self, organizer, perm_name=None, request=None):
+        return True
 
 
 class UserKnownLoginSource(models.Model):

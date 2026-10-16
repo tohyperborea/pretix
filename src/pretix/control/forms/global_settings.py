@@ -104,7 +104,7 @@ class GlobalSettingsForm(SettingsForm):
                 help_text=_("Will be served at {domain}/.well-known/apple-developer-merchantid-domain-association").format(
                     domain=settings.SITE_URL
                 )
-            ))
+            )),
         ])
         responses = register_global_settings.send(self)
         for r, response in sorted(responses, key=lambda r: str(r[0])):
