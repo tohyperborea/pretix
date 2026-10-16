@@ -33,12 +33,13 @@
 # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations under the License.
 
+import functools
 from collections import defaultdict
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
 import bleach
-import dateutil.parser
 from django.dispatch import receiver
 from django.urls import reverse
 from django.utils.formats import date_format
@@ -69,6 +70,15 @@ OVERVIEW_BANLIST = [
 ]
 
 
+@functools.lru_cache(maxsize=32)
+def object_id_to_string(model_class, **kwargs):
+    # The cache is thread-local and persists requests, but it's small enough that we can accept that
+    try:
+        return str(model_class.objects.get(**kwargs))
+    except model_class.DoesNotExist:
+        return "?"
+
+
 class OrderChangeLogEntryType(OrderLogEntryType):
     prefix = _('The order has been changed:')
 
@@ -93,10 +103,10 @@ class OrderItemChanged(OrderChangeLogEntryType):
     def display_prefixed(self, event: Event, logentry: LogEntry, data):
         old_item = str(event.items.get(pk=data['old_item']))
         if data['old_variation']:
-            old_item += ' - ' + str(ItemVariation.objects.get(item__event=event, pk=data['old_variation']))
+            old_item += ' - ' + str(object_id_to_string(ItemVariation, item__event_id=event.pk, pk=data['old_variation']))
         new_item = str(event.items.get(pk=data['new_item']))
         if data['new_variation']:
-            new_item += ' - ' + str(ItemVariation.objects.get(item__event=event, pk=data['new_variation']))
+            new_item += ' - ' + str(object_id_to_string(ItemVariation, item__event_id=event.pk, pk=data['new_variation']))
         return _('Position #{posid}: {old_item} ({old_price}) changed to {new_item} ({new_price}).').format(
             posid=data.get('positionid', '?'),
             old_item=old_item, new_item=new_item,
@@ -153,14 +163,14 @@ class OrderTaxRuleChanged(OrderChangeLogEntryType):
         if 'positionid' in data:
             return _('Tax rule of position #{posid} changed from {old_rule} to {new_rule}.').format(
                 posid=data.get('positionid', '?'),
-                old_rule=TaxRule.objects.get(pk=data['old_taxrule']) if data['old_taxrule'] else '–',
-                new_rule=TaxRule.objects.get(pk=data['new_taxrule']),
+                old_rule=object_id_to_string(TaxRule, pk=data['old_taxrule']) if data['old_taxrule'] else '–',
+                new_rule=object_id_to_string(TaxRule, pk=data['new_taxrule']),
             )
         elif 'fee' in data:
             return _('Tax rule of fee #{fee} changed from {old_rule} to {new_rule}.').format(
                 fee=data.get('fee', '?'),
-                old_rule=TaxRule.objects.get(pk=data['old_taxrule']) if data['old_taxrule'] else '–',
-                new_rule=TaxRule.objects.get(pk=data['new_taxrule']),
+                old_rule=object_id_to_string(TaxRule, pk=data['old_taxrule']) if data['old_taxrule'] else '–',
+                new_rule=object_id_to_string(TaxRule, pk=data['new_taxrule']),
             )
 
 
@@ -204,7 +214,7 @@ class OrderCanceled(OrderChangeLogEntryType):
     def display_prefixed(self, event: Event, logentry: LogEntry, data):
         old_item = str(event.items.get(pk=data['old_item']))
         if data['old_variation']:
-            old_item += ' - ' + str(ItemVariation.objects.get(pk=data['old_variation']))
+            old_item += ' - ' + object_id_to_string(ItemVariation, pk=data['old_variation'])
         return _('Position #{posid} ({old_item}, {old_price}) canceled.').format(
             posid=data.get('positionid', '?'),
             old_item=old_item,
@@ -219,7 +229,7 @@ class OrderPositionAdded(OrderChangeLogEntryType):
     def display_prefixed(self, event: Event, logentry: LogEntry, data):
         item = str(event.items.get(pk=data['item']))
         if data['variation']:
-            item += ' - ' + str(ItemVariation.objects.get(item__event=event, pk=data['variation']))
+            item += ' - ' + object_id_to_string(ItemVariation, item__event_id=event.pk, pk=data['variation'])
         if data['addon_to']:
             addon_to = OrderPosition.objects.get(order__event=event, pk=data['addon_to'])
             return _('Position #{posid} created: {item} ({price}) as an add-on to position #{addon_to}.').format(
@@ -248,7 +258,7 @@ class OrderValidFromChanged(OrderChangeLogEntryType):
     def display_prefixed(self, event: Event, logentry: LogEntry, data):
         return _('The validity start date for position #{posid} has been changed to {value}.').format(
             posid=data.get('positionid', '?'),
-            value=date_format(dateutil.parser.parse(data.get('new_value')), 'SHORT_DATETIME_FORMAT') if data.get(
+            value=date_format(datetime.fromisoformat(data.get('new_value')), 'SHORT_DATETIME_FORMAT') if data.get(
                 'new_value') else '–'
         )
 
@@ -260,7 +270,7 @@ class OrderValidUntilChanged(OrderChangeLogEntryType):
     def display_prefixed(self, event: Event, logentry: LogEntry, data):
         return _('The validity end date for position #{posid} has been changed to {value}.').format(
             posid=data.get('positionid', '?'),
-            value=date_format(dateutil.parser.parse(data.get('new_value')), 'SHORT_DATETIME_FORMAT') if data.get('new_value') else '–'
+            value=date_format(datetime.fromisoformat(data.get('new_value')), 'SHORT_DATETIME_FORMAT') if data.get('new_value') else '–'
         )
 
 
@@ -283,7 +293,7 @@ class OrderChangedSplit(OrderChangeLogEntryType):
     def display_prefixed(self, event: Event, logentry: LogEntry, data):
         old_item = str(event.items.get(pk=data['old_item']))
         if data['old_variation']:
-            old_item += ' - ' + str(ItemVariation.objects.get(pk=data['old_variation']))
+            old_item += ' - ' + object_id_to_string(ItemVariation, pk=data['old_variation'])
         url = reverse('control:event.order', kwargs={
             'event': event.slug,
             'organizer': event.organizer.slug,
@@ -339,6 +349,7 @@ class OrderChangedSplitFrom(OrderLogEntryType):
     'pretix.event.checkin.reverted': _('The check-in of position #{posid} on list "{list}" has been reverted.'),
 })
 class CheckinErrorLogEntryType(OrderLogEntryType):
+
     def display(self, logentry: LogEntry, data):
         return self.display_plain(self.plain, logentry, data)
 
@@ -353,10 +364,7 @@ class CheckinErrorLogEntryType(OrderLogEntryType):
         event = logentry.event
 
         if 'list' in data and event:
-            try:
-                data['list'] = event.checkin_lists.get(pk=data.get('list')).name
-            except CheckinList.DoesNotExist:
-                data['list'] = _("(unknown)")
+            data['list'] = object_id_to_string(CheckinList, event_id=event.id, pk=data['list'])
         else:
             data['list'] = _("(unknown)")
 
@@ -364,7 +372,7 @@ class CheckinErrorLogEntryType(OrderLogEntryType):
         data['posid'] = logentry.parsed_data.get('positionid', '?')
 
         if 'datetime' in data:
-            dt = dateutil.parser.parse(data.get('datetime'))
+            dt = datetime.fromisoformat(data.get('datetime'))
             if abs((logentry.datetime - dt).total_seconds()) > 5 or data.get('forced'):
                 if event:
                     data['datetime'] = date_format(dt.astimezone(event.timezone), "SHORT_DATETIME_FORMAT")
@@ -430,7 +438,7 @@ class OrderPrintLogEntryType(OrderLogEntryType):
         return _('Position #{posid} has been printed at {datetime} with type "{type}".').format(
             posid=data.get('positionid'),
             datetime=date_format(
-                dateutil.parser.parse(data["datetime"]).astimezone(logentry.event.timezone),
+                datetime.fromisoformat(data["datetime"]).astimezone(logentry.event.timezone),
                 "SHORT_DATETIME_FORMAT"
             ) if logentry.event else data["datetime"],
             type=dict(PrintLog.PRINT_TYPES)[data["type"]],
@@ -518,6 +526,7 @@ def pretixcontrol_orderposition_blocked_display(sender: Event, orderposition, bl
         'The order requires approval before it can continue to be processed.'),
     'pretix.event.order.approved': _('The order has been approved.'),
     'pretix.event.order.denied': _('The order has been denied (comment: "{comment}").'),
+    'pretix.event.order.vatid.validated': _('The customer VAT ID has been verified.'),
     'pretix.event.order.contact.changed': _('The email address has been changed from "{old_email}" '
                                             'to "{new_email}".'),
     'pretix.event.order.contact.confirmed': _(
@@ -640,6 +649,7 @@ class TeamMembershipLogEntryType(LogEntryType):
     'pretix.team.member.added': _('{user} has been added to the team.'),
     'pretix.team.member.removed': _('{user} has been removed from the team.'),
     'pretix.team.invite.created': _('{user} has been invited to the team.'),
+    'pretix.team.invite.deleted': _('Invite for {user} has been deleted.'),
     'pretix.team.invite.resent': _('Invite for {user} has been resent.'),
 })
 class CoreTeamMembershipLogEntryType(TeamMembershipLogEntryType):
@@ -707,6 +717,10 @@ class CoreUserImpersonatedLogEntryType(UserImpersonatedLogEntryType):
     'pretix.organizer.export.schedule.failed': _('A scheduled export has failed: {reason}.'),
     'pretix.organizer.outgoingmails.retried': _('Failed emails have been scheduled to be retried.'),
     'pretix.organizer.outgoingmails.aborted': _('Queued emails have been aborted.'),
+    'pretix.property.created': _('An organizer meta property has been created.'),
+    'pretix.property.deleted': _('An organizer meta property has been deleted.'),
+    'pretix.property.changed': _('An organizer meta property has been changed.'),
+    'pretix.property.reordered': _('An organizer meta property has been reordered.'),
     'pretix.giftcards.acceptance.added': _('Gift card acceptance for another organizer has been added.'),
     'pretix.giftcards.acceptance.removed': _('Gift card acceptance for another organizer has been removed.'),
     'pretix.giftcards.acceptance.acceptor.invited': _('A new gift card acceptor has been invited.'),
@@ -741,7 +755,10 @@ class CoreUserImpersonatedLogEntryType(UserImpersonatedLogEntryType):
     'pretix.reusable_medium.created': _('The reusable medium has been created.'),
     'pretix.reusable_medium.created.auto': _('The reusable medium has been created automatically.'),
     'pretix.reusable_medium.changed': _('The reusable medium has been changed.'),
+    'pretix.reusable_medium.linked_orderposition.added': _('A new ticket has been added to the medium.'),
+    'pretix.reusable_medium.linked_orderposition.removed': _('A ticket has been removed from the medium.'),
     'pretix.reusable_medium.linked_orderposition.changed': _('The medium has been connected to a new ticket.'),
+    'pretix.reusable_medium.exchanged': _('The ticket #{positionid} was exchanged for reusable medium {medium_identifier}.'),
     'pretix.reusable_medium.linked_giftcard.changed': _('The medium has been connected to a new gift card.'),
     'pretix.email.error': _('Sending of an email has failed.'),
     'pretix.event.comment': _('The event\'s internal comment has been updated.'),
@@ -761,6 +778,7 @@ class CoreUserImpersonatedLogEntryType(UserImpersonatedLogEntryType):
     'pretix.user.settings.2fa.disabled': _('Two-factor authentication has been disabled.'),
     'pretix.user.settings.2fa.regenemergency': _('Your two-factor emergency codes have been regenerated.'),
     'pretix.user.settings.2fa.emergency': _('A two-factor emergency code has been generated.'),
+    'pretix.user.settings.2fa.resetdrift': _('Drift and throttle values for two-factor devices have been reset.'),
     'pretix.user.settings.2fa.device.added': _('A new two-factor authentication device "{name}" has been added to '
                                                'your account.'),
     'pretix.user.settings.2fa.device.deleted': _('The two-factor authentication device "{name}" has been removed '
@@ -983,7 +1001,7 @@ class LegacyCheckinLogEntryType(OrderLogEntryType):
 
     def display(self, logentry, data):
         # deprecated
-        dt = dateutil.parser.parse(data.get('datetime'))
+        dt = datetime.fromisoformat(data.get('datetime'))
         tz = logentry.event.timezone
         dt_formatted = date_format(dt.astimezone(tz), "SHORT_DATETIME_FORMAT")
         if 'list' in data:

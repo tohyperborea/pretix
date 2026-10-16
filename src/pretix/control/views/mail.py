@@ -35,7 +35,7 @@ from django.utils.translation import ngettext
 from django.views import View
 from django.views.generic import DetailView, ListView
 
-from pretix.base.middleware import _merge_csp, _parse_csp, _render_csp
+from pretix.base.middleware import add_to_response_csp
 from pretix.base.models import OutgoingMail
 from pretix.base.services.mail import mail_send_task
 from pretix.control.forms.filter import OutgoingMailFilterForm
@@ -86,7 +86,7 @@ class OutgoingMailListView(OutgoingMailQueryMixin, OrganizerDetailViewMixin, Org
     template_name = 'pretixcontrol/organizers/outgoing_mails.html'
     # Assume "the highest" permission level for now because emails could belog to any event, order, or customer.
     # We plan to add a special permissoin in the future
-    permission = 'can_change_organizer_settings'
+    permission = 'organizer.outgoingmails:read'
     context_object_name = 'mails'
     paginate_by = 100
 
@@ -100,7 +100,7 @@ class OutgoingMailListView(OutgoingMailQueryMixin, OrganizerDetailViewMixin, Org
 class OutgoingMailDetailView(OrganizerDetailViewMixin, OrganizerPermissionRequiredMixin, DetailView):
     model = OutgoingMail
     template_name = 'pretixcontrol/organizers/outgoing_mail.html'
-    permission = 'can_change_organizer_settings'
+    permission = 'organizer.outgoingmails:read'
     context_object_name = 'mail'
 
     def get_object(self, queryset=None):
@@ -108,18 +108,12 @@ class OutgoingMailDetailView(OrganizerDetailViewMixin, OrganizerPermissionRequir
 
     def dispatch(self, request, *args, **kwargs):
         response = super().dispatch(request, *args, **kwargs)
-        if 'Content-Security-Policy' in response:
-            h = _parse_csp(response['Content-Security-Policy'])
-        else:
-            h = {}
-        csps = {
+        add_to_response_csp(response, {
             'frame-src': ['data:'],
             # Unfortuantely, we can't avoid unsafe-inline for style here.
             # See outgoingmail.js for the protection measures we take.
             'style-src': ["'unsafe-inline'"],
-        }
-        _merge_csp(h, csps)
-        response['Content-Security-Policy'] = _render_csp(h)
+        })
         return response
 
     def get_context_data(self, **kwargs):
@@ -136,7 +130,7 @@ class OutgoingMailDetailView(OrganizerDetailViewMixin, OrganizerPermissionRequir
 
 
 class OutgoingMailBulkAction(OutgoingMailQueryMixin, OrganizerPermissionRequiredMixin, OrganizerDetailViewMixin, View):
-    permission = 'can_change_organizer_settings'
+    permission = 'organizer.outgoingmails:read'
 
     @transaction.atomic
     def post(self, request, *args, **kwargs):

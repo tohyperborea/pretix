@@ -33,7 +33,7 @@ from django.conf import settings
 from django.core import mail as djmail
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.signing import dumps
-from django.test import TestCase
+from django.test import Client, TestCase, TransactionTestCase
 from django.utils.crypto import get_random_string
 from django.utils.timezone import now
 from django_countries.fields import Country
@@ -60,12 +60,6 @@ from pretix.testutils.sessions import get_cart_session_key
 from .test_timemachine import TimemachineTestMixin
 
 
-@pytest.fixture
-def class_monkeypatch(request, monkeypatch):
-    request.cls.monkeypatch = monkeypatch
-
-
-@pytest.mark.usefixtures("class_monkeypatch")
 class BaseCheckoutTestCase:
     @scopes_disabled()
     def setUp(self):
@@ -104,7 +98,15 @@ class BaseCheckoutTestCase:
         self.workshopquota.items.add(self.workshop2)
         self.workshopquota.variations.add(self.workshop2a)
         self.workshopquota.variations.add(self.workshop2b)
-        self.monkeypatch.setattr("django.db.transaction.on_commit", lambda t: t())
+
+        self.parkingcat = ItemCategory.objects.create(name="Parking", is_addon=True, event=self.event)
+        self.parkingquota = Quota.objects.create(event=self.event, name='Parking', size=5)
+        self.parking1 = Item.objects.create(event=self.event, name='Premium Parking',
+                                            category=self.parkingcat, default_price=Decimal('15.00'))
+        self.parking2 = Item.objects.create(event=self.event, name='Standard Parking',
+                                            category=self.parkingcat, default_price=Decimal('5.00'))
+        self.parkingquota.items.add(self.parking1)
+        self.parkingquota.items.add(self.parking2)
 
     def _set_session(self, key, value):
         session = self.client.session
@@ -475,6 +477,58 @@ class CheckoutTestCase(BaseCheckoutTestCase, TimemachineTestMixin, TestCase):
             ia = InvoiceAddress.objects.get(pk=self.client.session['carts'][self.session_key].get('invoice_address'))
         assert ia.vat_id == "AT123456"
         assert not ia.vat_id_validated
+
+    def test_vat_id_revalidated_after_country_change(self):
+        self.tr19.eu_reverse_charge = True
+        self.tr19.keep_gross_if_rate_changes = True
+        self.tr19.home_country = Country('DE')
+        self.tr19.save()
+        self.event.settings.invoice_address_vatid = True
+
+        with scopes_disabled():
+            cr1 = CartPosition.objects.create(
+                event=self.event, cart_id=self.session_key, item=self.ticket,
+                price=23, expires=now() + timedelta(minutes=10)
+            )
+
+        with mock.patch('pretix.base.services.tax._validate_vat_id_EU') as mock_validate:
+            mock_validate.return_value = 'AT123456'
+            self.client.post('/%s/%s/checkout/questions/' % (self.orga.slug, self.event.slug), {
+                'is_business': 'business',
+                'company': 'Foo',
+                'name': 'Bar',
+                'street': 'Baz',
+                'zipcode': '1234',
+                'city': 'Here',
+                'country': 'AT',
+                'vat_id': 'AT123456',
+                'email': 'admin@localhost',
+                'transmission_type': 'email',
+            }, follow=True)
+
+        cr1.refresh_from_db()
+        assert cr1.price == Decimal('23.00')
+        assert cr1.tax_rate == Decimal('0.00')
+        assert cr1.tax_value == Decimal('0.00')
+
+        with mock.patch('pretix.base.services.tax._validate_vat_id_EU') as mock_validate:
+            def raiser(*args, **kwargs):
+                raise VATIDFinalError('country mismatch')
+
+            mock_validate.side_effect = raiser
+            r = self.client.post('/%s/%s/checkout/questions/' % (self.orga.slug, self.event.slug), {
+                'is_business': 'business',
+                'company': 'Foo',
+                'name': 'Bar',
+                'street': 'Baz',
+                'zipcode': '1012 WX',
+                'city': 'Here',
+                'country': 'NL',
+                'vat_id': 'AT123456',
+                'email': 'admin@localhost',
+                'transmission_type': 'email',
+            }, follow=True)
+            assert b'alert-danger' in r.content
 
     def test_reverse_charge_keep_gross(self):
         self.tr19.eu_reverse_charge = True
@@ -2370,6 +2424,97 @@ class CheckoutTestCase(BaseCheckoutTestCase, TimemachineTestMixin, TestCase):
             assert p2.fee.value == Decimal("0.46")
             assert o.total == Decimal("25.76")
 
+    def test_payment_postpone_not_allowed(self):
+        self.event.settings.set('payment_banktransfer__enabled', True)
+        with scopes_disabled():
+            CartPosition.objects.create(
+                event=self.event, cart_id=self.session_key, item=self.ticket,
+                price=23, expires=now() + timedelta(minutes=10)
+            )
+        response = self.client.post('/%s/%s/checkout/payment/' % (self.orga.slug, self.event.slug), {
+            'postpone': 'on',
+        }, follow=False)
+        assert 'Please select' in response.content.decode()
+
+    def test_payment_postpone_allowed(self):
+        self.event.settings.set('payment_banktransfer__enabled', True)
+        self.event.settings.payment_choice_postpone_allowed_channels = ['web']
+        with scopes_disabled():
+            CartPosition.objects.create(
+                event=self.event, cart_id=self.session_key, item=self.ticket,
+                price=23, expires=now() + timedelta(minutes=10)
+            )
+        response = self.client.post('/%s/%s/checkout/payment/' % (self.orga.slug, self.event.slug), {
+            'postpone': 'on',
+        }, follow=True)
+        self.assertRedirects(response, '/%s/%s/checkout/confirm/' % (self.orga.slug, self.event.slug),
+                             target_status_code=200)
+
+        response = self.client.post('/%s/%s/checkout/confirm/' % (self.orga.slug, self.event.slug), follow=True)
+        doc = BeautifulSoup(response.content.decode(), "lxml")
+        self.assertEqual(len(doc.select(".thank-you")), 1)
+        with scopes_disabled():
+            o = Order.objects.last()
+            assert not o.payments.exists()
+
+    def test_payment_postpone_cleared_on_selection(self):
+        self.event.settings.set('payment_banktransfer__enabled', True)
+        self.event.settings.payment_choice_postpone_allowed_channels = ['web']
+        with scopes_disabled():
+            CartPosition.objects.create(
+                event=self.event, cart_id=self.session_key, item=self.ticket,
+                price=23, expires=now() + timedelta(minutes=10)
+            )
+
+        response = self.client.post('/%s/%s/checkout/payment/' % (self.orga.slug, self.event.slug), {
+            'postpone': 'on',
+        }, follow=False)
+        self.assertRedirects(response, '/%s/%s/checkout/confirm/' % (self.orga.slug, self.event.slug),
+                             target_status_code=200)
+        assert self.client.session['carts'][self.session_key].get('payments_postpone')
+
+        # The only available provider must not be preselected while the choice is postponed
+        response = self.client.get('/%s/%s/checkout/payment/' % (self.orga.slug, self.event.slug), follow=True)
+        doc = BeautifulSoup(response.content.decode(), "lxml")
+        self.assertEqual(len(doc.select('input[name="payment"]')), 1)
+        self.assertEqual(len(doc.select('input[name="payment"][checked]')), 0)
+
+        # Selecting a payment method takes the order out of the postponed state again
+        response = self.client.post('/%s/%s/checkout/payment/' % (self.orga.slug, self.event.slug), {
+            'payment': 'banktransfer',
+        }, follow=False)
+        self.assertRedirects(response, '/%s/%s/checkout/confirm/' % (self.orga.slug, self.event.slug),
+                             target_status_code=200)
+        assert not self.client.session['carts'][self.session_key].get('payments_postpone')
+
+    def test_payment_postpone_disabled_with_partial_payment(self):
+        self.event.settings.set('payment_banktransfer__enabled', True)
+        self.event.settings.payment_choice_postpone_allowed_channels = ['web']
+        gc = self.orga.issued_gift_cards.create(currency="EUR")
+        gc.transactions.create(value=20, acceptor=self.orga)
+        with scopes_disabled():
+            CartPosition.objects.create(
+                event=self.event, cart_id=self.session_key, item=self.ticket,
+                price=23, expires=now() + timedelta(minutes=10)
+            )
+
+        response = self.client.get('/%s/%s/checkout/payment/' % (self.orga.slug, self.event.slug), follow=True)
+        doc = BeautifulSoup(response.content.decode(), "lxml")
+        self.assertEqual(len(doc.select('button[name="postpone"]')), 1)
+        self.assertEqual(len(doc.select('button[name="postpone"][disabled]')), 0)
+
+        # Apply a gift card that only covers part of the total
+        response = self.client.post('/%s/%s/checkout/payment/' % (self.orga.slug, self.event.slug), {
+            'payment': 'giftcard',
+            'payment_giftcard-code': gc.secret,
+        }, follow=True)
+        self.assertRedirects(response, '/%s/%s/checkout/payment/' % (self.orga.slug, self.event.slug),
+                             target_status_code=200)
+
+        # Postponing would silently drop the gift card, so it is no longer offered
+        doc = BeautifulSoup(response.content.decode(), "lxml")
+        self.assertEqual(len(doc.select('button[name="postpone"][disabled]')), 1)
+
     def test_premature_confirm(self):
         response = self.client.get('/%s/%s/checkout/confirm/' % (self.orga.slug, self.event.slug), follow=True)
         self.assertRedirects(response, '/%s/%s/?require_cookie=true' % (self.orga.slug, self.event.slug),
@@ -4209,6 +4354,58 @@ class CheckoutTestCase(BaseCheckoutTestCase, TimemachineTestMixin, TestCase):
         assert '35.29' in response.content.decode()
         assert '10.08' in response.content.decode()
 
+    def test_set_addons_invalid_initial(self):
+        self.event.settings.locales = ['de', 'en']
+        self.event.settings.locale = 'de'
+        with scopes_disabled():
+            ItemAddOn.objects.create(base_item=self.ticket, addon_category=self.workshopcat, min_count=1)
+            ItemAddOn.objects.create(base_item=self.ticket, addon_category=self.parkingcat, min_count=1)
+            cp1 = CartPosition.objects.create(
+                event=self.event, cart_id=self.session_key, item=self.ticket,
+                price=23, expires=now() - timedelta(minutes=10)
+            )
+            self.workshop1.free_price = True
+            self.workshop1.save()
+            self.workshop2.free_price = True
+            self.workshop2.save()
+
+        ws1_val = 'cp_{}_item_{}'.format(cp1.pk, self.workshop1.pk)
+        ws1_price = 'cp_{}_item_{}_price'.format(cp1.pk, self.workshop1.pk)
+        ws2a_val = 'cp_{}_variation_{}_{}'.format(cp1.pk, self.workshop2.pk, self.workshop2a.pk)
+        ws2a_price = 'cp_{}_variation_{}_{}_price'.format(cp1.pk, self.workshop2.pk, self.workshop2a.pk)
+        p1_val = 'cp_{}_item_{}'.format(cp1.pk, self.parking1.pk)
+        p2_val = 'cp_{}_item_{}'.format(cp1.pk, self.parking2.pk)
+
+        response = self.client.post('/%s/%s/checkout/addons/' % (self.orga.slug, self.event.slug), {
+            ws1_val: '1',
+            ws2a_val: '1',
+        })
+        assert response.status_code == 200
+        with scopes_disabled():
+            assert cp1.addons.count() == 0
+        doc = BeautifulSoup(response.text, 'lxml')
+        assert doc.find('input', {'name': ws1_val}).attrs.get('checked')
+        assert doc.find('input', {'name': ws2a_val}).attrs.get('checked')
+        assert not doc.find('input', {'name': p1_val}).attrs.get('checked')
+        assert not doc.find('input', {'name': p2_val}).attrs.get('checked')
+
+        response = self.client.post('/%s/%s/checkout/addons/' % (self.orga.slug, self.event.slug), {
+            ws1_val: '1',
+            ws1_price: '222,22',
+            ws2a_val: '1',
+            ws2a_price: '333.33',
+        })
+        assert response.status_code == 200
+        with scopes_disabled():
+            assert cp1.addons.count() == 0
+        doc = BeautifulSoup(response.text, 'lxml')
+        assert doc.find('input', {'name': ws1_val}).attrs.get('checked')
+        assert doc.find('input', {'name': ws1_price}).attrs.get('value') in ['222.22', '222,22']
+        assert doc.find('input', {'name': ws2a_val}).attrs.get('checked')
+        assert doc.find('input', {'name': ws2a_price}).attrs.get('value') in ['333.33', '333,33']
+        assert not doc.find('input', {'name': p1_val}).attrs.get('checked')
+        assert not doc.find('input', {'name': p2_val}).attrs.get('checked')
+
     def test_confirm_subevent_presale_not_yet(self):
         with scopes_disabled():
             self.event.has_subevents = True
@@ -4439,6 +4636,20 @@ class CheckoutTestCase(BaseCheckoutTestCase, TimemachineTestMixin, TestCase):
             _perform_order(self.event, self._manual_payment(), [cp1.pk], 'admin@example.org', 'en', ia.pk, {}, 'web')
             assert len(djmail.outbox) == 0
 
+    def test_checkout_empty_session_valid_cart(self):
+        client = Client()
+        with scopes_disabled():
+            api_cid = "{}@api".format(get_random_string(48))
+            CartPosition.objects.create(
+                event=self.event, cart_id=api_cid, item=self.ticket,
+                price=23, expires=now() + timedelta(minutes=10)
+            )
+
+        response = client.get('/%s/%s/w/1234567890abcdef/checkout/questions/' % (self.orga.slug, self.event.slug), query_params={"take_cart_id": api_cid})
+        assert '€23.00' in response.content.decode()
+
+
+class CheckoutTransactionTestCase(BaseCheckoutTestCase, TransactionTestCase):
     # Sideburn: no "order placed" email for paid orders, so only the separate invoice email is sent.
     def test_order_confirmation_mail_invoice_sent_somewhere_else(self):
         self.event.settings.invoice_address_asked = True
@@ -5877,3 +6088,14 @@ class CustomerCheckoutTestCase(BaseCheckoutTestCase, TestCase):
         response = self.client.get('/%s/%s/checkout/payment/' % (self.orga.slug, self.event.slug), follow=True)
         assert 'Gift card' in response.content.decode()
         assert '(1 available)' in response.content.decode()
+
+    def test_validation_bypass_error_async_id_is_fixed(self):
+        with scopes_disabled():
+            CartPosition.objects.create(
+                event=self.event, cart_id=self.session_key, item=self.ticket,
+                price=0, listed_price=0, price_after_voucher=0, expires=now() + timedelta(minutes=10)
+            )
+
+        response = self.client.post('/%s/%s/checkout/confirm/?async_id=1' % (self.orga.slug, self.event.slug), follow=False)
+        self.assertRedirects(response, '/%s/%s/checkout/customer/' % (self.orga.slug, self.event.slug),
+                             target_status_code=200)

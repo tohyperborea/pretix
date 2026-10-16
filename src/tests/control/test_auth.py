@@ -385,11 +385,6 @@ class RegistrationFormTest(TestCase):
         self.assertEqual(response.status_code, 403)
 
 
-@pytest.fixture
-def class_monkeypatch(request, monkeypatch):
-    request.cls.monkeypatch = monkeypatch
-
-
 @pytest.mark.usefixtures("class_monkeypatch")
 class Login2FAFormTest(TestCase):
 
@@ -509,33 +504,8 @@ class Login2FAFormTest(TestCase):
         assert "recovery code" in djmail.outbox[0].body
 
 
-class FakeRedis(object):
-    def get_redis_connection(self, connection_string):
-        return self
-
-    def __init__(self):
-        self.storage = {}
-
-    def pipeline(self):
-        return self
-
-    def hincrbyfloat(self, rkey, key, amount):
-        return self
-
-    def commit(self):
-        return self
-
-    def exists(self, rkey):
-        return rkey in self.storage
-
-    def setex(self, rkey, value, expiration):
-        self.storage[rkey] = value
-
-    def execute(self):
-        pass
-
-
 @pytest.mark.usefixtures("class_monkeypatch")
+@pytest.mark.usefixtures("fakeredis_client")
 class PasswordRecoveryFormTest(TestCase):
     def setUp(self):
         super().setUp()
@@ -565,11 +535,6 @@ class PasswordRecoveryFormTest(TestCase):
 
     @override_settings(HAS_REDIS=True)
     def test_email_reset_twice_redis(self):
-        fake_redis = FakeRedis()
-        m = self.monkeypatch
-        m.setattr('django_redis.get_redis_connection', fake_redis.get_redis_connection, raising=False)
-        m.setattr('pretix.base.metrics.redis', fake_redis, raising=False)
-
         djmail.outbox = []
 
         response = self.client.post('/control/forgot', {
@@ -1123,7 +1088,7 @@ class Obligatory2FATest(TestCase):
         session.save()
 
         organizer = Organizer.objects.create(name='Dummy', slug='dummy')
-        team = Team.objects.create(organizer=organizer, can_change_teams=True, name='Admin team')
+        team = Team.objects.create(organizer=organizer, all_event_permissions=True, name='Admin team')
         team.members.add(self.user)
         self.user.require_2fa = False
         self.user.save()

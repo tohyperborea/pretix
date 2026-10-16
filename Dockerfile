@@ -1,6 +1,7 @@
-FROM python:3.11-bookworm
+FROM python:3.13-trixie
 
-RUN apt-get update && \
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get update && \
     apt-get install -y --no-install-recommends \
             build-essential \
             gettext \
@@ -14,15 +15,14 @@ RUN apt-get update && \
             libxslt1-dev \
             locales \
             nginx \
-            python3.11-venv \
-            python3.11-dev \
+            python3-virtualenv \
+            python3-dev \
             sudo \
             supervisor \
             libmaxminddb0 \
             libmaxminddb-dev \
             zlib1g-dev \
-            nodejs  \
-            npm && \
+            nodejs && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
     dpkg-reconfigure locales &&  \
@@ -31,6 +31,7 @@ RUN apt-get update && \
     mkdir /etc/pretix && \
     mkdir /data && \
     useradd -ms /bin/bash -d /pretix -u 2000 pretixuser && \
+    chmod 0755 /pretix && \
     echo 'pretixuser ALL=(ALL) NOPASSWD:SETENV: /usr/bin/supervisord' >> /etc/sudoers && \
     mkdir /static && \
     mkdir /etc/supervisord
@@ -49,6 +50,10 @@ COPY deployment/docker/production_settings.py /pretix/src/production_settings.py
 COPY pyproject.toml /pretix/pyproject.toml
 COPY _build /pretix/_build
 COPY src /pretix/src
+COPY package.json /pretix/package.json
+COPY package-lock.json /pretix/package-lock.json
+COPY tsconfig.json /pretix/tsconfig.json
+COPY vite.config.ts /pretix/vite.config.ts
 COPY pretix-regex-validation /pretix/pretix-regex-validation
 COPY pretix-sideburn-twilio /pretix/pretix-sideburn-twilio
 COPY pretix-sideburn-lottery /pretix/pretix-sideburn-lottery

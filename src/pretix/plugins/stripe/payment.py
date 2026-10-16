@@ -46,7 +46,6 @@ import stripe
 from django import forms
 from django.conf import settings
 from django.contrib import messages
-from django.core import signing
 from django.db import transaction
 from django.http import HttpRequest
 from django.template.loader import get_template
@@ -72,11 +71,12 @@ from pretix.base.payment import (
 )
 from pretix.base.plugins import get_all_plugins
 from pretix.base.settings import SettingsSandbox
+from pretix.base.views.redirect import safelink
 from pretix.helpers import OF_SELF
 from pretix.helpers.countries import CachedCountries
 from pretix.helpers.http import get_client_ip
-from pretix.helpers.urls import build_absolute_uri as build_global_uri
-from pretix.multidomain.urlreverse import build_absolute_uri
+from pretix.helpers.urls import mainreverse_absolute
+from pretix.multidomain.urlreverse import eventreverse_absolute
 from pretix.plugins.stripe.forms import StripeKeyValidator
 from pretix.plugins.stripe.models import (
     ReferencedStripeObject, RegisteredApplePayDomain,
@@ -92,70 +92,89 @@ logger = logging.getLogger('pretix.plugins.stripe')
 # State of the payment methods
 #
 # Source: https://stripe.com/docs/payments/payment-methods/overview
-# Last Update: 2023-12-20
+# Last Update: 2026-06-12
 #
+# pretix Staff: Do not forget to enable/"On by default" newly added payment methods in
+# Stripe's managed payment methods configuration for the Stripe/pretix.eu connect platform.
+#
+# The categorization and order of payment methods is based on the list of the managed payment method configration
+# in the Stripe Dashboard.
+
 # Cards
 # - Credit and Debit Cards: ✓
-# - Apple, Google Pay: ✓
+#   * Cartes Bancaires: ✓
+#   * Korean cards: ✓
+#   * Japan installments: ✗
+#   * JCB: ✓
+#   * Meses sin intereses: ✗
 #
-# Bank debits
-# - ACH Debit: ✗
-# - Canadian PADs: ✗
-# - BACS Direct Debit: ✗
-# - SEPA Direct Debit: ✓
-# - BECS Direct Debit: ✗
+# Wallets
+# - Apple: ✓ (Cards)
+# - Google Pay: ✓ (Cards)
+# - Link: ✓ (PaymentRequestButton/Cards)
+# - Alipay: ✓
+# - Stablecoins and Crypto: ✗
+# - Kakao Pay: ✗
+# - Naver Pay: ✗
+# - MB Way: ✗
+# - Satis Pay: ✗
+# - WeChat Pay: ✓
+# - PAYCO: ✗
+# - PayPal: ✓ (No settings UI yet; incompatible with Connect+Direct Charges)
+# - Samsung pay: ✗
+# - MobilePay: ✓
+# - Revolut Pay: ✓
+# - Amazon Pay: ✗
+# - PayPay: ✗
+# - GrabPay: ✗
+# - Cash App Pay: ✗
+# - Secure Remote Commerce: ✗
 #
 # Bank redirects
 # - Bancontact: ✓
-# - BLIK: ✗
 # - EPS: ✓
-# - giropay: (deprecated)
 # - iDEAL: ✓
-# - P24: ✓
-# - Sofort: (deprecated)
-# - FPX: ✗
-# - PayNow: ✗
-# - UPI: ✗
-# - Netbanking: ✗
+# - Przelewy24: ✓
+# - BLIK: ✗
+# - Pay By Bank: ✓
 # - TWINT: ✓
 # - Wero: ✓ (No settings UI yet)
-#
-# Bank transfers
-# - ACH Bank Transfer: ✗
-# - SEPA Bank Transfer: ✗
-# - UK Bank Transfer: ✗
-# - Multibanco: ✗
-# - Furikomi (Japan): ✗
-# - Mexico Bank Transfer: ✗
+# - giropay: ✗ (deprecated)
+# - Sofort: ✗ (deprecated)
 #
 # Buy now, pay later
-# - Affirm: ✓
-# - Afterpay/Clearpay: ✗
+# - Billie: ✗
 # - Klarna: ✓
+# - Afterpay/Clearpay: ✗
 # - Zip: ✗
+# - Alma: ✗
+# - Affirm: ✓
+#
+# Bank debits
+# - SEPA Direct Debit: ✓
+# - ACH Direct Debit: ✗
+# - Australian BECS Direct Debit: ✗
+# - Canadian pre-authorized debits: ✗
+# - BACS Direct Debit: ✗
+# - FPX: ✗
+# - NZ BECS Direct Debit: ✗
+#
+# Bank transfers
+# - Bank Transfer: ✗
+#
+# Vouchers
+# - Multibanco: ✓
+# - Boleto: ✗
+# - Konbini: ✗
+# - OXXO: ✗
 #
 # Real-time payments
 # - Swish: ✓
+# - UPI: ✗
+# - Pix: ✗
+# - PayTo: ✗
 # - PayNow: ✗
 # - PromptPay: ✓
-# - Pix: ✗
-#
-# Vouchers
-# - Konbini: ✗
-# - OXXO: ✗
-# - Boleto: ✗
-#
-# Wallets
-# - Apple Pay: ✓ (Cards)
-# - Google Pay: ✓ (Cards)
-# - Secure Remote Commerce: ✗
-# - Link: ✓ (PaymentRequestButton)
-# - Cash App Pay: ✗
-# - PayPal: ✓ (No settings UI yet)
-# - MobilePay: ✓
-# - Alipay: ✓
-# - WeChat Pay: ✓
-# - GrabPay: ✓
 
 
 class StripeSettingsHolder(BasePaymentProvider):
@@ -178,7 +197,7 @@ class StripeSettingsHolder(BasePaymentProvider):
         ).format(
             self.settings.connect_client_id,
             request.session['payment_stripe_oauth_token'],
-            urllib.parse.quote(build_global_uri('plugins:stripe:oauth.return')),
+            urllib.parse.quote(mainreverse_absolute('plugins:stripe:oauth.return')),
         )
 
     def settings_content_render(self, request):
@@ -210,7 +229,7 @@ class StripeSettingsHolder(BasePaymentProvider):
                 _('Please configure a <a href="https://dashboard.stripe.com/account/webhooks">Stripe Webhook</a> to '
                   'the following endpoint in order to automatically cancel orders when charges are refunded externally '
                   'and to process asynchronous payment methods like SOFORT.'),
-                build_global_uri('plugins:stripe:webhook')
+                mainreverse_absolute('plugins:stripe:webhook')
             )
 
     @property
@@ -367,7 +386,7 @@ class StripeSettingsHolder(BasePaymentProvider):
                      disabled=self.event.currency != 'EUR',
                      help_text=(
                          _('Some payment methods might need to be enabled in the settings of your Stripe account '
-                           'before work properly.') +
+                           'before they work properly.') +
                          '<div class="alert alert-warning">%s</div>' % _(
                              'SEPA Direct Debit payments via Stripe are <strong>not</strong> processed '
                              'instantly but might take up to <strong>14 days</strong> to be confirmed in some cases. '
@@ -726,15 +745,7 @@ class StripeMethod(BasePaymentProvider):
 
     def redirect(self, request, url):
         if request.session.get('iframe_session', False):
-            return (
-                build_absolute_uri(request.event, 'plugins:stripe:redirect') +
-                '?data=' + signing.dumps({
-                    'url': url,
-                    'session': {
-                        'payment_stripe_order_secret': request.session['payment_stripe_order_secret'],
-                    },
-                }, salt='safe-redirect')
-            )
+            return safelink(url, framebreak=True)
         else:
             return str(url)
 
@@ -926,7 +937,7 @@ class StripeMethod(BasePaymentProvider):
                     },
                     # TODO: Is this sufficient?
                     idempotency_key=str(self.event.id) + payment.order.code + idempotency_key_seed,
-                    return_url=build_absolute_uri(self.event, 'plugins:stripe:sca.return', kwargs={
+                    return_url=eventreverse_absolute(self.event, 'plugins:stripe:sca.return', kwargs={
                         'order': payment.order.code,
                         'payment': payment.pk,
                         'hash': payment.order.tagged_secret('plugins:stripe'),
@@ -1032,17 +1043,13 @@ class StripeMethod(BasePaymentProvider):
                 raise PaymentException(_('Stripe reported an error: %s') % intent.last_payment_error.message)
 
     def _redirect_to_sca(self, request, payment):
-        url = build_absolute_uri(self.event, 'plugins:stripe:sca', kwargs={
+        url = eventreverse_absolute(self.event, 'plugins:stripe:sca', kwargs={
             'order': payment.order.code,
             'payment': payment.pk,
             'hash': payment.order.tagged_secret('plugins:stripe'),
         })
         if not self.redirect_in_widget_allowed and request.session.get('iframe_session', False):
-            return build_absolute_uri(self.event, 'plugins:stripe:redirect') + '?data=' + signing.dumps({
-                'url': url,
-                'session': {},
-            }, salt='safe-redirect')
-
+            return safelink(url, framebreak=True)
         return url
 
     def _confirm_payment_intent(self, request, payment):
@@ -1053,7 +1060,7 @@ class StripeMethod(BasePaymentProvider):
 
             intent = stripe.PaymentIntent.confirm(
                 payment_info['id'],
-                return_url=build_absolute_uri(self.event, 'plugins:stripe:sca.return', kwargs={
+                return_url=eventreverse_absolute(self.event, 'plugins:stripe:sca.return', kwargs={
                     'order': payment.order.code,
                     'payment': payment.pk,
                     'hash': payment.order.tagged_secret('plugins:stripe'),
@@ -1554,7 +1561,7 @@ class StripeGiropay(StripeRedirectWithAccountNamePaymentIntentMethod):
 class StripeIdeal(StripeRedirectMethod):
     identifier = 'stripe_ideal'
     verbose_name = _('iDEAL via Stripe')
-    public_name = _('iDEAL')
+    public_name = _('iDEAL | Wero')
     method = 'ideal'
     explanation = _(
         'iDEAL is an online payment method available to customers of Dutch banks. Please keep your online '

@@ -8,10 +8,12 @@
 {% block content %}
     <h1>
         {% trans "Waiting list" %}
-        <a href="{% url "control:event.settings" event=request.event.slug organizer=request.organizer.slug %}#waiting-list-open" class="btn btn-default">
-            <span class="fa fa-cog"></span>
-            {% trans "Settings" %}
-        </a>
+        {% if "event.settings.general:write" in request.eventpermset %}
+            <a href="{% url "control:event.settings" event=request.event.slug organizer=request.organizer.slug %}#waiting-list-open" class="btn btn-default">
+                <span class="fa fa-cog"></span>
+                {% trans "Settings" %}
+            </a>
+        {% endif %}
     </h1>
     {% if not request.event.settings.waiting_list_enabled %}
         <div class="alert alert-danger">
@@ -28,7 +30,7 @@
         </div>
     {% endif %}
     <div class="row">
-        {% if 'can_change_orders' in request.eventpermset %}
+        {% if 'event.orders:write' in request.eventpermset %}
             <form method="post" class="col-md-6"
                     action="{% url "control:event.orders.waitinglist.auto" event=request.event.slug organizer=request.organizer.slug %}"
                     data-asynctask>
@@ -81,7 +83,7 @@
                 </div>
             </form>
         {% endif %}
-        <div class="{% if 'can_change_orders' in request.eventpermset %}col-md-6{% else %}col-md-12{% endif %}">
+        <div class="{% if 'event.orders:write' in request.eventpermset %}col-md-6{% else %}col-md-12{% endif %}">
             <div class="panel panel-default">
                 <div class="panel-heading">
                     {% trans "Sales estimate" %}
@@ -155,7 +157,7 @@
                 <thead>
                 <tr>
                     <th>
-                        {% if "can_change_orders" in request.eventpermset %}
+                        {% if "event.orders:write" in request.eventpermset %}
                             <label aria-label="{% trans "select all rows for batch-operation" %}" class="batch-select-label"><input type="checkbox" data-toggle-table/></label>
                         {% endif %}
                     </th>
@@ -178,7 +180,7 @@
                     <th>{% trans "Voucher" %}</th>
                     <th></th>
                 </tr>
-                {% if "can_change_orders" in request.eventpermset and page_obj.paginator.num_pages > 1 %}
+                {% if "event.orders:write" in request.eventpermset and page_obj.paginator.num_pages > 1 %}
                     <tr class="table-select-all warning hidden">
                         <td>
                             <input type="checkbox" name="__ALL" id="__all" data-results-total="{{ page_obj.paginator.count }}">
@@ -195,7 +197,7 @@
                 {% for e in entries %}
                     <tr>
                         <td>
-                            {% if "can_change_orders" in request.eventpermset %}
+                            {% if "event.orders:write" in request.eventpermset %}
                                 <label aria-label="{% trans "select row for batch-operation" %}" class="batch-select-label"><input type="checkbox" name="entry" class="batch-select-checkbox" value="{{ e.pk }}"/></label>
                             {% endif %}
                         </td>
@@ -255,7 +257,7 @@
                         </td>
                         <td>
                             {% if e.voucher %}
-                                <a href="{% url "control:event.voucher" organizer=request.event.organizer.slug event=request.event.slug voucher=e.voucher.pk %}">
+                                <a href="{% url "control:event.voucher" organizer=request.event.organizer.slug event=request.event.slug voucher=e.voucher.pk %}?next={{ request.get_full_path|urlencode }}">
                                     {{ e.voucher }}
                                 </a>
                             {# Sideburn: offered for every entry without a voucher, even when tickets are not available. #}
@@ -266,32 +268,36 @@
                             {% endif %}
                         </td>
                         <td class="text-right flip">
-                            {% if not e.voucher %}
-                                <button name="move_top" value="{{ e.pk }}" class="btn btn-default btn-sm"
-                                        data-toggle="tooltip" title="{% trans "Move to the top of the list" %}">
-                                    <span class="fa fa-thumbs-up"></span>
-                                </button>
-                                <button name="move_end" value="{{ e.pk }}" class="btn btn-default btn-sm"
-                                    data-toggle="tooltip" title="{% trans "Move to the end of the list" %}">
-                                    <span class="fa fa-thumbs-down"></span>
-                                </button>
+                            {% if 'event.orders:write' in request.eventpermset %}
+                                {% if not e.voucher %}
+                                    <button name="move_top" value="{{ e.pk }}" class="btn btn-default btn-sm"
+                                            data-toggle="tooltip" title="{% trans "Move to the top of the list" %}">
+                                        <span class="fa fa-thumbs-up"></span>
+                                    </button>
+                                    <button name="move_end" value="{{ e.pk }}" class="btn btn-default btn-sm"
+                                            data-toggle="tooltip" title="{% trans "Move to the end of the list" %}">
+                                        <span class="fa fa-thumbs-down"></span>
+                                    </button>
 
-                                <a href="{% url "control:event.orders.waitinglist.edit" organizer=request.event.organizer.slug event=request.event.slug entry=e.id %}"
-                                   class="btn btn-default btn-sm" title="{% trans "Edit entry" %}"
-                                    data-toggle="tooltip">
-                                    <i class="fa fa-edit" aria-hidden="true"></i>
-                                </a>
+                                    <a href="{% url "control:event.orders.waitinglist.edit" organizer=request.event.organizer.slug event=request.event.slug entry=e.id %}"
+                                       class="btn btn-default btn-sm" title="{% trans "Edit entry" %}"
+                                       data-toggle="tooltip">
+                                        <i class="fa fa-edit" aria-hidden="true"></i>
+                                    </a>
 
-                                <a href="{% url "control:event.orders.waitinglist.delete" organizer=request.event.organizer.slug event=request.event.slug entry=e.id %}?next={{ request.get_full_path|urlencode }}" class="btn btn-danger btn-sm"><i class="fa fa-trash"></i></a>
-                            {% else %}
-                                <button class="btn btn-default btn-sm disabled">
-                                    <span class="fa fa-thumbs-up"></span>
-                                </button>
-                                <button class="btn btn-default btn-sm disabled">
-                                    <span class="fa fa-thumbs-down"></span>
-                                </button>
-                                {# Sideburn: entries with a voucher can be deleted too. #}
-                                <a href="{% url "control:event.orders.waitinglist.delete" organizer=request.event.organizer.slug event=request.event.slug entry=e.id %}?next={{ request.get_full_path|urlencode }}" class="btn btn-danger btn-sm"><i class="fa fa-trash"></i></a>
+                                    <a href="{% url "control:event.orders.waitinglist.delete" organizer=request.event.organizer.slug event=request.event.slug entry=e.id %}?next={{ request.get_full_path|urlencode }}"
+                                       class="btn btn-danger btn-sm"><i class="fa fa-trash"></i></a>
+                                {% else %}
+                                    <button class="btn btn-default btn-sm disabled">
+                                        <span class="fa fa-thumbs-up"></span>
+                                    </button>
+                                    <button class="btn btn-default btn-sm disabled">
+                                        <span class="fa fa-thumbs-down"></span>
+                                    </button>
+                                    {# Sideburn: entries with a voucher can be deleted too. #}
+                                    <a href="{% url "control:event.orders.waitinglist.delete" organizer=request.event.organizer.slug event=request.event.slug entry=e.id %}?next={{ request.get_full_path|urlencode }}"
+                                       class="btn btn-danger btn-sm"><i class="fa fa-trash"></i></a>
+                                {% endif %}
                             {% endif %}
                         </td>
                     </tr>
@@ -299,7 +305,7 @@
                 </tbody>
             </table>
         </div>
-        {% if "can_change_orders" in request.eventpermset %}
+        {% if "event.orders:write" in request.eventpermset %}
             <div class="batch-select-actions">
                 <button type="submit" class="btn btn-danger btn-save" name="action" value="delete">
                     <i class="fa fa-trash"></i>

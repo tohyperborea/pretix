@@ -79,7 +79,7 @@ def scheduled_mail_create(sender, **kwargs):
 @receiver(nav_event, dispatch_uid="sendmail_nav")
 def control_nav_import(sender, request=None, **kwargs):
     url = resolve(request.path_info)
-    if not request.user.has_event_permission(request.organizer, request.event, 'can_change_orders', request=request):
+    if not request.user.has_event_permission(request.organizer, request.event, 'event.orders:write', request=request):
         return []
     return [
         {
@@ -232,7 +232,7 @@ def sendmail_copy_data_receiver(sender, other, item_map, **kwargs):
     if sender.sendmail_rules.exists():  # idempotency
         return
 
-    for r in other.sendmail_rules.prefetch_related('limit_products'):
+    for r in other.sendmail_rules.filter(subevent__isnull=True).prefetch_related('limit_products'):
         limit_products = list(r.limit_products.all())
         r = copy.copy(r)
         r.pk = None

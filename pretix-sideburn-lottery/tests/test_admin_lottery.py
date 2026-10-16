@@ -56,7 +56,7 @@ def admin_lottery_env():
     )
 
     team = Team.objects.create(
-        organizer=organizer, can_view_orders=True, can_change_orders=True
+        organizer=organizer, limit_event_permissions={"event.orders:read": True, "event.orders:write": True}
     )
     team.members.add(user)
     team.limit_events.add(event)

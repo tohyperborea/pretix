@@ -54,7 +54,7 @@ from celery.exceptions import MaxRetriesExceededError
 from django.conf import settings
 from django.core.files.storage import default_storage
 from django.core.mail import EmailMultiAlternatives, SafeMIMEMultipart
-from django.core.mail.message import SafeMIMEText
+from django.core.mail.message import SafeMIMEText, utf8_charset_qp
 from django.db import connection, transaction
 from django.db.models import Q
 from django.dispatch import receiver
@@ -85,7 +85,7 @@ from pretix.helpers.format import (
     FormattedString, PlainHtmlAlternativeString, SafeFormatter, format_map,
 )
 from pretix.helpers.hierarkey import clean_filename
-from pretix.multidomain.urlreverse import build_absolute_uri
+from pretix.multidomain.urlreverse import eventreverse_absolute
 from pretix.presale.ical import get_private_icals
 
 logger = logging.getLogger('pretix.base.mail')
@@ -149,13 +149,13 @@ def prefix_subject(settings_holder, subject, highlight=False):
     return subject
 
 
-def mail(email: Union[str, Sequence[str]], subject: str, template: Union[str, LazyI18nString],
+def mail(email: Union[str, Sequence[str]], subject: Union[str, FormattedString], template: Union[str, LazyI18nString],
          context: Dict[str, Any] = None, event: Event = None, locale: str = None, order: Order = None,
          position: OrderPosition = None, *, headers: dict = None, sender: str = None, organizer: Organizer = None,
          customer: Customer = None, invoices: Sequence = None, attach_tickets=False, auto_email=True, user=None,
          attach_ical=False, attach_cached_files: Sequence = None, attach_other_files: list=None,
          plain_text_only=False, no_order_links=False, cc: Sequence[str]=None, bcc: Sequence[str]=None,
-         sensitive: bool=False):
+         sensitive: bool=False) -> Optional[OutgoingMail]:
     """
     Sends out an email to a user. The mail will be sent synchronously or asynchronously depending on the installation.
 
@@ -335,14 +335,26 @@ def mail(email: Union[str, Sequence[str]], subject: str, template: Union[str, La
             should_attach_other_files=attach_other_files or [],
             sensitive=sensitive,
         )
+        m._prefetched_objects_cache = {}
         if invoices and not position:
             m.should_attach_invoices.add(*invoices)
+            # Hack: For logging, we'll later make a `should_attach_invoices.all()` call. We can prevent a useless
+            # DB query by filling the cache
+            m._prefetched_objects_cache[m.should_attach_invoices.prefetch_cache_name] = invoices
+        else:
+            m._prefetched_objects_cache[m.should_attach_invoices.prefetch_cache_name] = Invoice.objects.none()
         if attach_cached_files:
+            cf_list = []
             for cf in attach_cached_files:
                 if not isinstance(cf, CachedFile):
-                    m.should_attach_cached_files.add(CachedFile.objects.get(pk=cf))
-                else:
-                    m.should_attach_cached_files.add(cf)
+                    cf = CachedFile.objects.get(pk=cf)
+                m.should_attach_cached_files.add(cf)
+                cf_list.append(cf)
+            # Hack: For logging, we'll later make a `should_attach_cached_files.all()` call. We can prevent a useless
+            # DB query by filling the cache
+            m._prefetched_objects_cache[m.should_attach_cached_files.prefetch_cache_name] = cf_list
+        else:
+            m._prefetched_objects_cache[m.should_attach_cached_files.prefetch_cache_name] = CachedFile.objects.none()
 
         send_task = mail_send_task.si(
             outgoing_mail=m.id
@@ -364,8 +376,12 @@ def mail(email: Union[str, Sequence[str]], subject: str, template: Union[str, La
                 lambda: chain(*task_chain).apply_async()
             )
 
+    return m
+
 
 class CustomEmail(EmailMultiAlternatives):
+    encoding = utf8_charset_qp
+
     def _create_mime_attachment(self, content, mimetype):
         """
         Convert the content, mimetype pair into a MIME attachment object.
@@ -397,7 +413,7 @@ def mail_send_task(self, **kwargs) -> bool:
         try:
             outgoing_mail = OutgoingMail.objects.select_for_update(of=OF_SELF).get(pk=outgoing_mail)
         except OutgoingMail.DoesNotExist:
-            logger.info(f"Ignoring job for non existing email {outgoing_mail.guid}")
+            logger.info(f"Ignoring job for non existing email {outgoing_mail}")
             return False
         if outgoing_mail.status == OutgoingMail.STATUS_INFLIGHT:
             logger.info(f"Ignoring job for inflight email {outgoing_mail.guid}")
@@ -408,6 +424,18 @@ def mail_send_task(self, **kwargs) -> bool:
         outgoing_mail.status = OutgoingMail.STATUS_INFLIGHT
         outgoing_mail.inflight_since = now()
         outgoing_mail.save(update_fields=["status", "inflight_since"])
+
+    # Performance optimization, saves database queries later on if we resolve the known relationships
+    if outgoing_mail.event_id:
+        assert outgoing_mail.event.organizer_id == outgoing_mail.organizer.pk
+        outgoing_mail.event.organizer = outgoing_mail.organizer
+    if outgoing_mail.order_id:
+        assert outgoing_mail.order.event_id == outgoing_mail.event_id
+        outgoing_mail.order.event = outgoing_mail.event
+        outgoing_mail.order.organizer = outgoing_mail.organizer
+    if outgoing_mail.orderposition_id:
+        assert outgoing_mail.orderposition.order_id == outgoing_mail.order_id
+        outgoing_mail.orderposition.order = outgoing_mail.order
 
     headers = dict(outgoing_mail.headers)
     headers.setdefault('X-PX-Correlation', str(outgoing_mail.guid))
@@ -423,9 +451,9 @@ def mail_send_task(self, **kwargs) -> bool:
 
     # Rewrite all <img> tags from real URLs or data URLs to inline attachments referred to by content ID
     if outgoing_mail.body_html is not None:
-        html_message = SafeMIMEMultipart(_subtype='related', encoding=settings.DEFAULT_CHARSET)
+        html_message = SafeMIMEMultipart(_subtype='related')
         html_with_cid, cid_images = replace_images_with_cid_paths(outgoing_mail.body_html)
-        html_message.attach(SafeMIMEText(html_with_cid, 'html', settings.DEFAULT_CHARSET))
+        html_message.attach(SafeMIMEText(html_with_cid, 'html', utf8_charset_qp))
         attach_cid_images(html_message, cid_images, verify_ssl=True)
         email.attach_alternative(html_message, "multipart/related")
 
@@ -486,16 +514,17 @@ def mail_send_task(self, **kwargs) -> bool:
 
         # Attach calendar files
         if outgoing_mail.should_attach_ical and outgoing_mail.order:
-            fname = re.sub('[^a-zA-Z0-9 ]', '-', unidecode(pgettext('attachment_filename', 'Calendar invite')))
-            icals = get_private_icals(
-                outgoing_mail.event,
-                [outgoing_mail.orderposition] if outgoing_mail.orderposition else outgoing_mail.order.positions.all()
-            )
-            for i, cal in enumerate(icals):
-                name = '{}{}.ics'.format(fname, f'-{i + 1}' if i > 0 else '')
-                content = cal.serialize()
-                mimetype = 'text/calendar'
-                email.attach(name, content, mimetype)
+            with language(outgoing_mail.order.locale, outgoing_mail.event.settings.region):
+                fname = re.sub('[^a-zA-Z0-9 ]', '-', unidecode(pgettext('attachment_filename', 'Calendar invite')))
+                icals = get_private_icals(
+                    outgoing_mail.event,
+                    [outgoing_mail.orderposition] if outgoing_mail.orderposition else outgoing_mail.order.positions.all()
+                )
+                for i, cal in enumerate(icals):
+                    name = '{}{}.ics'.format(fname, f'-{i + 1}' if i > 0 else '')
+                    content = cal.serialize()
+                    mimetype = 'text/calendar'
+                    email.attach(name, content, mimetype)
 
         invoices_to_mark_transmitted = []
         for inv in outgoing_mail.should_attach_invoices.all():
@@ -970,7 +999,7 @@ def _wrap_plain_body(content_plain, signature, event, order, position, no_order_
         body_plain += _(
             "You can view your order details at the following URL:\n{orderurl}."
         ).replace("\n", "\r\n").format(
-            orderurl=build_absolute_uri(
+            orderurl=eventreverse_absolute(
                 order.event, 'presale:event.order.position', kwargs={
                     'order': order.code,
                     'secret': position.web_secret,
@@ -986,7 +1015,7 @@ def _wrap_plain_body(content_plain, signature, event, order, position, no_order_
         body_plain += _(
             "You can view your order details at the following URL:\n{orderurl}."
         ).replace("\n", "\r\n").format(
-            event=event.name, orderurl=build_absolute_uri(
+            event=event.name, orderurl=eventreverse_absolute(
                 order.event, 'presale:event.order.open', kwargs={
                     'order': order.code,
                     'secret': order.secret,

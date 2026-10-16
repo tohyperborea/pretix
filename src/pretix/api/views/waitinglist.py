@@ -20,6 +20,7 @@
 # <https://www.gnu.org/licenses/>.
 #
 import django_filters
+from django.db import transaction
 from django_filters.rest_framework import DjangoFilterBackend, FilterSet
 from django_scopes import scopes_disabled
 from rest_framework import viewsets
@@ -52,8 +53,8 @@ class WaitingListViewSet(viewsets.ModelViewSet):
     ordering = ('created', 'pk',)
     ordering_fields = ('id', 'created', 'email', 'item')
     filterset_class = WaitingListFilter
-    permission = 'can_view_orders'
-    write_permission = 'can_change_orders'
+    permission = 'event.orders:read'
+    write_permission = 'event.orders:write'
 
     def get_queryset(self):
         return self.request.event.waitinglistentries.all()
@@ -63,6 +64,7 @@ class WaitingListViewSet(viewsets.ModelViewSet):
         ctx['event'] = self.request.event
         return ctx
 
+    @transaction.atomic()
     def perform_create(self, serializer):
         serializer.save(event=self.request.event)
         serializer.instance.log_action(
@@ -78,6 +80,7 @@ class WaitingListViewSet(viewsets.ModelViewSet):
             auth=self.request.auth,
         )
 
+    @transaction.atomic()
     def perform_update(self, serializer):
         if serializer.instance.voucher:
             raise PermissionDenied('This entry can not be changed as it has already been assigned a voucher.')
@@ -88,6 +91,7 @@ class WaitingListViewSet(viewsets.ModelViewSet):
             auth=self.request.auth,
         )
 
+    @transaction.atomic()
     def perform_destroy(self, instance):
         if instance.voucher:
             raise PermissionDenied('This entry can not be deleted as it has already been assigned a voucher.')

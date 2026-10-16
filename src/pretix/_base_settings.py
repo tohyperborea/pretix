@@ -37,9 +37,11 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
-    'django.contrib.staticfiles',
     'django.contrib.humanize',
+    # pretix needs to go before staticfiles
+    # so we can override the runserver command
     'pretix.base',
+    'django.contrib.staticfiles',
     'pretix.control',
     'pretix.presale',
     'pretix.multidomain',
@@ -102,6 +104,7 @@ ALL_LANGUAGES = [
     ('gl', _('Galician')),
     ('el', _('Greek')),
     ('he', _('Hebrew')),
+    ('hu', _('Hungarian')),
     ('id', _('Indonesian')),
     ('it', _('Italian')),
     ('ja', _('Japanese')),
@@ -116,6 +119,7 @@ ALL_LANGUAGES = [
     ('sv', _('Swedish')),
     ('es', _('Spanish')),
     ('es-419', _('Spanish (Latin America)')),
+    ('th', _('Thai')),
     ('tr', _('Turkish')),
     ('uk', _('Ukrainian')),
 ]
@@ -243,7 +247,6 @@ STORAGES = {
 
 COMPRESS_PRECOMPILERS = (
     ('text/x-scss', 'django_libsass.SassCompiler'),
-    ('text/vue', 'pretix.helpers.compressor.VueCompiler'),
 )
 
 COMPRESS_OFFLINE_CONTEXT = {

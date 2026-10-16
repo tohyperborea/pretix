@@ -26,7 +26,7 @@
         {% endif %}
         {% include "pretixcontrol/orders/fragment_order_status.html" with order=order class="pull-right flip" %}
     </h1>
-    {% if 'can_change_orders' in request.eventpermset %}
+    {% if 'event.orders:write' in request.eventpermset %}
         <form action="{% url "control:event.order.transition" event=request.event.slug organizer=request.event.organizer.slug code=order.code %}"
                 method="post">
             {% csrf_token %}
@@ -134,6 +134,39 @@
         </div>
     {% endif %}
 
+    {% if invoice_qualified and order.invoice_dirty %}
+        <div class="alert alert-warning">
+            <p>
+                {% blocktrans trimmed %}
+                    This order was changed after the last invoice was generated. A new invoice was not generated yet, because invoices are configured to be generated on payment or if required by the payment method.
+                    A new invoice will be generated once the customer pays the invoice or selects a payment method that requires an invoice.
+                {% endblocktrans %}
+            </p>
+            {% if "event.orders:write" in request.eventpermset %}
+                <p>
+                    {% if uncancelled_invoice %}
+                        <form action="{% url "control:event.order.reissueinvoice" event=request.event.slug organizer=request.event.organizer.slug code=order.code id=uncancelled_invoice.pk %}"
+                                method="post">
+                            {% csrf_token %}
+                            <button class="btn btn-default" type="submit">
+                                {% blocktrans trimmed %}
+                                    Reissue invoice
+                                {% endblocktrans %}
+                            </button>
+                        </form>
+                    {% elif can_generate_invoice %}
+                        <form method="post" action="{% url "control:event.order.geninvoice" event=request.event.slug organizer=request.event.organizer.slug code=order.code %}">
+                            {% csrf_token %}
+                            <button class="btn btn-default">
+                                {% trans "Generate invoice" %}
+                            </button>
+                        </form>
+                    {% endif %}
+                </p>
+            {% endif %}
+        </div>
+    {% endif %}
+
     <div class="row">
         <div class="col-xs-12 col-lg-10">
             {% for cr in order.cancellation_requests.all %}
@@ -193,7 +226,7 @@
                         <dt>{% trans "Order locale" %}</dt>
                         <dd>
                             {{ display_locale }}
-                            {% if "can_change_orders" in request.eventpermset %}
+                            {% if "event.orders:write" in request.eventpermset %}
                                 <a href="{% url "control:event.order.locale" event=request.event.slug organizer=request.event.organizer.slug code=order.code %}" class="btn btn-default btn-xs">
                                     <span class="fa fa-edit"></span>
                                 </a>
@@ -220,7 +253,7 @@
                                         {{ order.customer.identifier }} – {{ order.customer.email }}
                                     </a>
                                 {% endif %}
-                                {% if "can_change_orders" in request.eventpermset %}
+                                {% if "event.orders:write" in request.eventpermset %}
                                     <a href="{% url "control:event.order.contact" event=request.event.slug organizer=request.event.organizer.slug code=order.code %}" class="btn btn-default btn-xs">
                                         <span class="fa fa-edit"></span>
                                     </a>
@@ -233,7 +266,7 @@
                             {% if order.email and order.email_known_to_work %}
                                 <span class="fa fa-check-circle text-success" data-toggle="tooltip" title="{% trans "We know that this email address works because the user clicked a link we sent them." %}"></span>
                             {% endif %}
-                            {% if "can_change_orders" in request.eventpermset %}
+                            {% if "event.orders:write" in request.eventpermset %}
                                 <a href="{% url "control:event.order.contact" event=request.event.slug organizer=request.event.organizer.slug code=order.code %}" class="btn btn-default btn-xs">
                                     <span class="fa fa-edit"></span>
                                 </a>
@@ -257,7 +290,7 @@
                             <dt>{% trans "Phone number" %}</dt>
                             <dd>
                                 {{ order.phone|default_if_none:""|phone_format }}
-                                {% if "can_change_orders" in request.eventpermset %}
+                                {% if "event.orders:write" in request.eventpermset %}
                                     <a href="{% url "control:event.order.contact" event=request.event.slug organizer=request.event.organizer.slug code=order.code %}" class="btn btn-default btn-xs">
                                         <span class="fa fa-edit"></span>
                                     </a>
@@ -319,7 +352,7 @@
                                             <span class="fa fa-check text-success fa-stack-1x fa-stack-shifted"></span>
                                         </span>
                                     {% endif %}
-                                    {% if i.transmission_status != "inflight" %}
+                                    {% if i.transmission_status != "inflight" and "event.orders:write" in request.eventpermset %}
                                         <form class="form-inline helper-display-inline" method="post"
                                               action="{% url "control:event.order.retransmitinvoice" event=request.event.slug organizer=request.event.organizer.slug code=order.code id=i.pk %}">
                                             {% csrf_token %}
@@ -334,7 +367,7 @@
                                         </form>
                                     {% endif %}
                                     {% if not i.canceled %}
-                                        {% if i.regenerate_allowed %}
+                                        {% if i.regenerate_allowed and "event.orders:write" in request.eventpermset %}
                                             <form class="form-inline helper-display-inline" method="post"
                                                     action="{% url "control:event.order.regeninvoice" event=request.event.slug organizer=request.event.organizer.slug code=order.code id=i.pk %}">
                                                 {% csrf_token %}
@@ -344,7 +377,7 @@
                                                 </button>
                                             </form>
                                         {% endif %}
-                                        {% if not i.is_cancellation %}
+                                        {% if not i.is_cancellation and "event.orders:write" in request.eventpermset %}
                                             <form class="form-inline helper-display-inline" method="post"
                                                     action="{% url "control:event.order.reissueinvoice" event=request.event.slug organizer=request.event.organizer.slug code=order.code id=i.pk %}">
                                                 {% csrf_token %}
@@ -371,7 +404,7 @@
                                         <br/>
                                     {% endif %}
                                 {% endfor %}
-                                {% if can_generate_invoice and 'can_change_orders' in request.eventpermset %}
+                                {% if can_generate_invoice and 'event.orders:write' in request.eventpermset %}
                                     <br/>
                                     <form class="form-inline helper-display-inline" method="post"
                                             action="{% url "control:event.order.geninvoice" event=request.event.slug organizer=request.event.organizer.slug code=order.code %}">
@@ -382,7 +415,7 @@
                                     </form>
                                 {% endif %}
                             </dd>
-                        {% elif can_generate_invoice and 'can_change_orders' in request.eventpermset %}
+                        {% elif can_generate_invoice and 'event.orders:write' in request.eventpermset %}
                             <dt>{% trans "Invoices" %}</dt>
                             <dd>
                                 <form class="form-inline helper-display-inline" method="post"
@@ -394,13 +427,21 @@
                                 </form>
                             </dd>
                         {% endif %}
+
+                        {% if order.answers.all %}
+                            <hr>
+                        {% endif %}
+                        {% for ans in order.answers.all %}
+                            <dt>{{ ans.question.internal_name|default:ans.question.question }}</dt>
+                            <dd>{% include "pretixcontrol/order/fragment_question_answer.html" with request=request question=ans.question answer=ans %}</dd>
+                        {% endfor %}
                     </dl>
                 </div>
             </div>
             <div class="panel panel-default items">
                 <div class="panel-heading">
                     <div class="pull-right flip">
-                        {% if 'can_change_orders' in request.eventpermset %}
+                        {% if 'event.orders:write' in request.eventpermset %}
                             <a href="{% url "control:event.order.info" event=request.event.slug organizer=request.event.organizer.slug code=order.code %}">
                                 <span class="fa fa-edit"></span>
                                 {% trans "Change answers" %}
@@ -471,7 +512,9 @@
                                 {% endif %}
                                 {% if line.subevent %}
                                     <br/>
-                                    <span class="fa fa-calendar fa-fw"></span> {{ line.subevent.name }} &middot; {{ line.subevent.get_date_range_display_with_times }}
+                                    <span class="fa fa-calendar fa-fw"></span>
+                                    <a href="{% url "control:event.subevent" organizer=request.event.organizer.slug event=request.event.slug subevent=line.subevent_id %}">{{ line.subevent.name }}</a>
+                                    &middot; {{ line.subevent.get_date_range_display_with_times }}
                                 {% endif %}
                                 {% if line.used_membership %}
                                     <br /><span class="fa fa-id-card fa-fw" aria-hidden="true"></span>
@@ -551,7 +594,7 @@
                                             <span class="fa fa-print"></span>
                                             {{ pl.datetime|date:"SHORT_DATETIME_FORMAT" }}
                                             {{ pl.get_type_display }}
-                                            ({{ pl.source }}{% if pl.device %}, #{{ pl.device.device_id }}{% endif %})
+                                            ({{ pl.source }}{% if pl.device %}, {{ pl.device.name }} - #{{ pl.device.device_id }}{% endif %})
                                             {% if not pl.successful %}<span class="fa fa-warning fa-fw"></span>{% endif %}
                                             <br>
                                         {% endfor %}
@@ -629,31 +672,7 @@
                                                 {% endif %}
                                             </dt>
                                             <dd>
-                                                {% if q.answer %}
-                                                    {% if q.answer.file %}
-                                                        <span class="fa fa-file"></span>
-                                                        <a href="{{ q.answer.backend_file_url }}?token={% answer_token request q.answer %}">
-                                                            {{ q.answer.file_name }}
-                                                        </a>
-                                                        <span class="label label-danger" data-toggle="tooltip"
-                                                                title="{% trans "This file has been uploaded by a user and could contain viruses or other malicious content." %}">
-                                                            {% trans "UNSAFE" %}
-                                                        </span>
-                                                        {% if q.answer.is_image %}
-                                                            <br>
-                                                            <a href="{{ q.answer.backend_file_url }}?token={% answer_token request q.answer %}" data-lightbox="order"
-                                                                class="answer-thumb">
-                                                                <img src="{{ q.answer.backend_file_url }}?token={% answer_token request q.answer %}">
-                                                            </a>
-                                                        {% endif %}
-                                                    {% elif q.type == "M" %}
-                                                        {{ q.answer.to_string_i18n|rich_text_snippet }}
-                                                    {% else %}
-                                                        {{ q.answer.to_string_i18n|linebreaksbr }}
-                                                    {% endif %}
-                                                {% else %}
-                                                    <em>{% trans "not answered" %}</em>
-                                                {% endif %}
+                                                {% include "pretixcontrol/order/fragment_question_answer.html" with request=request question=q answer=q.answer %}
                                             </dd>
                                         {% endfor %}
                                         {% for q in line.additional_fields %}
@@ -670,7 +689,7 @@
                                     {% if line.tax_rate %}
                                         <br/>
                                         <small>
-                                            {% blocktrans trimmed with rate=line.tax_rate|floatformat:-2 taxname=line.tax_rule.name|default:s_taxes %}
+                                            {% blocktrans trimmed with rate=line.tax_rate|tax_rate_format taxname=line.tax_rule.name|default:s_taxes %}
                                                 <strong>plus</strong> {{ rate }}% {{ taxname }}
                                             {% endblocktrans %}
                                         </small>
@@ -680,7 +699,7 @@
                                     {% if line.tax_rate and line.price %}
                                         <br/>
                                         <small>
-                                            {% blocktrans trimmed with rate=line.tax_rate|floatformat:-2 taxname=line.tax_rule.name|default:s_taxes %}
+                                            {% blocktrans trimmed with rate=line.tax_rate|tax_rate_format taxname=line.tax_rule.name|default:s_taxes %}
                                                 incl. {{ rate }}% {{ taxname }}
                                             {% endblocktrans %}
                                         </small>
@@ -720,7 +739,7 @@
                                     {% if fee.tax_rate %}
                                         <br/>
                                         <small>
-                                            {% blocktrans trimmed with rate=fee.tax_rate|floatformat:-2 taxname=fee.tax_rule.name|default:s_taxes %}
+                                            {% blocktrans trimmed with rate=fee.tax_rate|tax_rate_format taxname=fee.tax_rule.name|default:s_taxes %}
                                                 <strong>plus</strong> {{ rate }}% {{ taxname }}
                                             {% endblocktrans %}
                                         </small>
@@ -730,7 +749,7 @@
                                     {% if fee.tax_rate %}
                                         <br/>
                                         <small>
-                                            {% blocktrans trimmed with rate=fee.tax_rate|floatformat:-2 taxname=fee.tax_rule.name|default:s_taxes %}
+                                            {% blocktrans trimmed with rate=fee.tax_rate|tax_rate_format taxname=fee.tax_rule.name|default:s_taxes %}
                                                 incl. {{ rate }}% {{ taxname }}
                                             {% endblocktrans %}
                                         </small>
@@ -798,7 +817,7 @@
                                 <strong>{% trans "Pending total" %}</strong>
                             </div>
                             <div class="col-md-3 col-xs-6 col-md-offset-5 price">
-                                <strong>{{ order.pending_sum|money:event.currency }}</strong>
+                                <strong>{{ pending_sum|money:event.currency }}</strong>
                             </div>
                             <div class="clearfix"></div>
                         </div>
@@ -868,7 +887,7 @@
                                             <tr>
                                                 <td colspan="1"></td>
                                                 <td colspan="5">
-                                                    {{ p.html_info|safe }}
+                                                    {{ p.html_info }}
                                                     {% if staff_session %}
                                                         <p>
                                                             <a href="" class="btn btn-default btn-xs admin-only" data-expandpayment data-id="{{ p.pk }}">
@@ -893,7 +912,7 @@
                                     {% endfor %}
                                     </tbody>
                                 </table>
-                                {% if order.payment_refund_sum > 0 and "can_change_orders" in request.eventpermset %}
+                                {% if order.payment_refund_sum > 0 and "event.orders:write" in request.eventpermset %}
                                     <a href="{% url "control:event.order.refunds.start" event=request.event.slug organizer=request.event.organizer.slug code=order.code %}" class="btn btn-default">
                                         {% trans "Create a refund" %}
                                     </a>
@@ -983,7 +1002,7 @@
                                                             </dl>
                                                         {% endif %}
                                                         {% if r.html_info %}
-                                                            {{ r.html_info|safe }}
+                                                            {{ r.html_info }}
                                                         {% endif %}
                                                         {% if staff_session %}
                                                             <p>
@@ -1012,7 +1031,7 @@
                         <div class="panel panel-default">
                             <div class="panel-heading">
                                 <div class="pull-right flip">
-                                    {% if 'can_change_orders' in request.eventpermset %}
+                                    {% if 'event.orders:write' in request.eventpermset %}
                                         <a href="{% url "control:event.order.info" event=request.event.slug organizer=request.event.organizer.slug code=order.code %}">
                                             <span class="fa fa-edit"></span>
                                             {% trans "Change" %}
@@ -1043,7 +1062,7 @@
                                         <dt>{% trans "VAT ID" %}</dt>
                                         <dd>
                                             {{ order.invoice_address.vat_id }}
-                                            {% if order.invoice_address.vat_id_validated %}
+                                            {% if order.invoice_address.vat_id and order.invoice_address.vat_id_validated %}
                                                 <span class="fa fa-check" data-toggle="tooltip" title="{% blocktrans trimmed %}Valid EU VAT ID{% endblocktrans %}"></span>
                                             {% elif order.invoice_address.vat_id %}
                                                 <form class="form-inline helper-display-inline" method="post"
@@ -1088,7 +1107,7 @@
                                 {% bootstrap_field comment_form.custom_followup_at %}
                                 {% bootstrap_field comment_form.checkin_attention show_help=True show_label=False %}
                                 {% bootstrap_field comment_form.checkin_text show_help=True show_label=False %}
-                                {% if "can_change_orders" in request.eventpermset %}
+                                {% if "event.orders:write" in request.eventpermset %}
                                     <button class="btn btn-default">
                                         {% trans "Update comment" %}
                                     </button>

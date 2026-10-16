@@ -201,12 +201,15 @@ footer nav li:not(:first-child):before {
     width: 1.5em;
     text-align: center;
 }
+footer nav .btn, 
 footer nav .btn-link {
     display: inline;
-    padding: 0;
     margin: 0;
     font-size: 11px;
     vertical-align: baseline;
+}
+footer nav .btn-link {
+    padding: 0;
 }
 
 .js-only {
@@ -217,6 +220,11 @@ footer nav .btn-link {
     a.active {
         /*border-bottom: 2px solid $brand-primary;*/
         font-weight: bold;
+    }
+    .btn-link {
+        padding: 0;
+        margin-left: 5px;
+        vertical-align: top;
     }
     img {
         vertical-align: baseline;
@@ -510,7 +518,7 @@ h2 .label {
 }
 
 .event-list.full-width-list {
-    h3, h4, p {
+    h3, h4, article p {
         margin-top: 0;
         margin-bottom: 0;
     }
@@ -647,6 +655,35 @@ h2 .label {
 
 .account-addresses address::first-line {
     font-weight: bold;
+}
+
+
+.helper-position-relative {
+    position: relative;
+}
+.helper-display-block {
+    display: block !important;
+}
+.helper-display-inline {
+    display: inline !important;
+}
+.helper-display-inline-block {
+    display: inline-block !important;
+}
+.helper-display-none-soft {
+    display: none;
+}
+.helper-display-none {
+    display: none !important;
+}
+.helper-width-auto {
+    width: auto;
+}
+.helper-width-100 {
+    width: 100%;
+}
+.helper-space-below {
+    margin-bottom: 10px;
 }
 
 

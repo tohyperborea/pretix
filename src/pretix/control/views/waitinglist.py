@@ -64,7 +64,7 @@ from . import UpdateView
 class AutoAssign(EventPermissionRequiredMixin, AsyncAction, View):
     task = assign_automatically
     known_errortypes = ['WaitingListError']
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
 
     def get_success_message(self, value):
         return _('{num} vouchers have been created and sent out via email.').format(num=value)
@@ -159,7 +159,7 @@ class WaitingListQuerySetMixin:
 
 class WaitingListActionView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, View):
     model = WaitingListEntry
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
 
     def _redirect_back(self):
         if "next" in self.request.GET and url_has_allowed_host_and_scheme(self.request.GET.get("next"), allowed_hosts=None):
@@ -249,7 +249,7 @@ class WaitingListView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, Pa
     model = WaitingListEntry
     context_object_name = 'entries'
     template_name = 'pretixcontrol/waitinglist/index.html'
-    permission = 'can_view_orders'
+    permission = 'event.orders:read'
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -285,11 +285,12 @@ class WaitingListView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, Pa
                         block_quota=True,
                         item_id=wle.item_id,
                         subevent=wle.subevent_id,
-                        waitinglistentries__isnull=False
+                        waitinglistentries__isnull=False,
+                        seat__isnull=True
                     ).aggregate(free=Sum(F('max_usages') - F('redeemed')))['free'] or 0
                     free_seats = num_free_seats_for_product - num_valid_vouchers_for_product
                     wle.availability = (
-                        Quota.AVAILABILITY_GONE if free_seats == 0 else wle.availability[0],
+                        Quota.AVAILABILITY_GONE if free_seats < 1 else wle.availability[0],
                         min(free_seats, wle.availability[1]) if wle.availability[1] is not None else free_seats,
                     )
 
@@ -376,7 +377,7 @@ class WaitingListView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, Pa
 class EntryDelete(EventPermissionRequiredMixin, CompatDeleteView):
     model = WaitingListEntry
     template_name = 'pretixcontrol/waitinglist/delete.html'
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
     context_object_name = 'entry'
 
     def get_object(self, queryset=None) -> WaitingListEntry:
@@ -409,7 +410,7 @@ class EntryDelete(EventPermissionRequiredMixin, CompatDeleteView):
 class EntryEdit(EventPermissionRequiredMixin, UpdateView):
     model = WaitingListEntry
     template_name = 'pretixcontrol/waitinglist/edit.html'
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
     form_class = WaitingListEntryEditForm
     context_object_name = 'entry'
 

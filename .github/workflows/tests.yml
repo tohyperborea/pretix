@@ -23,13 +23,15 @@ jobs:
     name: Tests
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.13"]
+        python-version: ["3.11", "3.13", "3.14"]
         database: [sqlite, postgres]
         exclude:
           - database: sqlite
             python-version: "3.10"
           - database: sqlite
             python-version: "3.11"
+          - database: sqlite
+            python-version: "3.12"
     services:
       postgres:
         image: postgres:15
@@ -70,7 +72,7 @@ jobs:
         run: make all compress
       - name: Run tests
         working-directory: ./src
-        run: PRETIX_CONFIG_FILE=tests/ci_${{ matrix.database }}.cfg py.test -n 3 -p no:sugar --cov=./ --cov-report=xml tests --maxfail=100
+        run: PRETIX_CONFIG_FILE=tests/ci_${{ matrix.database }}.cfg py.test -n 3 -p no:sugar --cov=./ --cov-report=xml tests --ignore=tests/e2e --maxfail=100
       - name: Run concurrency tests
         working-directory: ./src
         run: PRETIX_CONFIG_FILE=tests/ci_${{ matrix.database }}.cfg py.test tests/concurrency_tests/ --reuse-db
@@ -81,4 +83,64 @@ jobs:
           file: src/coverage.xml
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
-        if: matrix.database == 'postgres' && matrix.python-version == '3.11'
+        if: matrix.database == 'postgres' && matrix.python-version == '3.13'
+  e2e:
+    runs-on: ubuntu-22.04
+    name: E2E Tests
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pretix
+        options: >-
+          --health-cmd "pg_isready -U postgres -d pretix"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      - name: Install system dependencies
+        run: sudo apt update && sudo apt install -y gettext
+      - name: Install Python dependencies
+        run: pip3 install uv && uv pip install --system -e ".[dev]" psycopg2-binary
+      - name: Install JS dependencies
+        working-directory: ./src
+        run: make npminstall
+      - name: Compile
+        working-directory: ./src
+        run: make all compress
+      - name: Install Playwright browsers
+        run: playwright install --with-deps
+      - name: Run E2E tests
+        working-directory: ./src
+        run: PRETIX_CONFIG_FILE=tests/ci_postgres.cfg py.test tests/e2e/ -v --maxfail=10 --tracing=retain-on-failure
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-traces
+          path: test-results/
+      - name: Log trace instructions
+        if: steps.check-traces.outputs.found == 'true'
+        run: |
+          {
+            echo "## 🎭 Playwright traces available"
+            echo ""
+            echo "Some tests failed or retried and produced traces."
+            echo ""
+            echo "1. Download the **playwright-traces-${{ github.run_id }}** artifact from this run (link in the **Summary** tab, under Artifacts)."
+            echo "2. Unzip it."
+            echo "3. Go to https://trace.playwright.dev and drag \`trace.zip\` into the page — or run \`npx playwright show-trace trace.zip\` locally."
+          } >> "$GITHUB_STEP_SUMMARY"

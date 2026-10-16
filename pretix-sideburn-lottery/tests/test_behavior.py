@@ -124,7 +124,8 @@ def test_confirmation_email_can_show_waiting_list_position(client, behavior_env)
 def test_signing_up_through_the_api_sends_lottery_confirmation_email(client, behavior_env):
     with scopes_disabled():
         team = Team.objects.create(
-            organizer=behavior_env["organizer"], can_view_orders=True, can_change_orders=True,
+            organizer=behavior_env["organizer"],
+            limit_event_permissions={"event.orders:read": True, "event.orders:write": True},
             all_events=True,
         )
         token = team.tokens.create(name="Test")
