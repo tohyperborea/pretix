@@ -1,8 +1,7 @@
 # Sideburn: not in upstream pretix. Renders the sold-out label through the sold_out_availability
 # signal (used by pretix-sideburn-lottery), falling back to upstream's markup.
 from django import template
-from django.utils.html import format_html
-from django.utils.safestring import mark_safe
+from django.utils.html import conditional_escape, format_html
 from django.utils.translation import gettext as _
 
 from pretix.multidomain.urlreverse import eventreverse
@@ -54,7 +53,7 @@ def sold_out_availability_tag(context, event, item, var=None, compact=False):
         compact=compact,
     ):
         if response:
-            return mark_safe(response)
+            return conditional_escape(response)
 
     return _default_sold_out_html(
         event, item, variation, allow_waitinglist, cart_namespace, subevent, compact

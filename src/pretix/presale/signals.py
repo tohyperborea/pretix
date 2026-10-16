@@ -417,8 +417,9 @@ sold_out_availability = EventPluginSignal()
 """
 Arguments: ``item``, ``variation``, ``allow_waitinglist``, ``cart_namespace``, ``subevent``, ``compact``
 
-This signal is sent when rendering the sold-out availability label for a product. Receivers may return HTML
-to replace the default "SOLD OUT" label and optional waiting-list link text.
+This signal is sent when rendering the sold-out availability label for a product. Receivers may return
+a SafeString containing HTML (or a string that will be HTML-escaped) to replace the default "SOLD OUT"
+label and optional waiting-list link text.
 
 As with all plugin signals, the ``sender`` keyword argument will contain the event.
 """
@@ -429,7 +430,7 @@ checkout_questions_top = EventPluginSignal()
 Arguments: ``request``
 
 This signal is sent at the top of the checkout questions page, before the question panels.
-Receivers are expected to return HTML.
+Receivers are expected to return a SafeString containing HTML, or a string that will be HTML-escaped.
 
 As with all plugin signals, the ``sender`` keyword argument will contain the event.
 """
@@ -505,7 +506,8 @@ customer_profile_extra = GlobalSignal()
 Arguments: ``request``, ``customer``
 
 This signal is sent when rendering the header shown on every customer account page. Receivers
-may return HTML to append to the account information block (e.g. after the phone field).
+may return a SafeString containing HTML (or a string that will be HTML-escaped) to append to the
+account information block (e.g. after the phone field).
 
 The ``sender`` keyword argument is the HTTP request.
 """

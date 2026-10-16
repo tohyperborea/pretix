@@ -236,7 +236,7 @@ This signal allows plugins to inject HTML into the waiting list admin index page
 (e.g. action buttons for lottery run/revert).
 
 As with all plugin signals, the ``sender`` keyword argument will contain the event.
-Receivers are expected to return HTML.
+Receivers are expected to return a SafeString containing HTML, or a string that will be HTML-escaped.
 """
 
 organizer_edit_tabs = DeprecatedSignal()

@@ -44,7 +44,9 @@ def env():
     }
 
     user = User.objects.create_user("dummy@dummy.dummy", "dummy")
-    team = Team.objects.create(organizer=organizer, can_view_orders=True, can_change_orders=True)
+    team = Team.objects.create(
+        organizer=organizer, limit_event_permissions={"event.orders:read": True, "event.orders:write": True}
+    )
     team.members.add(user)
     team.limit_events.add(event)
 
@@ -72,7 +74,7 @@ def confirm(client, env, names, **extra):
 
 @pytest.mark.django_db
 def test_requires_change_orders_permission(admin_client, env):
-    env["team"].can_change_orders = False
+    env["team"].limit_event_permissions = {"event.orders:read": True}
     env["team"].save()
 
     assert admin_client.post(URL, {"status": "a", "entry": pks(env, "valid")}).status_code == 403
@@ -237,7 +239,7 @@ def test_waitinglist_page_has_button_template(admin_client, env):
 
 @pytest.mark.django_db
 def test_waitinglist_page_hides_button_without_permission(admin_client, env):
-    env["team"].can_change_orders = False
+    env["team"].limit_event_permissions = {"event.orders:read": True}
     env["team"].save()
     content = admin_client.get(WAITINGLIST_URL).content.decode()
     assert "delete-selected-with-vouchers-template" not in content
