@@ -87,6 +87,19 @@ def twilio_env():
 
 
 @pytest.fixture
+def ticket_available(twilio_env):
+    """
+    Free up a ticket so core's send_voucher() passes its quota check. The default quota of 0 keeps
+    the product sold out, which waiting-list signup needs; skipping the quota check on voucher
+    sending is lottery-plugin behaviour, and that plugin is not enabled here.
+    """
+    quota = twilio_env["quota"]
+    quota.size = 1
+    quota.save(update_fields=["size"])
+    return quota
+
+
+@pytest.fixture
 def logged_in_customer(client, twilio_env):
     response = client.post(
         "/{}/account/login".format(twilio_env["organizer"].slug),

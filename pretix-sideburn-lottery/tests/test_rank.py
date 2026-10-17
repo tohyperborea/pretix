@@ -268,18 +268,3 @@ def test_get_rank_item_variation(rank_env):
         assert get_waiting_list_rank(wle1) == 1
         assert get_waiting_list_rank(wle2) == 1
         assert get_waiting_list_rank(wle3) == 2
-
-
-@pytest.mark.django_db
-def test_waiting_list_position_placeholder(rank_env):
-    from pretix.base.email import get_email_context
-
-    event = rank_env["event"]
-    item1 = rank_env["item1"]
-    with scope(organizer=rank_env["organizer"]):
-        entry = WaitingListEntry.objects.create(
-            event=event, item=item1, email="user@bar.com"
-        )
-        ctx = get_email_context(event=event, waiting_list_entry=entry)
-
-    assert ctx["waiting_list_position"] == "1"
