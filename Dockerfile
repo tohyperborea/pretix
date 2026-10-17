@@ -19,6 +19,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
             python3-dev \
             sudo \
             supervisor \
+            tzdata-legacy \
             libmaxminddb0 \
             libmaxminddb-dev \
             zlib1g-dev \
