@@ -331,6 +331,10 @@ class OtherOperationsForm(forms.Form):
 
 
 class OrderPositionAddForm(forms.Form):
+    count = forms.IntegerField(
+        label=_('Number of products to add'),
+        initial=1,
+    )
     itemvar = forms.ChoiceField(
         label=_('Product')
     )
@@ -432,6 +436,10 @@ class OrderPositionAddForm(forms.Form):
             d['used_membership'] = [m for m in self.memberships if str(m.pk) == d['used_membership']][0]
         else:
             d['used_membership'] = None
+        if d.get("count", 1) > 1 and d.get("seat"):
+            raise ValidationError({
+                "seat": _("You can not choose a seat when adding multiple products at once.")
+            })
         return d
 
 
@@ -554,9 +562,7 @@ class OrderPositionChangeForm(forms.Form):
         if instance.addon_to_id:
             del self.fields['operation_split']
 
-        if not instance.seat and not (
-                instance.item.seat_category_mappings.filter(subevent=instance.subevent).exists()
-        ):
+        if not instance.seat and not instance._seat_allowed:
             del self.fields['seat']
 
         choices = [

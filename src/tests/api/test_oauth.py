@@ -53,8 +53,13 @@ def organizer():
 
 @pytest.fixture
 def admin_team(organizer):
-    return Team.objects.create(organizer=organizer, can_change_teams=True, name='Admin team', all_events=True,
-                               can_create_events=True)
+    return Team.objects.create(
+        organizer=organizer,
+        name='Admin team',
+        all_events=True,
+        all_event_permissions=True,
+        all_organizer_permissions=True,
+    )
 
 
 @pytest.fixture
@@ -65,14 +70,27 @@ def admin_user(admin_team):
 
 
 @pytest.fixture
-def application():
+def app_developer():
+    return User.objects.create_user('app-developer@example.org', 'app-developer')
+
+
+@pytest.fixture
+def client2():
+    # We need a second test client instance to log in as the app developer user
+    from django.test import Client
+    return Client()
+
+
+@pytest.fixture
+def application(app_developer):
     secret = get_random_string(32)
     a = OAuthApplication.objects.create(
         name="pretalx",
         redirect_uris="https://pretalx.com",
         client_type='confidential',
         client_secret=secret,
-        authorization_grant_type='authorization-code'
+        authorization_grant_type='authorization-code',
+        user=app_developer,
     )
     a._cached_secret = secret
     a.save()
@@ -387,7 +405,7 @@ def test_token_from_code(client, admin_user, organizer, application: OAuthApplic
 @pytest.mark.django_db
 def test_use_token_for_access_one_organizer(client, admin_user, organizer, application: OAuthApplication):
     o2 = Organizer.objects.create(name='A', slug='a')
-    t2 = Team.objects.create(organizer=o2, can_change_teams=True, name='Admin team', all_events=True)
+    t2 = Team.objects.create(organizer=o2, all_organizer_permissions=True, name='Admin team', all_events=True)
     t2.members.add(admin_user)
 
     client.login(email='dummy@dummy.dummy', password='dummy')
@@ -434,7 +452,13 @@ def test_use_token_for_access_one_organizer(client, admin_user, organizer, appli
 @pytest.mark.django_db
 def test_use_token_for_access_two_organizers(client, admin_user, organizer, application: OAuthApplication):
     o2 = Organizer.objects.create(name='A', slug='a')
-    t2 = Team.objects.create(organizer=o2, can_change_teams=True, name='Admin team', all_events=True)
+    t2 = Team.objects.create(
+        organizer=o2,
+        all_event_permissions=True,
+        all_organizer_permissions=True,
+        name='Admin team',
+        all_events=True
+    )
     t2.members.add(admin_user)
 
     client.login(email='dummy@dummy.dummy', password='dummy')
@@ -690,6 +714,47 @@ def test_token_revoke_access_token(client, admin_user, organizer, application: O
     access_token = data['access_token']
     grant = OAuthAccessToken.objects.get(token=access_token)
     assert list(grant.organizers.all()) == [organizer]
+
+
+@pytest.mark.django_db
+def test_token_app_disabled(client, client2, admin_user, organizer, application: OAuthApplication, app_developer):
+    client.login(email='dummy@dummy.dummy', password='dummy')
+    session = client.session
+    session['pretix_auth_login_time'] = int(time.time())
+    session.save()
+    resp = client.get('/api/v1/oauth/authorize?client_id=%s&redirect_uri=%s&response_type=code' % (
+        application.client_id, quote(application.redirect_uris)
+    ))
+    assert resp.status_code == 200
+    resp = client.post('/api/v1/oauth/authorize', data={
+        'organizers': str(organizer.pk),
+        'redirect_uri': application.redirect_uris,
+        'scope': 'read write',
+        'client_id': application.client_id,
+        'response_type': 'code',
+        'allow': 'Authorize',
+    })
+    assert resp.status_code == 302
+    assert resp['Location'].startswith('https://pretalx.com?code=')
+    code = resp['Location'].split("=")[1]
+    client.logout()
+    resp = client.post('/api/v1/oauth/token', data={
+        'code': code,
+        'redirect_uri': application.redirect_uris,
+        'grant_type': 'authorization_code',
+    }, HTTP_AUTHORIZATION='Basic ' + base64.b64encode(
+        ('%s:%s' % (application.client_id, application._cached_secret)).encode()).decode())
+    assert resp.status_code == 200
+    data = json.loads(resp.content.decode())
+    access_token = data['access_token']
+    resp = client.get('/api/v1/organizers/dummy/events/', HTTP_AUTHORIZATION='Bearer %s' % access_token)
+    assert resp.status_code == 200
+
+    client2.login(email='app-developer@example.org', password='app-developer')
+    client2.post(f'/control/settings/oauth/apps/{application.pk}/disable', {})
+
+    resp = client.get('/api/v1/organizers/dummy/events/', HTTP_AUTHORIZATION='Bearer %s' % access_token)
+    assert resp.status_code == 401
 
 
 @pytest.mark.django_db

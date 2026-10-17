@@ -53,7 +53,7 @@ Working with the code
 ---------------------
 If you do not have a recent installation of ``nodejs``, install it now::
 
-    curl -sL https://deb.nodesource.com/setup_17.x | sudo -E bash -
+    curl -sL https://deb.nodesource.com/setup_24.x | sudo -E bash -
     sudo apt install nodejs
 
 To make sure it is on your path variable, close and reopen your terminal. Now, install the Python-level dependencies of pretix::
@@ -109,6 +109,56 @@ process::
     celery -A pretix.celery_app worker -l info
 
 However, beware that code changes will not auto-reload within Celery.
+
+Running the local development server will also automatically start a vite dev server for all control vue components.
+
+Run the widget development server
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+To locally develop the presale widget you need to start a separate vite dev server using::
+
+    npm run dev:widget
+
+You can control the org, event and much more via query parameters like this::
+
+    http://localhost:5180/?org=testorg&event=testevent
+
+The following query parameters are supported:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 20 60
+
+   * - Parameter
+     - Default
+     - Description
+   * - ``org``
+     - ``testorg``
+     - Organization slug
+   * - ``event``
+     - ``testevent``
+     - Event slug
+   * - ``host``
+     - ``http://localhost:8000``
+     - Backend host URL
+   * - ``type``
+     - ``widget``
+     - Element type: ``widget`` or ``button``
+   * - ``mode``
+     - ``dev``
+     - ``dev`` loads the Vite dev source, ``prod`` loads the built ``v2.{lang}.js``
+   * - ``lang``
+     - ``de``
+     - Language code for the prod script
+   * - ``button-text``
+     - ``Buy tickets!``
+     - Text content for the button (only used when ``type=button``)
+
+Any other query parameter is passed through as an attribute on the widget/button element.
+For example, ``?skip-ssl-check&list-type=calendar&items=123`` adds those attributes directly.
+
+
+
 
 .. _`checksandtests`:
 

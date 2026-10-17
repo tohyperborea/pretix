@@ -131,7 +131,7 @@ def render_waitinglist_lottery_actions(sender, request, **kwargs):
             "plugins:pretix_sideburn_lottery:revert", kwargs=kwargs
         ),
     }
-    if "can_change_orders" in request.eventpermset:
+    if "event.orders:write" in request.eventpermset:
         ctx["delete_selected_url"] = reverse("plugins:pretix_sideburn_lottery:delete_selected_entries", kwargs=kwargs)
     return template.render(ctx, request=request)
 

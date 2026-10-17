@@ -53,6 +53,7 @@ from django.utils.translation import (
 )
 from django_scopes import scopes_disabled
 
+from pretix.base.decimal import round_decimal
 from pretix.base.i18n import language
 from pretix.base.media import MEDIA_TYPES
 from pretix.base.models import (
@@ -60,7 +61,7 @@ from pretix.base.models import (
     Seat, SeatCategoryMapping, Voucher,
 )
 from pretix.base.models.event import SubEvent
-from pretix.base.models.orders import OrderFee
+from pretix.base.models.orders import CheckoutSession, OrderFee
 from pretix.base.models.tax import TaxRule
 from pretix.base.reldate import RelativeDateWrapper
 from pretix.base.services.checkin import _save_answers
@@ -162,12 +163,12 @@ error_messages = {
     'price_too_high': gettext_lazy('The entered price is to high.'),
     'voucher_invalid': gettext_lazy('This voucher code is not known in our database.'),
     'voucher_min_usages': ngettext_lazy(
-        'The voucher code "%(voucher)s" can only be used if you select at least %(number)s matching products.',
+        'The voucher code "%(voucher)s" can only be used if you select at least %(number)s matching product.',
         'The voucher code "%(voucher)s" can only be used if you select at least %(number)s matching products.',
         'number'
     ),
     'voucher_min_usages_removed': ngettext_lazy(
-        'The voucher code "%(voucher)s" can only be used if you select at least %(number)s matching products. '
+        'The voucher code "%(voucher)s" can only be used if you select at least %(number)s matching product. '
         'We have therefore removed some positions from your cart that can no longer be purchased like this.',
         'The voucher code "%(voucher)s" can only be used if you select at least %(number)s matching products. '
         'We have therefore removed some positions from your cart that can no longer be purchased like this.',
@@ -291,11 +292,11 @@ def _check_position_constraints(
         raise CartPositionError(error_messages['unavailable'])
 
     # Invalid media policy for online sale
-    if item.media_policy in (Item.MEDIA_POLICY_NEW, Item.MEDIA_POLICY_REUSE_OR_NEW):
+    if item.media_policy in (Item.MEDIA_POLICY_NEW, Item.MEDIA_POLICY_REUSE_OR_NEW, Item.MEDIA_POLICY_APPEND_OR_NEW, Item.MEDIA_POLICY_REUSE_OR_NEW):
         mt = MEDIA_TYPES[item.media_type]
         if not mt.medium_created_by_server:
             raise CartPositionError(error_messages['media_usage_not_implemented'])
-    elif item.media_policy == Item.MEDIA_POLICY_REUSE:
+    elif item.media_policy in (Item.MEDIA_POLICY_REUSE, Item.MEDIA_POLICY_APPEND):
         raise CartPositionError(error_messages['media_usage_not_implemented'])
 
     # Item removed from sales channel
@@ -338,7 +339,8 @@ def _check_position_constraints(
         raise CartPositionError(error_messages['voucher_invalid_subevent'])
 
     # Voucher expired
-    if voucher and voucher.valid_until and voucher.valid_until < time_machine_now_dt:
+    # (checked using real_now_dt as vouchers influence quota calculations)
+    if voucher and voucher.valid_until and voucher.valid_until < real_now_dt:
         raise CartPositionError(error_messages['voucher_expired'])
 
     # Subevent has been disabled
@@ -473,6 +475,16 @@ class CartManager:
                 ), self.event.timezone)
                 if term_last < time_machine_now(self.real_now_dt):
                     raise CartError(error_messages['payment_ended'])
+
+    def _ensure_checkout_session(self):
+        CheckoutSession.objects.get_or_create(
+            event=self.event,
+            cart_id=self.cart_id,
+            defaults={
+                "sales_channel": self._sales_channel,
+                "testmode": self.event.testmode,
+            },
+        )
 
     def _extend_expiry_of_valid_existing_positions(self):
         # real_now_dt is initialized at CartManager instantiation, so it's slightly in the past. Add a small
@@ -922,6 +934,8 @@ class CartManager:
                 if custom_price > 99_999_999_999:
                     raise CartError(error_messages['price_too_high'])
 
+                custom_price = round_decimal(custom_price, currency=self.event.currency)
+
             op = self.AddOperation(
                 count=i['count'],
                 item=item,
@@ -1043,6 +1057,8 @@ class CartManager:
                         raise CartError(error_messages['price_not_a_number'])
                 if custom_price > 99_999_999_999:
                     raise CartError(error_messages['price_too_high'])
+
+                custom_price = round_decimal(custom_price, currency=self.event.currency)
 
             # Fix positions with wrong price (TODO: happens out-of-cartmanager-transaction and therefore a little hacky)
             for ca in current_addons[cp][a['item'], a['variation']]:
@@ -1560,6 +1576,7 @@ class CartManager:
 
     def commit(self):
         self._check_presale_dates()
+        self._ensure_checkout_session()
         self._check_max_cart_size()
 
         err = self._delete_out_of_timeframe()
@@ -1595,6 +1612,7 @@ def add_payment_to_cart_session(cart_session, provider, min_value: Decimal=None,
         'max_value': str(max_value) if max_value is not None else None,
         'info_data': info_data or {},
     })
+    cart_session['payments_postpone'] = False
 
 
 def add_payment_to_cart(request, provider, min_value: Decimal=None, max_value: Decimal=None, info_data: dict=None):

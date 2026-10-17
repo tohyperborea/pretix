@@ -47,6 +47,7 @@ from django.utils.formats import localize
 from django.utils.translation import gettext, gettext_lazy as _
 
 from pretix.base.models import Event
+from pretix.base.models.auth import PermissionHolder
 from pretix.helpers.safe_openpyxl import (  # NOQA: backwards compatibility for plugins using excel_safe
     SafeWorkbook, remove_invalid_excel_chars as excel_safe,
 )
@@ -59,11 +60,20 @@ class BaseExporter:
     This is the base class for all data exporters
     """
 
-    def __init__(self, event, organizer, progress_callback=lambda v: None):
+    def __init__(self, event, organizer, permission_holder: PermissionHolder=None, progress_callback=lambda v: None):
+        """
+        :param event: Event context, can also be a queryset of events for multi-event exports
+        :param organizer: Organizer context
+        :param user: The user who triggered the export (or None).
+        :param token: The API token that triggered the export (or None).
+        :param device: The device that triggered the export (or None)
+        :param progress_callback: Callback function with progress
+        """
         self.event = event
         self.organizer = organizer
         self.progress_callback = progress_callback
         self.is_multievent = isinstance(event, QuerySet)
+        self.permission_holder = permission_holder
         if isinstance(event, QuerySet):
             self.events = event
             self.event = None
@@ -72,6 +82,9 @@ class BaseExporter:
         else:
             self.events = Event.objects.filter(pk=event.pk)
             self.timezone = event.timezone
+
+        if hasattr(self, 'organizer_required_permission'):
+            raise TypeError("Deprecated attribute organizer_required_permission no longer supported.")
 
     def __str__(self):
         return self.identifier
@@ -176,15 +189,30 @@ class BaseExporter:
         """
         return True
 
+    @classmethod
+    def get_required_event_permission(cls) -> Optional[str]:
+        """
+        The permission level required to use this exporter for events. For multi-event-exports, this will be used
+        to limit the selection of events. Will be ignored if the ``OrganizerLevelExportMixin`` mixin is used.
+        The default implementation returns ``"event.orders:read"``.
+        """
+        return 'event.orders:read'
+
 
 class OrganizerLevelExportMixin:
-    @property
-    def organizer_required_permission(self) -> str:
+    @classmethod
+    def get_required_event_permission(cls):
+        raise TypeError("required_event_permission may not be called on OrganizerLevelExportMixin")
+
+    @classmethod
+    def get_required_organizer_permission(cls) -> Optional[str]:
         """
-        The permission level required to use this exporter. Only useful for organizer-level exports,
-        not for event-level exports.
+        The permission level required to use this exporter. Must be set for organizer-level exports. Set to `None` to
+        allow everyone with any access to the organizer.
+
+        ``get_required_event_permission`` will be ignored on this class.
         """
-        return 'can_view_orders'
+        raise NotImplementedError()
 
 
 class ListExporter(BaseExporter):

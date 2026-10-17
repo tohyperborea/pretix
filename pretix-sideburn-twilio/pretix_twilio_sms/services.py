@@ -9,7 +9,7 @@ from django_scopes import scope, scopes_disabled
 
 from pretix.base.services.tasks import TransactionAwareTask
 from pretix.celery_app import app
-from pretix.multidomain.urlreverse import build_absolute_uri
+from pretix.multidomain.urlreverse import eventreverse_absolute
 
 from pretix_twilio_sms.models import CustomerSmsPreference
 
@@ -36,7 +36,7 @@ def _build_waiting_list_redeem_url(event, voucher):
     url_params = {"voucher": voucher.code}
     if voucher.subevent_id:
         url_params["subevent"] = voucher.subevent_id
-    return build_absolute_uri(event, "presale:event.redeem") + "?" + urlencode(url_params)
+    return eventreverse_absolute(event, "presale:event.redeem") + "?" + urlencode(url_params)
 
 
 def _build_waiting_list_sms_message(event, voucher):

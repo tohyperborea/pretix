@@ -89,10 +89,13 @@ TEST_MEDIUM_RES = {
     "organizer": "dummy",
     "identifier": "ABCDEFGH",
     "type": "barcode",
+    "claim_token": None,
+    "label": None,
     "active": True,
     "expires": None,
     "customer": None,
     "linked_orderposition": None,
+    "linked_orderpositions": [],
     "linked_giftcard": None,
     "notes": None,
     "info": {},
@@ -119,7 +122,39 @@ def test_medium_list(token_client, organizer, event, medium):
 
 
 @pytest.mark.django_db
-def test_medium_detail(token_client, organizer, event, medium, giftcard, customer):
+def test_medium_detail_permission_missing(token_client, organizer, event, medium, giftcard, customer, team):
+    team.all_organizer_permissions = False
+    team.limit_organizer_permissions = {
+        "organizer.reusablemedia:read": True,
+    }
+    team.save()
+    resp = token_client.get(
+        '/api/v1/organizers/{}/reusablemedia/{}/?expand=linked_giftcard'.format(
+            organizer.slug, medium.pk
+        )
+    )
+    assert resp.status_code == 403
+    assert "No permission to access gift card details." in str(resp.data)
+
+    resp = token_client.get(
+        '/api/v1/organizers/{}/reusablemedia/{}/?expand=customer'.format(
+            organizer.slug, medium.pk
+        )
+    )
+    assert resp.status_code == 403
+    assert "No permission to access customer details." in str(resp.data)
+
+
+@pytest.mark.django_db
+def test_medium_detail(token_client, organizer, event, medium, giftcard, customer, team):
+    team.all_organizer_permissions = False
+    team.limit_organizer_permissions = {
+        "organizer.reusablemedia:read": True,
+        "organizer.customers:read": True,
+        "organizer.giftcards:read": True,
+    }
+    team.save()
+
     res = dict(TEST_MEDIUM_RES)
     res["id"] = medium.pk
     res["created"] = medium.created.isoformat().replace('+00:00', 'Z')
@@ -138,7 +173,7 @@ def test_medium_detail(token_client, organizer, event, medium, giftcard, custome
         ticket = event.items.create(name='Early-bird ticket', category=None, default_price=23, admission=True,
                                     personalized=True)
         op = o.positions.create(item=ticket, price=Decimal("14"))
-        medium.linked_orderposition = op
+        medium.linked_orderpositions.add(op)
         medium.linked_giftcard = giftcard
         medium.customer = customer
         medium.save()
@@ -220,6 +255,76 @@ def test_medium_detail(token_client, organizer, event, medium, giftcard, custome
         }
 
 
+@pytest.mark.django_db
+def test_medium_detail_event_permission_missing(token_client, organizer, event, medium, giftcard, customer, team):
+    team.all_organizer_permissions = False
+    team.limit_organizer_permissions = {
+        "organizer.reusablemedia:read": True,
+        "organizer.customers:read": True,
+        "organizer.giftcards:read": True,
+    }
+    team.all_event_permissions = False
+    team.save()
+
+    with scopes_disabled():
+        o = Order.objects.create(
+            code='FOO', event=event, email='dummy@dummy.test',
+            status=Order.STATUS_PENDING, datetime=now(), expires=now() + timedelta(days=10),
+            sales_channel=event.organizer.sales_channels.get(identifier="web"),
+            total=14, locale='en'
+        )
+        ticket = event.items.create(name='Early-bird ticket', category=None, default_price=23, admission=True,
+                                    personalized=True)
+        op = o.positions.create(item=ticket, price=Decimal("14"))
+        medium.linked_orderpositions.add(op)
+        medium.linked_giftcard = giftcard
+        medium.customer = customer
+        medium.save()
+        giftcard.owner_ticket = op
+        giftcard.save()
+
+        resp = token_client.get(
+            '/api/v1/organizers/{}/reusablemedia/{}/?expand=linked_giftcard&expand='
+            'linked_giftcard.owner_ticket&expand=linked_orderposition&expand=customer'.format(
+                organizer.slug, medium.pk
+            )
+        )
+        assert resp.status_code == 200
+
+        assert resp.data["linked_orderposition"] == {
+            "id": op.pk,
+        }
+
+        assert resp.data["linked_giftcard"] == {
+            "id": giftcard.pk,
+            "secret": "ABCDEF",
+            "issuance": giftcard.issuance.isoformat().replace("+00:00", "Z"),
+            "value": "23.00",
+            "currency": "EUR",
+            "testmode": False,
+            "expires": None,
+            "conditions": None,
+            "owner_ticket": {"id": op.pk},
+            "issuer": "dummy",
+        }
+
+        assert resp.data["customer"] == {
+            "identifier": customer.identifier,
+            "external_identifier": None,
+            "email": "foo@example.org",
+            "phone": None,
+            "name": "Foo",
+            "name_parts": {"_legacy": "Foo"},
+            "is_active": True,
+            "is_verified": False,
+            "last_login": None,
+            "date_joined": customer.date_joined.isoformat().replace("+00:00", "Z"),
+            "locale": "en",
+            "last_modified": customer.last_modified.isoformat().replace("+00:00", "Z"),
+            "notes": None
+        }
+
+
 TEST_MEDIUM_CREATE_PAYLOAD = {
     "type": "barcode",
     "identifier": "FOOBAR",
@@ -248,6 +353,110 @@ def test_medium_create(token_client, organizer, giftcard):
         assert m.info == {"foo": "bar"}
         assert m.created > now() - timedelta(minutes=10)
         assert m.updated > now() - timedelta(minutes=10)
+
+
+@pytest.mark.django_db
+def test_medium_create_linked_orderposition(token_client, organizer, event, org2_event, medium):
+    with scopes_disabled():
+        o = Order.objects.create(
+            code='FOO', event=event, email='dummy@dummy.test',
+            status=Order.STATUS_PENDING, datetime=now(), expires=now() + timedelta(days=10),
+            sales_channel=event.organizer.sales_channels.get(identifier="web"),
+            total=14, locale='en'
+        )
+        ticket = event.items.create(name='Early-bird ticket', category=None, default_price=23, admission=True,
+                                         personalized=True)
+        op = o.positions.create(item=ticket, price=Decimal("14"))
+        op2 = o.positions.create(item=ticket, price=Decimal("14"))
+
+        org2_o = Order.objects.create(
+            code='FOO', event=org2_event, email='dummy@dummy.test',
+            status=Order.STATUS_PENDING, datetime=now(), expires=now() + timedelta(days=10),
+            sales_channel=org2_event.organizer.sales_channels.get(identifier="web"),
+            total=14, locale='en'
+        )
+        org2_ticket = org2_event.items.create(name='Early-bird ticket', category=None, default_price=23, admission=True,
+                                                   personalized=True)
+        org2_op = org2_o.positions.create(item=org2_ticket, price=Decimal("14"))
+
+    payload = dict(TEST_MEDIUM_CREATE_PAYLOAD)
+
+    # wrong orderposition for organizer
+    payload['linked_orderposition'] = org2_op.pk
+    resp = token_client.post(
+        '/api/v1/organizers/{}/reusablemedia/'.format(organizer.slug),
+        payload,
+        format='json'
+    )
+    assert resp.status_code == 400
+
+    # unkown orderposition
+    payload['linked_orderposition'] = "unknown"
+    resp = token_client.post(
+        '/api/v1/organizers/{}/reusablemedia/'.format(organizer.slug),
+        payload,
+        format='json'
+    )
+    assert resp.status_code == 400
+
+    # create with linked_orderposition
+    payload['linked_orderposition'] = op.pk
+    resp = token_client.post(
+        '/api/v1/organizers/{}/reusablemedia/'.format(organizer.slug),
+        payload,
+        format='json'
+    )
+    assert resp.status_code == 201
+    with scopes_disabled():
+        m = ReusableMedium.objects.get(pk=resp.data['id'])
+        assert list(m.linked_orderpositions.values_list('pk', flat=True)) == [op.pk]
+
+    # double-check API-response for fallback-values
+    resp = token_client.get(
+        '/api/v1/organizers/{}/reusablemedia/{}/'.format(organizer.slug, resp.data['id'])
+    )
+    assert resp.status_code == 200
+    assert resp.data['linked_orderposition'] == op.pk
+    assert resp.data['linked_orderpositions'] == [op.pk]
+
+    # create with linked_orderposition and linked_orderpositions (not allowed)
+    payload['identifier'] = "FOOBAZ"
+    payload['linked_orderpositions'] = [op.pk, org2_op.pk]
+    resp = token_client.post(
+        '/api/v1/organizers/{}/reusablemedia/'.format(organizer.slug),
+        payload,
+        format='json'
+    )
+    assert resp.status_code == 400
+
+    # multiple linked_orderpositions, but from different organizers
+    del payload['linked_orderposition']
+    resp = token_client.post(
+        '/api/v1/organizers/{}/reusablemedia/'.format(organizer.slug),
+        payload,
+        format='json'
+    )
+    assert resp.status_code == 400
+
+    # multiple linked_orderpositions from same organizer
+    payload['linked_orderpositions'] = [op.pk, op2.pk]
+    resp = token_client.post(
+        '/api/v1/organizers/{}/reusablemedia/'.format(organizer.slug),
+        payload,
+        format='json'
+    )
+    assert resp.status_code == 201
+    with scopes_disabled():
+        m = ReusableMedium.objects.get(pk=resp.data['id'])
+        assert list(m.linked_orderpositions.values_list('pk', flat=True)) == [op.pk, op2.pk]
+
+    # double-check API-response for fallback-values
+    resp = token_client.get(
+        '/api/v1/organizers/{}/reusablemedia/{}/'.format(organizer.slug, resp.data['id'])
+    )
+    assert resp.status_code == 200
+    assert resp.data['linked_orderposition'] is None
+    assert resp.data['linked_orderpositions'] == [op.pk, op2.pk]
 
 
 @pytest.mark.django_db
@@ -296,6 +505,68 @@ def test_medium_patch(token_client, organizer, event, medium, giftcard, customer
     assert medium.info == {'test': 2}
     assert medium.identifier == "ABCDEFGH"
 
+    # test patch with linked_orderpositions
+    with scopes_disabled():
+        o = Order.objects.create(
+            code='FOO', event=event, email='dummy@dummy.test',
+            status=Order.STATUS_PENDING, datetime=now(), expires=now() + timedelta(days=10),
+            sales_channel=event.organizer.sales_channels.get(identifier="web"),
+            total=14, locale='en'
+        )
+        ticket = event.items.create(name='Early-bird ticket', category=None, default_price=23, admission=True,
+                                         personalized=True)
+        op = o.positions.create(item=ticket, price=Decimal("14"))
+        op2 = o.positions.create(item=ticket, price=Decimal("14"))
+
+    resp = token_client.patch(
+        '/api/v1/organizers/{}/reusablemedia/{}/'.format(organizer.slug, medium.pk),
+        {
+            'linked_orderposition': op.pk,
+        },
+        format='json'
+    )
+    assert resp.status_code == 200
+    medium.refresh_from_db()
+    with scopes_disabled():
+        assert list(medium.linked_orderpositions.values_list('pk', flat=True)) == [op.pk]
+        assert medium.all_logentries().count() == 2
+
+    resp = token_client.patch(
+        '/api/v1/organizers/{}/reusablemedia/{}/'.format(organizer.slug, medium.pk),
+        {
+            'linked_orderpositions': [op.pk, op2.pk],
+        },
+        format='json'
+    )
+    assert resp.status_code == 200
+    medium.refresh_from_db()
+    with scopes_disabled():
+        assert list(medium.linked_orderpositions.values_list('pk', flat=True)) == [op.pk, op2.pk]
+        assert medium.all_logentries().count() == 3
+
+    resp = token_client.patch(
+        '/api/v1/organizers/{}/reusablemedia/{}/'.format(organizer.slug, medium.pk),
+        {
+            'linked_orderpositions': [op2.pk],
+        },
+        format='json'
+    )
+    assert resp.status_code == 200
+    medium.refresh_from_db()
+    with scopes_disabled():
+        assert list(medium.linked_orderpositions.values_list('pk', flat=True)) == [op2.pk]
+        assert medium.all_logentries().count() == 4
+
+    resp = token_client.patch(
+        '/api/v1/organizers/{}/reusablemedia/{}/'.format(organizer.slug, medium.pk),
+        {
+            'linked_orderposition': op.pk,
+            'linked_orderpositions': [op.pk, op2.pk],
+        },
+        format='json'
+    )
+    assert resp.status_code == 400
+
 
 @pytest.mark.django_db
 def test_medium_no_deletion(token_client, organizer, event, medium):
@@ -340,7 +611,16 @@ def test_medium_lookup_not_found(token_client, organizer, organizer2, medium):
 
 
 @pytest.mark.django_db
-def test_medium_lookup_autocreate(token_client, organizer):
+def test_medium_lookup_autocreate(token_client, organizer, team):
+    team.all_organizer_permissions = False
+    team.limit_organizer_permissions = {
+        "organizer.reusablemedia:read": True,
+        "organizer.reusablemedia:write": True,
+        "organizer.customers:read": True,
+        "organizer.giftcards:read": True,
+    }
+    team.save()
+
     # Disabled
     resp = token_client.post(
         '/api/v1/organizers/{}/reusablemedia/lookup/'.format(organizer.slug),
@@ -386,7 +666,15 @@ def test_medium_lookup_autocreate(token_client, organizer):
 
 
 @pytest.mark.django_db
-def test_medium_autocreate_giftcard(token_client, organizer):
+def test_medium_autocreate_giftcard(token_client, organizer, team):
+    team.all_organizer_permissions = False
+    team.limit_organizer_permissions = {
+        "organizer.reusablemedia:write": True,
+        "organizer.reusablemedia:read": True,
+        "organizer.customers:read": True,
+        "organizer.giftcards:read": True,
+    }
+    team.save()
     organizer.settings.reusable_media_type_nfc_mf0aes_autocreate_giftcard = True
     organizer.settings.reusable_media_type_nfc_mf0aes_autocreate_giftcard_currency = 'USD'
     resp = token_client.post(
@@ -419,7 +707,7 @@ def test_medium_lookup_cross_organizer(token_client, organizer, organizer2, org2
         ticket = org2_event.items.create(name='Early-bird ticket', category=None, default_price=23, admission=True,
                                          personalized=True)
         op = o.positions.create(item=ticket, price=Decimal("14"))
-        medium2.linked_orderposition = op
+        medium2.linked_orderpositions.add(op)
         medium2.linked_giftcard = giftcard2
         medium2.save()
 

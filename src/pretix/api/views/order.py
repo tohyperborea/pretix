@@ -57,9 +57,10 @@ from pretix.api.serializers.order import (
     BlockedTicketSecretSerializer, InvoiceSerializer, OrderCreateSerializer,
     OrderPaymentCreateSerializer, OrderPaymentSerializer,
     OrderPositionSerializer, OrderRefundCreateSerializer,
-    OrderRefundSerializer, OrderSerializer, OrganizerTransactionSerializer,
-    PriceCalcSerializer, PrintLogSerializer, RevokedTicketSecretSerializer,
-    SimulatedOrderSerializer, TransactionSerializer,
+    OrderRefundSerializer, OrderSerializer, OrganizerOrderPositionSerializer,
+    OrganizerTransactionSerializer, PriceCalcSerializer, PrintLogSerializer,
+    RevokedTicketSecretSerializer, SimulatedOrderSerializer,
+    TransactionSerializer,
 )
 from pretix.api.serializers.orderchange import (
     BlockNameSerializer, OrderChangeOperationSerializer,
@@ -193,7 +194,7 @@ with scopes_disabled():
                 )
             ).values('id')
 
-            matching_media = ReusableMedium.objects.filter(identifier=u).values_list('linked_orderposition__order_id', flat=True)
+            matching_media = ReusableMedium.objects.filter(identifier=u).values_list('linked_orderpositions__order_id', flat=True)
 
             mainq = (
                 code
@@ -316,7 +317,7 @@ class OrderViewSetMixin:
 
 class OrganizerOrderViewSet(OrderViewSetMixin, viewsets.ReadOnlyModelViewSet):
     def get_base_queryset(self):
-        perm = "can_view_orders" if self.request.method in SAFE_METHODS else "can_change_orders"
+        perm = "event.orders:read" if self.request.method in SAFE_METHODS else "event.orders:write"
         if isinstance(self.request.auth, (TeamAPIToken, Device)):
             return Order.objects.filter(
                 event__organizer=self.request.organizer,
@@ -337,8 +338,8 @@ class OrganizerOrderViewSet(OrderViewSetMixin, viewsets.ReadOnlyModelViewSet):
 
 
 class EventOrderViewSet(OrderViewSetMixin, viewsets.ModelViewSet):
-    permission = 'can_view_orders'
-    write_permission = 'can_change_orders'
+    permission = 'event.orders:read'
+    write_permission = 'event.orders:write'
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
@@ -380,12 +381,15 @@ class EventOrderViewSet(OrderViewSetMixin, viewsets.ModelViewSet):
                 resp = HttpResponse(ct.file.file.read(), content_type='text/uri-list')
                 return resp
             else:
-                resp = FileResponse(ct.file.file, content_type=ct.type)
-                resp['Content-Disposition'] = 'attachment; filename="{}-{}-{}{}"'.format(
-                    self.request.event.slug.upper(), order.code,
-                    provider.identifier, ct.extension
+                return FileResponse(
+                    ct.file.file,
+                    filename='{}-{}-{}{}'.format(
+                        self.request.event.slug.upper(), order.code,
+                        provider.identifier, ct.extension
+                    ),
+                    as_attachment=True,
+                    content_type=ct.type
                 )
-                return resp
 
     @action(detail=True, methods=['POST'])
     def mark_paid(self, request, **kwargs):
@@ -1030,7 +1034,7 @@ with scopes_disabled():
         search = django_filters.CharFilter(method='search_qs')
 
         def search_qs(self, queryset, name, value):
-            matching_media = ReusableMedium.objects.filter(identifier=value).values_list('linked_orderposition', flat=True)
+            matching_media = ReusableMedium.objects.filter(identifier=value).values_list('linked_orderpositions', flat=True)
             return queryset.filter(
                 Q(secret__istartswith=value)
                 | Q(attendee_name_cached__icontains=value)
@@ -1065,15 +1069,12 @@ with scopes_disabled():
             }
 
 
-class OrderPositionViewSet(viewsets.ModelViewSet):
-    serializer_class = OrderPositionSerializer
+class OrderPositionViewSetMixin:
     queryset = OrderPosition.all.none()
     filter_backends = (DjangoFilterBackend, RichOrderingFilter)
     ordering = ('order__datetime', 'positionid')
     ordering_fields = ('order__code', 'order__datetime', 'positionid', 'attendee_name', 'order__status',)
     filterset_class = OrderPositionFilter
-    permission = 'can_view_orders'
-    write_permission = 'can_change_orders'
     ordering_custom = {
         'attendee_name': {
             '_order': F('display_name').asc(nulls_first=True),
@@ -1087,8 +1088,7 @@ class OrderPositionViewSet(viewsets.ModelViewSet):
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
-        ctx['event'] = self.request.event
-        ctx['pdf_data'] = self.request.query_params.get('pdf_data', 'false').lower() == 'true'
+        ctx['pdf_data'] = False
         ctx['check_quotas'] = self.request.query_params.get('check_quotas', 'true').lower() == 'true'
         return ctx
 
@@ -1097,9 +1097,8 @@ class OrderPositionViewSet(viewsets.ModelViewSet):
             qs = OrderPosition.all
         else:
             qs = OrderPosition.objects
-
-        qs = qs.filter(order__event=self.request.event)
-        if self.request.query_params.get('pdf_data', 'false').lower() == 'true':
+        qs = qs.filter(order__event__organizer=self.request.organizer)
+        if self.request.query_params.get('pdf_data', 'false').lower() == 'true' and getattr(self.request, 'event', None):
             prefetch_related_objects([self.request.organizer], 'meta_properties')
             prefetch_related_objects(
                 [self.request.event],
@@ -1154,9 +1153,9 @@ class OrderPositionViewSet(viewsets.ModelViewSet):
             qs = qs.prefetch_related(
                 Prefetch('checkins', queryset=Checkin.objects.select_related("device")),
                 Prefetch('print_logs', queryset=PrintLog.objects.select_related('device')),
-                'answers', 'answers__options', 'answers__question',
+                'answers', 'answers__options', 'answers__question', 'order__event', 'order__event__organizer'
             ).select_related(
-                'item', 'order', 'order__event', 'order__event__organizer', 'seat'
+                'item', 'order', 'seat'
             )
         return qs
 
@@ -1167,6 +1166,49 @@ class OrderPositionViewSet(viewsets.ModelViewSet):
             if prov.identifier == identifier:
                 return prov
         raise NotFound('Unknown output provider.')
+
+
+class OrganizerOrderPositionViewSet(OrderPositionViewSetMixin, viewsets.ReadOnlyModelViewSet):
+    serializer_class = OrganizerOrderPositionSerializer
+    permission = None
+    write_permission = None
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+
+        perm = "event.orders:read" if self.request.method in SAFE_METHODS else "event.orders:write"
+
+        if isinstance(self.request.auth, (TeamAPIToken, Device)):
+            auth_obj = self.request.auth
+        elif self.request.user.is_authenticated:
+            auth_obj = self.request.user
+        else:
+            raise PermissionDenied("Unknown authentication scheme")
+
+        qs = qs.filter(
+            order__event__in=auth_obj.get_events_with_permission(perm, request=self.request).filter(
+                organizer=self.request.organizer
+            )
+        )
+
+        return qs
+
+
+class EventOrderPositionViewSet(OrderPositionViewSetMixin, viewsets.ModelViewSet):
+    serializer_class = OrderPositionSerializer
+    permission = 'event.orders:read'
+    write_permission = 'event.orders:write'
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['event'] = self.request.event
+        ctx['pdf_data'] = self.request.query_params.get('pdf_data', 'false').lower() == 'true'
+        return ctx
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        qs = qs.filter(order__event=self.request.event)
+        return qs
 
     @action(detail=True, methods=['POST'], url_name='price_calc')
     def price_calc(self, request, *args, **kwargs):
@@ -1264,14 +1306,17 @@ class OrderPositionViewSet(viewsets.ModelViewSet):
             raise NotFound()
 
         ftype, ignored = mimetypes.guess_type(answer.file.name)
-        resp = FileResponse(answer.file, content_type=ftype or 'application/binary')
-        resp['Content-Disposition'] = 'attachment; filename="{}-{}-{}-{}"'.format(
-            self.request.event.slug.upper(),
-            pos.order.code,
-            pos.positionid,
-            os.path.basename(answer.file.name).split('.', 1)[1]
+        return FileResponse(
+            answer.file,
+            filename='{}-{}-{}-{}'.format(
+                self.request.event.slug.upper(),
+                pos.order.code,
+                pos.positionid,
+                os.path.basename(answer.file.name).split('.', 1)[1]
+            ),
+            as_attachment=True,
+            content_type=ftype or 'application/binary'
         )
-        return resp
 
     @action(detail=True, url_name="printlog", url_path="printlog", methods=["POST"])
     def printlog(self, request, **kwargs):
@@ -1326,15 +1371,18 @@ class OrderPositionViewSet(viewsets.ModelViewSet):
             if hasattr(image_file, 'seek'):
                 image_file.seek(0)
 
-        resp = FileResponse(image_file, content_type=ftype or 'application/binary')
-        resp['Content-Disposition'] = 'attachment; filename="{}-{}-{}-{}.{}"'.format(
-            self.request.event.slug.upper(),
-            pos.order.code,
-            pos.positionid,
-            key,
-            extension,
+        return FileResponse(
+            image_file,
+            filename='{}-{}-{}-{}.{}'.format(
+                self.request.event.slug.upper(),
+                pos.order.code,
+                pos.positionid,
+                key,
+                extension,
+            ),
+            as_attachment=True,
+            content_type=ftype or 'application/binary'
         )
-        return resp
 
     @action(detail=True, url_name='download', url_path='download/(?P<output>[^/]+)')
     def download(self, request, output, **kwargs):
@@ -1360,12 +1408,15 @@ class OrderPositionViewSet(viewsets.ModelViewSet):
                 resp = HttpResponse(ct.file.file.read(), content_type='text/uri-list')
                 return resp
             else:
-                resp = FileResponse(ct.file.file, content_type=ct.type)
-                resp['Content-Disposition'] = 'attachment; filename="{}-{}-{}-{}{}"'.format(
-                    self.request.event.slug.upper(), pos.order.code, pos.positionid,
-                    provider.identifier, ct.extension
+                return FileResponse(
+                    ct.file.file,
+                    filename='{}-{}-{}-{}{}'.format(
+                        self.request.event.slug.upper(), pos.order.code, pos.positionid,
+                        provider.identifier, ct.extension
+                    ),
+                    as_attachment=True,
+                    content_type=ct.type
                 )
-                return resp
 
     @action(detail=True, methods=['POST'])
     def regenerate_secrets(self, request, **kwargs):
@@ -1574,8 +1625,8 @@ class OrderPositionViewSet(viewsets.ModelViewSet):
 class PaymentViewSet(CreateModelMixin, viewsets.ReadOnlyModelViewSet):
     serializer_class = OrderPaymentSerializer
     queryset = OrderPayment.objects.none()
-    permission = 'can_view_orders'
-    write_permission = 'can_change_orders'
+    permission = 'event.orders:read'
+    write_permission = 'event.orders:write'
     lookup_field = 'local_id'
 
     def get_serializer_context(self):
@@ -1607,6 +1658,7 @@ class PaymentViewSet(CreateModelMixin, viewsets.ReadOnlyModelViewSet):
                         count_waitinglist=False,
                         force=request.data.get('force', False),
                         send_mail=send_mail,
+                        ignore_date=request.data.get('force', False),
                     )
                 except Quota.QuotaExceededException:
                     pass
@@ -1642,7 +1694,8 @@ class PaymentViewSet(CreateModelMixin, viewsets.ReadOnlyModelViewSet):
                             auth=self.request.auth,
                             count_waitinglist=False,
                             send_mail=send_mail,
-                            force=force)
+                            force=force,
+                            ignore_date=force)
         except Quota.QuotaExceededException as e:
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except PaymentException as e:
@@ -1747,8 +1800,8 @@ class PaymentViewSet(CreateModelMixin, viewsets.ReadOnlyModelViewSet):
 class RefundViewSet(CreateModelMixin, viewsets.ReadOnlyModelViewSet):
     serializer_class = OrderRefundSerializer
     queryset = OrderRefund.objects.none()
-    permission = 'can_view_orders'
-    write_permission = 'can_change_orders'
+    permission = 'event.orders:read'
+    write_permission = 'event.orders:write'
     lookup_field = 'local_id'
 
     def get_queryset(self):
@@ -1905,13 +1958,18 @@ class InvoiceViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ('nr',)
     ordering_fields = ('nr', 'date')
     filterset_class = InvoiceFilter
-    permission = 'can_view_orders'
     lookup_url_kwarg = 'number'
     lookup_field = 'nr'
-    write_permission = 'can_change_orders'
+
+    def _get_permission_name(self, request):
+        if 'event' in request.resolver_match.kwargs:
+            if request.method not in SAFE_METHODS:
+                return "event.orders:write"
+            return "event.orders:read"
+        return None  # org-level is handled by event__in check
 
     def get_queryset(self):
-        perm = "can_view_orders" if self.request.method in SAFE_METHODS else "can_change_orders"
+        perm = "event.orders:read" if self.request.method in SAFE_METHODS else "event.orders:write"
         if getattr(self.request, 'event', None):
             qs = self.request.event.invoices
         elif isinstance(self.request.auth, (TeamAPIToken, Device)):
@@ -1942,9 +2000,12 @@ class InvoiceViewSet(viewsets.ReadOnlyModelViewSet):
         if not invoice.file:
             raise RetryException()
 
-        resp = FileResponse(invoice.file.file, content_type='application/pdf')
-        resp['Content-Disposition'] = 'attachment; filename="{}.pdf"'.format(invoice.number)
-        return resp
+        return FileResponse(
+            invoice.file.file,
+            filename='{}.pdf'.format(invoice.number),
+            as_attachment=True,
+            content_type='application/pdf'
+        )
 
     @action(detail=True, methods=['POST'])
     def transmit(self, request, **kwargs):
@@ -2052,8 +2113,8 @@ class RevokedSecretViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ('-created',)
     ordering_fields = ('created', 'secret')
     filterset_class = RevokedSecretFilter
-    permission = 'can_view_orders'
-    write_permission = 'can_change_orders'
+    permission = 'event.orders:read'
+    write_permission = 'event.orders:write'
 
     def get_queryset(self):
         return RevokedTicketSecret.objects.filter(event=self.request.event)
@@ -2074,8 +2135,8 @@ class BlockedSecretViewSet(viewsets.ReadOnlyModelViewSet):
     filter_backends = (DjangoFilterBackend, TotalOrderingFilter)
     ordering = ('-updated', '-pk')
     filterset_class = BlockedSecretFilter
-    permission = 'can_view_orders'
-    write_permission = 'can_change_orders'
+    permission = 'event.orders:read'
+    write_permission = 'event.orders:write'
 
     def get_queryset(self):
         return BlockedTicketSecret.objects.filter(event=self.request.event)
@@ -2110,7 +2171,7 @@ class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ('datetime', 'pk')
     ordering_fields = ('datetime', 'created', 'id',)
     filterset_class = TransactionFilter
-    permission = 'can_view_orders'
+    permission = 'event.orders:read'
 
     def get_queryset(self):
         return Transaction.objects.filter(order__event=self.request.event).select_related("order")
@@ -2127,11 +2188,11 @@ class OrganizerTransactionViewSet(TransactionViewSet):
 
         if isinstance(self.request.auth, (TeamAPIToken, Device)):
             qs = qs.filter(
-                order__event__in=self.request.auth.get_events_with_permission("can_view_orders"),
+                order__event__in=self.request.auth.get_events_with_permission("event.orders:read"),
             )
         elif self.request.user.is_authenticated:
             qs = qs.filter(
-                order__event__in=self.request.user.get_events_with_permission("can_view_orders", request=self.request)
+                order__event__in=self.request.user.get_events_with_permission("event.orders:read", request=self.request)
             )
         else:
             raise PermissionDenied("Unknown authentication scheme")

@@ -41,21 +41,22 @@ from json.decoder import JSONDecodeError
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.core.files import File
-from django.db import transaction
+from django.db import models, transaction
 from django.db.models import (
-    Count, Exists, F, OuterRef, Prefetch, ProtectedError, Q,
+    Count, Exists, F, OuterRef, Prefetch, ProtectedError, Q, Subquery, Value,
 )
+from django.db.models.functions import Cast, Concat
 from django.forms.models import inlineformset_factory
 from django.http import (
     Http404, HttpResponse, HttpResponseBadRequest, HttpResponseRedirect,
 )
-from django.shortcuts import redirect
+from django.shortcuts import redirect, render
 from django.urls import resolve, reverse
 from django.utils.functional import cached_property
 from django.utils.timezone import now
 from django.utils.translation import gettext, gettext_lazy as _
 from django.views.decorators.http import require_http_methods
-from django.views.generic import ListView
+from django.views.generic import FormView, ListView, View
 from django.views.generic.detail import DetailView, SingleObjectMixin
 from django_countries.fields import Country
 
@@ -64,8 +65,9 @@ from pretix.api.serializers.item import (
     ItemVariationSerializer,
 )
 from pretix.base.forms import I18nFormSet
+from pretix.base.forms.questions import get_fake_attendee_questions
 from pretix.base.models import (
-    CartPosition, Item, ItemCategory, ItemProgramTime, ItemVariation,
+    CartPosition, Item, ItemCategory, ItemProgramTime, ItemVariation, LogEntry,
     OrderPosition, Question, QuestionAnswer, QuestionOption, Quota,
     SeatCategoryMapping, Voucher,
 )
@@ -74,12 +76,15 @@ from pretix.base.models.items import ItemAddOn, ItemBundle, ItemMetaValue
 from pretix.base.services.quotas import QuotaAvailability
 from pretix.base.services.tickets import invalidate_cache
 from pretix.base.signals import quota_availability
-from pretix.control.forms.filter import QuestionAnswerFilterForm
+from pretix.control.forms.filter import (
+    QuestionAnswerFilterForm, QuotaFilterForm,
+)
 from pretix.control.forms.item import (
     CategoryForm, ItemAddOnForm, ItemAddOnsFormSet, ItemBundleForm,
     ItemBundleFormSet, ItemCreateForm, ItemMetaValueForm, ItemProgramTimeForm,
     ItemProgramTimeFormSet, ItemUpdateForm, ItemVariationForm,
-    ItemVariationsFormSet, QuestionForm, QuestionOptionForm, QuotaForm,
+    ItemVariationsFormSet, QuestionForm, QuestionOptionForm, QuotaBulkEditForm,
+    QuotaForm,
 )
 from pretix.control.permissions import (
     EventPermissionRequiredMixin, event_permission_required,
@@ -87,6 +92,7 @@ from pretix.control.permissions import (
 from pretix.control.signals import item_forms, item_formsets
 from pretix.helpers.models import modelcopy
 
+from ...helpers import GroupConcat
 from ...helpers.compat import CompatDeleteView
 from . import ChartContainingView, CreateView, PaginationMixin, UpdateView
 
@@ -159,7 +165,7 @@ def item_move(request, item, up=True):
     messages.success(request, _('The order of items has been updated.'))
 
 
-@event_permission_required("can_change_items")
+@event_permission_required("event.items:write")
 @require_http_methods(["POST"])
 def item_move_up(request, organizer, event, item):
     item_move(request, item, up=True)
@@ -168,7 +174,7 @@ def item_move_up(request, organizer, event, item):
                     event=request.event.slug)
 
 
-@event_permission_required("can_change_items")
+@event_permission_required("event.items:write")
 @require_http_methods(["POST"])
 def item_move_down(request, organizer, event, item):
     item_move(request, item, up=False)
@@ -178,7 +184,7 @@ def item_move_down(request, organizer, event, item):
 
 
 @transaction.atomic
-@event_permission_required("can_change_items")
+@event_permission_required("event.items:write")
 @require_http_methods(["POST"])
 def reorder_items(request, organizer, event, category):
     try:
@@ -215,7 +221,7 @@ def reorder_items(request, organizer, event, category):
 class CategoryDelete(EventPermissionRequiredMixin, CompatDeleteView):
     model = ItemCategory
     template_name = 'pretixcontrol/items/category_delete.html'
-    permission = 'can_change_items'
+    permission = 'event.items:write'
     context_object_name = 'category'
 
     def get_object(self, queryset=None) -> ItemCategory:
@@ -249,7 +255,7 @@ class CategoryUpdate(EventPermissionRequiredMixin, UpdateView):
     model = ItemCategory
     form_class = CategoryForm
     template_name = 'pretixcontrol/items/category.html'
-    permission = 'can_change_items'
+    permission = 'event.items:write'
     context_object_name = 'category'
 
     def get_object(self, queryset=None) -> ItemCategory:
@@ -287,7 +293,7 @@ class CategoryCreate(EventPermissionRequiredMixin, CreateView):
     model = ItemCategory
     form_class = CategoryForm
     template_name = 'pretixcontrol/items/category.html'
-    permission = 'can_change_items'
+    permission = 'event.items:write'
     context_object_name = 'category'
 
     def get_success_url(self) -> str:
@@ -330,7 +336,7 @@ class CategoryCreate(EventPermissionRequiredMixin, CreateView):
         return super().form_invalid(form)
 
 
-class CategoryList(PaginationMixin, ListView):
+class CategoryList(ListView):
     model = ItemCategory
     context_object_name = 'categories'
     template_name = 'pretixcontrol/items/categories.html'
@@ -371,7 +377,7 @@ def category_move(request, category, up=True):
     messages.success(request, _('The order of categories has been updated.'))
 
 
-@event_permission_required("can_change_items")
+@event_permission_required("event.items:write")
 @require_http_methods(["POST"])
 def category_move_up(request, organizer, event, category):
     category_move(request, category, up=True)
@@ -380,7 +386,7 @@ def category_move_up(request, organizer, event, category):
                     event=request.event.slug)
 
 
-@event_permission_required("can_change_items")
+@event_permission_required("event.items:write")
 @require_http_methods(["POST"])
 def category_move_down(request, organizer, event, category):
     category_move(request, category, up=False)
@@ -390,7 +396,7 @@ def category_move_down(request, organizer, event, category):
 
 
 @transaction.atomic
-@event_permission_required("can_change_items")
+@event_permission_required("event.items:write")
 @require_http_methods(["POST"])
 def reorder_categories(request, organizer, event):
     try:
@@ -421,7 +427,7 @@ def reorder_categories(request, organizer, event):
 
 
 FakeQuestion = namedtuple(
-    'FakeQuestion', 'id question position required'
+    'FakeQuestion', 'id question position required container_type'
 )
 
 
@@ -435,85 +441,8 @@ class QuestionList(ListView):
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
-        questions = []
 
-        if self.request.event.settings.attendee_names_asked:
-            questions.append(
-                FakeQuestion(
-                    id='attendee_name_parts',
-                    question=_('Attendee name'),
-                    position=self.request.event.settings.system_question_order.get(
-                        'attendee_name_parts', 0
-                    ),
-                    required=self.request.event.settings.attendee_names_required,
-                )
-            )
-
-        if self.request.event.settings.attendee_emails_asked:
-            questions.append(
-                FakeQuestion(
-                    id='attendee_email',
-                    question=_('Attendee email'),
-                    position=self.request.event.settings.system_question_order.get(
-                        'attendee_email', 0
-                    ),
-                    required=self.request.event.settings.attendee_emails_required,
-                )
-            )
-
-        if self.request.event.settings.attendee_company_asked:
-            questions.append(
-                FakeQuestion(
-                    id='company',
-                    question=_('Company'),
-                    position=self.request.event.settings.system_question_order.get(
-                        'company', 0
-                    ),
-                    required=self.request.event.settings.attendee_company_required,
-                )
-            )
-
-        if self.request.event.settings.attendee_addresses_asked:
-            questions.append(
-                FakeQuestion(
-                    id='street',
-                    question=_('Street'),
-                    position=self.request.event.settings.system_question_order.get(
-                        'street', 0
-                    ),
-                    required=self.request.event.settings.attendee_addresses_required,
-                )
-            )
-            questions.append(
-                FakeQuestion(
-                    id='zipcode',
-                    question=_('ZIP code'),
-                    position=self.request.event.settings.system_question_order.get(
-                        'zipcode', 0
-                    ),
-                    required=self.request.event.settings.attendee_addresses_required,
-                )
-            )
-            questions.append(
-                FakeQuestion(
-                    id='city',
-                    question=_('City'),
-                    position=self.request.event.settings.system_question_order.get(
-                        'city', 0
-                    ),
-                    required=self.request.event.settings.attendee_addresses_required,
-                )
-            )
-            questions.append(
-                FakeQuestion(
-                    id='country',
-                    question=_('Country'),
-                    position=self.request.event.settings.system_question_order.get(
-                        'country', 0
-                    ),
-                    required=self.request.event.settings.attendee_addresses_required,
-                )
-            )
+        questions = get_fake_attendee_questions(self.request.event.settings)
 
         questions += list(ctx['questions'])
         questions.sort(key=lambda q: q.position)
@@ -522,7 +451,7 @@ class QuestionList(ListView):
 
 
 @transaction.atomic
-@event_permission_required("can_change_items")
+@event_permission_required("event.items:write")
 @require_http_methods(["POST"])
 def reorder_questions(request, organizer, event):
     try:
@@ -530,14 +459,16 @@ def reorder_questions(request, organizer, event):
     except (JSONDecodeError, KeyError, ValueError):
         return HttpResponseBadRequest("expected JSON: {ids:[]}")
 
+    qs = request.event.questions.filter(container_type=request.GET['container_type'])
+
     # filter system_questions - normal questions are int/digit, system_questions strings
     custom_question_ids = [i for i in ids if i.isdigit()]
-    input_questions = list(request.event.questions.filter(id__in=custom_question_ids))
+    input_questions = list(qs.filter(id__in=custom_question_ids))
 
     if len(input_questions) != len(custom_question_ids):
         raise Http404(_("Some of the provided object ids are invalid."))
 
-    if len(input_questions) != request.event.questions.count():
+    if len(input_questions) != qs.count():
         raise Http404(_("Not all objects have been selected."))
 
     for q in input_questions:
@@ -551,18 +482,19 @@ def reorder_questions(request, organizer, event):
                 }
             )
 
-    system_question_order = {}
-    for s in ('attendee_name_parts', 'attendee_email', 'company', 'street', 'zipcode', 'city', 'country'):
-        if s in ids:
-            system_question_order[s] = ids.index(s)
-        else:
-            system_question_order[s] = -1
-    request.event.settings.system_question_order = system_question_order
-    request.event.log_action(
-        'pretix.event.settings', user=request.user, data={
-            'system_question_order': system_question_order,
-        }
-    )
+    if request.GET['container_type'] == Question.ContainerType.ORDERPOSITION:
+        system_question_order = {}
+        for s in ('attendee_name_parts', 'attendee_email', 'company', 'street', 'zipcode', 'city', 'country'):
+            if s in ids:
+                system_question_order[s] = ids.index(s)
+            else:
+                system_question_order[s] = -1
+        request.event.settings.system_question_order = system_question_order
+        request.event.log_action(
+            'pretix.event.settings', user=request.user, data={
+                'system_question_order': system_question_order,
+            }
+        )
 
     return HttpResponse()
 
@@ -570,7 +502,7 @@ def reorder_questions(request, organizer, event):
 class QuestionDelete(EventPermissionRequiredMixin, CompatDeleteView):
     model = Question
     template_name = 'pretixcontrol/items/question_delete.html'
-    permission = 'can_change_items'
+    permission = 'event.items:write'
     context_object_name = 'question'
 
     def get_object(self, queryset=None) -> Question:
@@ -664,7 +596,7 @@ class QuestionMixin:
 class QuestionView(EventPermissionRequiredMixin, ChartContainingView, DetailView):
     model = Question
     template_name = 'pretixcontrol/items/question.html'
-    permission = 'can_change_items'
+    permission = None
     template_name_field = 'question'
 
     @cached_property
@@ -753,7 +685,7 @@ class QuestionUpdate(EventPermissionRequiredMixin, QuestionMixin, UpdateView):
     model = Question
     form_class = QuestionForm
     template_name = 'pretixcontrol/items/question_edit.html'
-    permission = 'can_change_items'
+    permission = 'event.items:write'
     context_object_name = 'question'
 
     def get_object(self, queryset=None) -> Question:
@@ -794,12 +726,15 @@ class QuestionCreate(EventPermissionRequiredMixin, QuestionMixin, CreateView):
     model = Question
     form_class = QuestionForm
     template_name = 'pretixcontrol/items/question_edit.html'
-    permission = 'can_change_items'
+    permission = 'event.items:write'
     context_object_name = 'question'
 
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
         kwargs['instance'] = Question(event=self.request.event)
+        kwargs['instance'].container_type = self.request.GET.get('container_type', Question.ContainerType.ORDERPOSITION)
+        if kwargs['instance'].container_type not in Question.ContainerType.values:
+            raise PermissionDenied
         return kwargs
 
     def get_success_url(self) -> str:
@@ -831,13 +766,38 @@ class QuestionCreate(EventPermissionRequiredMixin, QuestionMixin, CreateView):
         return ret
 
 
-class QuotaList(PaginationMixin, ListView):
+class QuotaQueryMixin:
+
+    @cached_property
+    def request_data(self):
+        if self.request.method == "POST":
+            return self.request.POST
+        return self.request.GET
+
+    def get_queryset(self):
+        qs = self.request.event.quotas
+        if self.filter_form.is_valid():
+            qs = self.filter_form.filter_qs(qs)
+
+        if 'quota' in self.request_data and '__ALL' not in self.request_data:
+            qs = qs.filter(
+                id__in=self.request_data.getlist('quota')
+            )
+
+        return qs
+
+    @cached_property
+    def filter_form(self):
+        return QuotaFilterForm(data=self.request_data, prefix='filter', event=self.request.event)
+
+
+class QuotaList(PaginationMixin, QuotaQueryMixin, ListView):
     model = Quota
     context_object_name = 'quotas'
     template_name = 'pretixcontrol/items/quotas.html'
 
     def get_queryset(self):
-        qs = self.request.event.quotas.prefetch_related(
+        return super().get_queryset().prefetch_related(
             Prefetch(
                 "items",
                 queryset=Item.objects.annotate(
@@ -852,28 +812,10 @@ class QuotaList(PaginationMixin, ListView):
                 queryset=self.request.event.subevents.all()
             )
         )
-        if self.request.GET.get("subevent", "") != "":
-            s = self.request.GET.get("subevent", "")
-            qs = qs.filter(subevent_id=s)
-
-        valid_orders = {
-            '-date': ('-subevent__date_from', 'name', 'pk'),
-            'date': ('subevent__date_from', '-name', '-pk'),
-            'size': ('size', 'name', 'pk'),
-            '-size': ('-size', '-name', '-pk'),
-            'name': ('name', 'pk'),
-            '-name': ('-name', '-pk'),
-        }
-
-        if self.request.GET.get("ordering", "-date") in valid_orders:
-            qs = qs.order_by(*valid_orders[self.request.GET.get("ordering", "-date")])
-        else:
-            qs = qs.order_by('name', 'subevent__date_from', 'pk')
-
-        return qs
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data()
+        ctx['filter_form'] = self.filter_form
 
         qa = QuotaAvailability()
         qa.queue(*ctx['quotas'])
@@ -884,11 +826,170 @@ class QuotaList(PaginationMixin, ListView):
         return ctx
 
 
+class QuotaBulkAction(QuotaQueryMixin, EventPermissionRequiredMixin, View):
+    permission = 'event.items:write'
+
+    @transaction.atomic
+    def post(self, request, *args, **kwargs):
+        if request.POST.get('action') == 'delete':
+            return render(request, 'pretixcontrol/items/quota_delete_bulk.html', {
+                'allowed': self.get_queryset().select_related("subevent"),
+            })
+        elif request.POST.get('action') == 'delete_confirm':
+            log_entries = []
+            to_delete = []
+            for obj in self.get_queryset():
+                log_entries.append(obj.log_action('pretix.event.quota.deleted', user=self.request.user, save=False))
+                to_delete.append(obj.pk)
+
+            if to_delete:
+                LogEntry.bulk_create_and_postprocess(log_entries)
+                Quota.objects.filter(pk__in=to_delete).delete()
+            messages.success(request, _('The selected quotas have been deleted or disabled.'))
+        return redirect(self.get_success_url())
+
+    def get_success_url(self) -> str:
+        return reverse('control:event.items.quotas', kwargs={
+            'organizer': self.request.event.organizer.slug,
+            'event': self.request.event.slug,
+        })
+
+
+class QuotaBulkUpdateView(QuotaQueryMixin, EventPermissionRequiredMixin, FormView):
+    template_name = 'pretixcontrol/items/quota_bulk_edit.html'
+    permission = 'event.items:write'
+    context_object_name = 'quota'
+    form_class = QuotaBulkEditForm
+
+    def get_queryset(self):
+        return super().get_queryset().prefetch_related(None).order_by()
+
+    def get(self, request, *args, **kwargs):
+        return HttpResponse(status=405)
+
+    @cached_property
+    def is_submitted(self):
+        # Usually, django considers a form "bound" / "submitted" on every POST request. However, this view is always
+        # called with POST method, even if just to pass the selection of objects to work on, so we want to modify
+        # that behaviour
+        return '_bulk' in self.request.POST
+
+    def get_form_kwargs(self):
+        initial = {}
+        mixed_values = set()
+        qs = self.get_queryset().annotate(
+            items_list=Subquery(
+                Quota.items.through.objects.filter(
+                    quota_id=OuterRef('pk'),
+                    item__variations__isnull=True,
+                ).order_by().values('quota_id').annotate(
+                    g=GroupConcat('item_id', separator=',', ordered=True)
+                ).values('g')
+            ),
+            vars_list=Subquery(
+                Quota.variations.through.objects.filter(
+                    quota_id=OuterRef('pk')
+                ).order_by().values('quota_id').annotate(
+                    g=GroupConcat(
+                        Concat(
+                            Cast(F('itemvariation__item_id'), output_field=models.TextField()),
+                            Value('-', output_field=models.TextField()),
+                            Cast(F('itemvariation_id'), output_field=models.TextField()),
+                        ),
+                        separator=',',
+                        ordered=True
+                    )
+                ).values('g')
+            ),
+        )
+
+        fields = {
+            'name': 'name',
+            'size': 'size',
+            'subevent': 'subevent',
+            'close_when_sold_out': 'close_when_sold_out',
+            'release_after_exit': 'release_after_exit',
+            'ignore_for_event_availability': 'ignore_for_event_availability',
+        }
+        for k, f in fields.items():
+            existing_values = list(qs.order_by(f).values(f).annotate(c=Count('*')))
+            if len(existing_values) == 1:
+                initial[k] = existing_values[0][f]
+            elif len(existing_values) > 1:
+                mixed_values.add(k)
+                initial[k] = None
+
+        item_values = list(qs.order_by("items_list").values("items_list").annotate(c=Count('*')))
+        var_values = list(qs.order_by("vars_list").values("vars_list").annotate(c=Count('*')))
+        if len(item_values) > 1 or len(var_values) > 1:
+            mixed_values.add("itemvars")
+        else:
+            initial["itemvars"] = [iv for iv in (item_values[0]["items_list"] or "").split(",") + (var_values[0]["vars_list"] or "").split(",") if iv]
+
+        kwargs = super().get_form_kwargs()
+        kwargs['event'] = self.request.event
+        kwargs['prefix'] = 'bulkedit'
+        kwargs['initial'] = initial
+        kwargs['queryset'] = self.get_queryset()
+        kwargs['mixed_values'] = mixed_values
+        if not self.is_submitted:
+            kwargs['data'] = None
+            kwargs['files'] = None
+        return kwargs
+
+    def get_success_url(self):
+        return reverse('control:event.items.quotas', kwargs={
+            'organizer': self.request.event.organizer.slug,
+            'event': self.request.event.slug,
+        })
+
+    @transaction.atomic()
+    def form_valid(self, form):
+        log_entries = []
+
+        # Main form
+        form.save()
+        data = {
+            k: v
+            for k, v in form.cleaned_data.items()
+            if k in form.changed_data
+        }
+        data['_raw_bulk_data'] = self.request.POST.dict()
+        for obj in self.get_queryset():
+            log_entries.append(
+                obj.log_action('pretix.event.quota.changed', data=data, user=self.request.user, save=False)
+            )
+
+        LogEntry.bulk_create_and_postprocess(log_entries)
+
+        messages.success(self.request, _('Your changes have been saved.'))
+        return super().form_valid(form)
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx['quotas'] = self.get_queryset()
+        ctx['bulk_selected'] = self.request.POST.getlist("_bulk")
+        return ctx
+
+    def post(self, request, *args, **kwargs):
+        form = self.get_form()
+        is_valid = (
+            self.is_submitted and
+            form.is_valid()
+        )
+        if is_valid:
+            return self.form_valid(form)
+        else:
+            if self.is_submitted:
+                messages.error(self.request, _('We could not save your changes. See below for details.'))
+            return self.form_invalid(form)
+
+
 class QuotaCreate(EventPermissionRequiredMixin, CreateView):
     model = Quota
     form_class = QuotaForm
     template_name = 'pretixcontrol/items/quota_edit.html'
-    permission = 'can_change_items'
+    permission = 'event.items:write'
     context_object_name = 'quota'
 
     def get_success_url(self) -> str:
@@ -1055,7 +1156,7 @@ class QuotaView(ChartContainingView, DetailView):
             raise Http404(_("The requested quota does not exist."))
 
     def post(self, request, *args, **kwargs):
-        if not request.user.has_event_permission(request.organizer, request.event, 'can_change_items', request):
+        if not request.user.has_event_permission(request.organizer, request.event, 'event.items:write', request):
             raise PermissionDenied()
         quota = self.get_object()
         if 'reopen' in request.POST:
@@ -1085,7 +1186,7 @@ class QuotaUpdate(EventPermissionRequiredMixin, UpdateView):
     model = Quota
     form_class = QuotaForm
     template_name = 'pretixcontrol/items/quota_edit.html'
-    permission = 'can_change_items'
+    permission = 'event.items:write'
     context_object_name = 'quota'
 
     def get_context_data(self, *args, **kwargs):
@@ -1143,7 +1244,7 @@ class QuotaUpdate(EventPermissionRequiredMixin, UpdateView):
 class QuotaDelete(EventPermissionRequiredMixin, CompatDeleteView):
     model = Quota
     template_name = 'pretixcontrol/items/quota_delete.html'
-    permission = 'can_change_items'
+    permission = 'event.items:write'
     context_object_name = 'quota'
 
     def get_object(self, queryset=None) -> Quota:
@@ -1246,7 +1347,7 @@ class MetaDataEditorMixin:
 class ItemCreate(EventPermissionRequiredMixin, MetaDataEditorMixin, CreateView):
     form_class = ItemCreateForm
     template_name = 'pretixcontrol/item/create.html'
-    permission = 'can_change_items'
+    permission = 'event.items:write'
 
     def get_success_url(self) -> str:
         return reverse('control:event.item', kwargs={
@@ -1322,7 +1423,7 @@ class ItemCreate(EventPermissionRequiredMixin, MetaDataEditorMixin, CreateView):
 class ItemUpdateGeneral(ItemDetailMixin, EventPermissionRequiredMixin, MetaDataEditorMixin, UpdateView):
     form_class = ItemUpdateForm
     template_name = 'pretixcontrol/item/index.html'
-    permission = 'can_change_items'
+    permission = 'event.items:write'
 
     @cached_property
     def plugin_forms(self):
@@ -1447,12 +1548,8 @@ class ItemUpdateGeneral(ItemDetailMixin, EventPermissionRequiredMixin, MetaDataE
 
         meta_changed = {}
         for f in self.meta_forms:
-            meta_changed.update({
-                k: (f.cleaned_data.get(k).name
-                    if isinstance(f.cleaned_data.get(k), File)
-                    else f.cleaned_data.get(k))
-                for k in f.changed_data
-            })
+            if f.has_changed():
+                meta_changed[f.property.name] = f.cleaned_data["value"]
         if meta_changed:
             change_data['meta_data'] = meta_changed
 
@@ -1584,7 +1681,7 @@ class ItemUpdateGeneral(ItemDetailMixin, EventPermissionRequiredMixin, MetaDataE
 class ItemDelete(EventPermissionRequiredMixin, CompatDeleteView):
     model = Item
     template_name = 'pretixcontrol/item/delete.html'
-    permission = 'can_change_items'
+    permission = 'event.items:write'
     context_object_name = 'item'
 
     def get_context_data(self, *args, **kwargs) -> dict:

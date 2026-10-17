@@ -34,7 +34,7 @@ from stripe import error
 from tests.plugins.stripe.test_checkout import apple_domain_create
 from tests.plugins.stripe.test_provider import MockedCharge
 
-from pretix.base.models import InvoiceAddress, Order, OrderPosition
+from pretix.base.models import InvoiceAddress, Order, OrderPosition, Team
 from pretix.base.models.orders import OrderFee, OrderPayment, OrderRefund
 
 
@@ -178,6 +178,36 @@ def order2(event2, item2):
             positionid=1,
         )
         return o
+
+
+@pytest.fixture
+@scopes_disabled()
+def team2(organizer, event2):
+    team2 = Team.objects.create(
+        organizer=organizer,
+        name="Test-Team 2",
+        all_event_permissions=True,
+        all_organizer_permissions=True,
+    )
+    team2.limit_events.add(event2)
+    team2.save()
+    return team2
+
+
+@pytest.fixture
+@scopes_disabled()
+def limited_token_client(client, team2):
+    team2.can_view_orders = True
+    team2.can_view_vouchers = True
+    team2.all_event_permissions = True
+    team2.limit_event_permissions = {
+        "event.vouchers:read": True,
+        "event.orders:read": True,
+    }
+    team2.save()
+    t = team2.tokens.create(name='Foo')
+    client.credentials(HTTP_AUTHORIZATION='Token ' + t.token)
+    return client
 
 
 TEST_ORDERPOSITION_RES = {
@@ -701,6 +731,35 @@ def test_payment_create_confirmed(token_client, organizer, event, order):
 
 
 @pytest.mark.django_db
+def test_payment_create_confirmed_after_expiry(token_client, organizer, event, order):
+    djmail.outbox = []
+    order.expires = now() - datetime.timedelta(days=2)
+    order.save()
+    event.settings.payment_term_last = (now() - datetime.timedelta(days=2)).strftime('%Y-%m-%d')
+
+    resp = token_client.post('/api/v1/organizers/{}/events/{}/orders/{}/payments/'.format(
+        organizer.slug, event.slug, order.code
+    ), format='json', data={
+        'provider': 'banktransfer',
+        'state': 'confirmed',
+        'amount': order.total,
+        'send_email': False,
+        'info': {
+            'foo': 'bar'
+        },
+        "force": True
+    })
+    with scopes_disabled():
+        p = order.payments.last()
+    assert resp.status_code == 201
+    assert p.state == OrderPayment.PAYMENT_STATE_CONFIRMED
+    assert p.info_data == {'foo': 'bar'}
+    order.refresh_from_db()
+    assert order.status == Order.STATUS_PAID
+    assert len(djmail.outbox) == 0
+
+
+@pytest.mark.django_db
 def test_payment_create_pending(token_client, organizer, event, order):
     resp = token_client.post('/api/v1/organizers/{}/events/{}/orders/{}/payments/'.format(
         organizer.slug, event.slug, order.code
@@ -987,8 +1046,64 @@ def test_refund_cancel(token_client, organizer, event, order):
     assert resp.status_code == 400
 
 
+@pytest.mark.parametrize(
+    "endpoint_template, response_code",
+    [('/api/v1/organizers/{}/events/{}/orderpositions/', 403), ('/api/v1/organizers/{}/orderpositions/', 200)]
+)
 @pytest.mark.django_db
-def test_orderposition_list(token_client, organizer, device, event, order, item, subevent, subevent2, question, django_assert_num_queries):
+def test_orderposition_list_limited_read(
+        endpoint_template, response_code, limited_token_client, organizer, device, event, order, item, subevent, subevent2, question
+):
+    endpoint = endpoint_template.format(organizer.slug, event.slug)
+
+    i2 = copy.copy(item)
+    i2.pk = None
+    i2.save()
+    with scopes_disabled():
+        var = item.variations.create(value="Children")
+        res = copy.copy(TEST_ORDERPOSITION_RES)
+        op = order.positions.first()
+        op.variation = var
+        op.save()
+        res["id"] = op.pk
+        res["item"] = item.pk
+        res["variation"] = var.pk
+        res["answers"][0]["question"] = question.pk
+        res["print_logs"][0]["id"] = op.print_logs.first().pk
+        res["print_logs"][0]["device_id"] = device.device_id
+
+    resp = limited_token_client.get(endpoint)
+    assert resp.status_code == response_code
+    if response_code == 200:
+        assert resp.json() == {'count': 0, 'next': None, 'previous': None, 'results': []}
+    else:
+        assert resp.json() == {'detail': 'You do not have permission to perform this action.'}
+
+
+@pytest.mark.parametrize(
+    ("endpoint_template", "endpoint_type"),
+    [
+        ('/api/v1/organizers/{}/events/{}/orderpositions/', "event"),
+        ('/api/v1/organizers/{}/orderpositions/', "organizer")
+    ],
+)
+@pytest.mark.django_db(transaction=True)
+def test_orderposition_list(
+        endpoint_template,
+        endpoint_type,
+        token_client,
+        organizer,
+        device,
+        event,
+        order,
+        item,
+        subevent,
+        subevent2,
+        question,
+        django_assert_num_queries
+):
+    endpoint = endpoint_template.format(organizer.slug, event.slug)
+
     i2 = copy.copy(item)
     i2.pk = None
     i2.save()
@@ -1005,88 +1120,64 @@ def test_orderposition_list(token_client, organizer, device, event, order, item,
         res["answers"][0]["question"] = question.pk
         res["print_logs"][0]["id"] = op.print_logs.first().pk
         res["print_logs"][0]["device_id"] = device.device_id
+        if endpoint_type == "organizer":
+            res["event"] = event.slug
 
-    resp = token_client.get('/api/v1/organizers/{}/events/{}/orderpositions/'.format(organizer.slug, event.slug))
+    resp = token_client.get(endpoint)
     assert resp.status_code == 200
     assert [res] == resp.data['results']
 
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?order__status=n'.format(organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?order__status=n')
     assert [res] == resp.data['results']
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?order__status=p'.format(organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?order__status=p')
     assert [] == resp.data['results']
 
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?item={}'.format(organizer.slug, event.slug, item.pk))
+    resp = token_client.get(endpoint + '?item={}'.format(item.pk))
     assert [res] == resp.data['results']
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?item__in={},{}'.format(
-            organizer.slug, event.slug, item.pk, i2.pk
-        ))
+    resp = token_client.get(endpoint + '?item__in={},{}'.format(item.pk, i2.pk))
     assert [res] == resp.data['results']
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?item={}'.format(organizer.slug, event.slug, i2.pk))
+    resp = token_client.get(endpoint + '?item={}'.format(i2.pk))
     assert [] == resp.data['results']
 
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?variation={}'.format(organizer.slug, event.slug, var.pk))
+    resp = token_client.get(endpoint + '?variation={}'.format(var.pk))
     assert [res] == resp.data['results']
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?variation={}'.format(organizer.slug, event.slug, var2.pk))
+    resp = token_client.get(endpoint + '?variation={}'.format(var2.pk))
     assert [] == resp.data['results']
 
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?attendee_name=Peter'.format(organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?attendee_name=Peter')
     assert [res] == resp.data['results']
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?attendee_name=peter'.format(organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?attendee_name=peter')
     assert [res] == resp.data['results']
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?attendee_name=Mark'.format(organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?attendee_name=Mark')
     assert [] == resp.data['results']
 
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?secret=z3fsn8jyufm5kpk768q69gkbyr5f4h6w'.format(
-            organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?secret=z3fsn8jyufm5kpk768q69gkbyr5f4h6w')
     assert [res] == resp.data['results']
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?secret=abc123'.format(organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?secret=abc123')
     assert [] == resp.data['results']
 
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?pseudonymization_id=ABCDEFGHKL'.format(
-            organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?pseudonymization_id=ABCDEFGHKL')
     assert [res] == resp.data['results']
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?pseudonymization_id=FOO'.format(organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?pseudonymization_id=FOO')
     assert [] == resp.data['results']
 
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?search=FO'.format(organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?search=FO')
     assert [res] == resp.data['results']
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?search=z3fsn8j'.format(organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?search=z3fsn8j')
     assert [res] == resp.data['results']
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?search=Peter'.format(organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?search=Peter')
     assert [res] == resp.data['results']
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?search=5f4h6w'.format(organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?search=5f4h6w')
     assert [] == resp.data['results']
 
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?order=FOO'.format(organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?order=FOO')
     assert [res] == resp.data['results']
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?order=BAR'.format(organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?order=BAR')
     assert [] == resp.data['results']
 
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?has_checkin=false'.format(organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?has_checkin=false')
     assert [res] == resp.data['results']
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?has_checkin=true'.format(organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?has_checkin=true')
     assert [] == resp.data['results']
 
     with scopes_disabled():
@@ -1103,33 +1194,28 @@ def test_orderposition_list(token_client, organizer, device, event, order, item,
         'gate': None,
         'type': 'entry'
     }]
-    with django_assert_num_queries(16):
-        resp = token_client.get(
-            '/api/v1/organizers/{}/events/{}/orderpositions/?has_checkin=true'.format(organizer.slug, event.slug)
-        )
+    if '/events/' in endpoint:
+        with django_assert_num_queries(16):
+            resp = token_client.get(endpoint + '?has_checkin=true')
+    else:
+        with django_assert_num_queries(15):
+            resp = token_client.get(endpoint + '?has_checkin=true')
     assert [res] == resp.data['results']
 
     op.subevent = subevent
     op.save()
     res['subevent'] = subevent.pk
 
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?subevent={}'.format(organizer.slug, event.slug, subevent.pk))
+    resp = token_client.get(endpoint + '?subevent={}'.format(subevent.pk))
     assert [res] == resp.data['results']
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?subevent__in={},{}'.format(organizer.slug, event.slug,
-                                                                                    subevent.pk, subevent2.pk))
+    resp = token_client.get(endpoint + '?subevent__in={},{}'.format(subevent.pk, subevent2.pk))
     assert [res] == resp.data['results']
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?subevent={}'.format(organizer.slug, event.slug,
-                                                                             subevent.pk + 1))
+    resp = token_client.get(endpoint + '?subevent={}'.format(subevent.pk + 1))
     assert [] == resp.data['results']
 
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?include_canceled_positions=false'.format(organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?include_canceled_positions=false')
     assert len(resp.data['results']) == 1
-    resp = token_client.get(
-        '/api/v1/organizers/{}/events/{}/orderpositions/?include_canceled_positions=true'.format(organizer.slug, event.slug))
+    resp = token_client.get(endpoint + '?include_canceled_positions=true')
     assert len(resp.data['results']) == 2
 
 
@@ -1979,7 +2065,7 @@ def test_blocked_secret_list(token_client, organizer, event):
     assert [res] == resp.data['results']
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_pdf_data(token_client, organizer, event, order, django_assert_max_num_queries):
     # order detail
     resp = token_client.get('/api/v1/organizers/{}/events/{}/orders/{}/?pdf_data=true'.format(
@@ -1996,7 +2082,7 @@ def test_pdf_data(token_client, organizer, event, order, django_assert_max_num_q
     assert not resp.data['positions'][0].get('pdf_data')
 
     # order list
-    with django_assert_max_num_queries(33):
+    with django_assert_max_num_queries(34):
         resp = token_client.get('/api/v1/organizers/{}/events/{}/orders/?pdf_data=true'.format(
             organizer.slug, event.slug
         ))
@@ -2011,7 +2097,7 @@ def test_pdf_data(token_client, organizer, event, order, django_assert_max_num_q
     assert not resp.data['results'][0]['positions'][0].get('pdf_data')
 
     # position list
-    with django_assert_max_num_queries(35):
+    with django_assert_max_num_queries(36):
         resp = token_client.get('/api/v1/organizers/{}/events/{}/orderpositions/?pdf_data=true'.format(
             organizer.slug, event.slug
         ))

@@ -24,7 +24,7 @@ from typing import Optional
 from django.utils.translation import gettext_lazy as _
 from django_countries.fields import Country
 
-from pretix.base.models import Invoice, InvoiceAddress
+from pretix.base.models import Invoice
 from pretix.base.signals import EventPluginRegistry, Registry
 
 
@@ -89,7 +89,7 @@ class TransmissionType:
     def invoice_address_form_fields_visible(self, country: Country, is_business: bool) -> set:
         return set(self.invoice_address_form_fields.keys())
 
-    def validate_address(self, ia: InvoiceAddress):
+    def validate_invoice_address_data(self, address_data: dict):
         pass
 
     @property
@@ -106,6 +106,9 @@ class TransmissionType:
 
     def transmission_info_to_form_data(self, transmission_info: dict) -> dict:
         return transmission_info
+
+    def describe_info_columns(self):
+        return [f.label for f in self.invoice_address_form_fields.values()]
 
     def describe_info(self, transmission_info: dict, country: Country, is_business: bool):
         form_data = self.transmission_info_to_form_data(transmission_info)

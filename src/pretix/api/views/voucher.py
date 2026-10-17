@@ -40,6 +40,7 @@ with scopes_disabled():
     class VoucherFilter(FilterSet):
         active = BooleanFilter(method='filter_active')
         code = CharFilter(lookup_expr='iexact')
+        search = CharFilter(method='search_qs')
 
         class Meta:
             model = Voucher
@@ -54,6 +55,9 @@ with scopes_disabled():
                 return queryset.filter(Q(redeemed__gte=F('max_usages')) |
                                        (Q(valid_until__isnull=False) & Q(valid_until__lte=now())))
 
+        def search_qs(self, qs, name, value):
+            return qs.filter(Q(code__icontains=value) | Q(tag__icontains=value) | Q(comment__icontains=value))
+
 
 class VoucherViewSet(viewsets.ModelViewSet):
     serializer_class = VoucherSerializer
@@ -62,8 +66,8 @@ class VoucherViewSet(viewsets.ModelViewSet):
     ordering = ('id',)
     ordering_fields = ('id', 'code', 'max_usages', 'valid_until', 'value')
     filterset_class = VoucherFilter
-    permission = 'can_view_vouchers'
-    write_permission = 'can_change_vouchers'
+    permission = 'event.vouchers:read'
+    write_permission = 'event.vouchers:write'
 
     @scopes_disabled()  # we have an event check here, and we can save some performance on subqueries
     def get_queryset(self):

@@ -67,7 +67,7 @@ def env():
     )
     event.settings.set('ticketoutput_testdummy__enabled', True)
     user = User.objects.create_user('dummy@dummy.dummy', 'dummy')
-    t = Team.objects.create(organizer=o, can_view_orders=True, can_change_orders=True, can_manage_customers=True)
+    t = Team.objects.create(organizer=o, all_event_permissions=True, all_organizer_permissions=True)
     t.members.add(user)
     t.limit_events.add(event)
     o = Order.objects.create(
@@ -1422,7 +1422,7 @@ class OrderChangeTests(SoupTest):
         self.quota.items.add(self.ticket)
         self.quota.items.add(self.shirt)
         user = User.objects.create_user('dummy@dummy.dummy', 'dummy')
-        t = Team.objects.create(organizer=o, can_view_orders=True, can_change_orders=True)
+        t = Team.objects.create(organizer=o, all_event_permissions=True)
         t.members.add(user)
         t.limit_events.add(self.event)
         self.client.login(email='dummy@dummy.dummy', password='dummy')
@@ -1584,10 +1584,11 @@ class OrderChangeTests(SoupTest):
             'add_position-MAX_NUM_FORMS': '100',
             'add_position-0-itemvar': str(self.shirt.pk),
             'add_position-0-do': 'on',
+            'add_position-0-count': '2',
             'add_position-0-price': '14.00',
         })
         with scopes_disabled():
-            assert self.order.positions.count() == 3
+            assert self.order.positions.count() == 4
             assert self.order.positions.last().item == self.shirt
             assert self.order.positions.last().price == 14
 
@@ -2435,6 +2436,47 @@ def test_refund_paid_order_offsetting_to_wrong_currency(client, env):
     }, follow=True)
     assert b'alert-danger' in r.content
     assert b'different currency' in r.content
+
+
+@pytest.mark.django_db
+def test_refund_paid_order_offsetting_to_wrong_permissions(client, env):
+    with scopes_disabled():
+        p = env[2].payments.last()
+        p.confirm()
+        t = env[0].organizer.teams.get()
+        t.all_events = False
+        t.save()
+        t.limit_events.set([env[0]])
+        client.login(email='dummy@dummy.dummy', password='dummy')
+        event2 = Event.objects.create(
+            organizer=env[0].organizer, name='Dummy', slug='dummy2',
+            date_from=now(), plugins='pretix.plugins.banktransfer,pretix.plugins.stripe,tests.testdummy',
+            currency='EUR',
+        )
+        ticket2 = Item.objects.create(event=event2, name='Early-bird ticket',
+                                      category=None, default_price=23,
+                                      admission=True, personalized=True)
+        o = Order.objects.create(
+            code='BAZ', event=event2, email='dummy@dummy.test',
+            status=Order.STATUS_PENDING,
+            datetime=now(), expires=now() + timedelta(days=10),
+            sales_channel=event2.organizer.sales_channels.get(identifier="web"),
+            total=5, locale='en'
+        )
+        o.positions.create(price=5, item=ticket2)
+
+    r = client.post('/control/event/dummy/dummy/orders/ABC32/refund', {
+        'start-partial_amount': '5.00',
+        'start-mode': 'partial',
+        'start-action': 'mark_pending',
+        'refund-offsetting': '5.00',
+        'order-offsetting': 'BAZ',
+        'manual_state': 'pending',
+        'last_known_refund_id': 0,
+        'perform': 'on'
+    }, follow=True)
+    assert b'alert-danger' in r.content
+    assert b'do not have access' in r.content
 
 
 @pytest.mark.django_db

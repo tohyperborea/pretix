@@ -18,7 +18,7 @@ from ..services.selected_delete import (
 
 
 class BaseLotteryView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, View):
-    permission = "can_change_orders"
+    permission = "event.orders:write"
     revert = False
 
     def _waitinglist_url(self):
@@ -74,7 +74,7 @@ class DeleteSelectedEntriesView(EventPermissionRequiredMixin, View):
     Like core's "Delete selected", but also deletes entries that have a voucher. The first POST
     comes from the waiting-list form and shows a confirmation page; the second deletes.
     """
-    permission = "can_change_orders"
+    permission = "event.orders:write"
     http_method_names = ["post"]
 
     def _back_url(self):

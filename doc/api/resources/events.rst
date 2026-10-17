@@ -65,8 +65,6 @@ Endpoints
 
    Returns a list of all events within a given organizer the authenticated user/token has access to.
 
-   Permission required: "Can change event settings"
-
    **Example request**:
 
    .. sourcecode:: http
@@ -112,7 +110,7 @@ Endpoints
             "plugins": [
               "pretix.plugins.banktransfer",
               "pretix.plugins.stripe",
-              "pretix.plugins.paypal",
+              "pretix.plugins.paypal2",
               "pretix.plugins.ticketoutputpdf"
             ],
             "all_sales_channels": false,
@@ -161,8 +159,6 @@ Endpoints
 
    Returns information on one event, identified by its slug.
 
-   Permission required: "Can change event settings"
-
    **Example request**:
 
    .. sourcecode:: http
@@ -203,7 +199,7 @@ Endpoints
         "plugins": [
           "pretix.plugins.banktransfer",
           "pretix.plugins.stripe",
-          "pretix.plugins.paypal",
+          "pretix.plugins.paypal2",
           "pretix.plugins.ticketoutputpdf"
         ],
         "valid_keys": {
@@ -233,8 +229,6 @@ Endpoints
 
    Please note that events cannot be created as 'live' using this endpoint. Quotas and payment must be added to the
    event before sales can go live.
-
-   Permission required: "Can create events"
 
    **Example request**:
 
@@ -268,7 +262,7 @@ Endpoints
         "item_meta_properties": {},
         "plugins": [
           "pretix.plugins.stripe",
-          "pretix.plugins.paypal"
+          "pretix.plugins.paypal2"
         ],
         "all_sales_channels": true,
         "limit_sales_channels": []
@@ -305,7 +299,7 @@ Endpoints
         "item_meta_properties": {},
         "plugins": [
           "pretix.plugins.stripe",
-          "pretix.plugins.paypal"
+          "pretix.plugins.paypal2"
         ],
         "all_sales_channels": true,
         "limit_sales_channels": [],
@@ -337,8 +331,6 @@ Endpoints
 
    Please note that you can only copy from events under the same organizer this way. Use the ``clone_from`` parameter
    when creating a new event for this instead.
-
-   Permission required: "Can create events"
 
    **Example request**:
 
@@ -372,7 +364,7 @@ Endpoints
         "item_meta_properties": {},
         "plugins": [
           "pretix.plugins.stripe",
-          "pretix.plugins.paypal"
+          "pretix.plugins.paypal2"
         ],
         "all_sales_channels": true,
         "limit_sales_channels": []
@@ -409,7 +401,7 @@ Endpoints
         "item_meta_properties": {},
         "plugins": [
           "pretix.plugins.stripe",
-          "pretix.plugins.paypal"
+          "pretix.plugins.paypal2"
         ],
         "all_sales_channels": true,
         "limit_sales_channels": [],
@@ -433,8 +425,6 @@ Endpoints
 
    Updates an event
 
-   Permission required: "Can change event settings"
-
    **Example request**:
 
    .. sourcecode:: http
@@ -448,7 +438,7 @@ Endpoints
         "plugins": [
           "pretix.plugins.banktransfer",
           "pretix.plugins.stripe",
-          "pretix.plugins.paypal",
+          "pretix.plugins.paypal2",
           "pretix.plugins.pretixdroid"
         ]
       }
@@ -485,7 +475,7 @@ Endpoints
         "plugins": [
           "pretix.plugins.banktransfer",
           "pretix.plugins.stripe",
-          "pretix.plugins.paypal",
+          "pretix.plugins.paypal2",
           "pretix.plugins.pretixdroid"
         ],
         "all_sales_channels": true,
@@ -509,8 +499,6 @@ Endpoints
 .. http:delete:: /api/v1/organizers/(organizer)/events/(event)/
 
    Delete an event. Note that events with orders cannot be deleted to ensure data integrity.
-
-   Permission required: "Can change event settings"
 
    **Example request**:
 
@@ -561,8 +549,6 @@ organizer level.
 
    Get current values of event settings.
 
-   Permission required: "Can change event settings" (Exception: with device auth, *some* settings can always be *read*.)
-
    **Example request**:
 
    .. sourcecode:: http
@@ -580,7 +566,7 @@ organizer level.
       Content-Type: application/json
 
       {
-        "imprint_url": "https://pretix.eu",
+        "region": "DE",
         …
       }
 
@@ -593,12 +579,14 @@ organizer level.
       Content-Type: application/json
 
       {
-        "imprint_url":
+        "region":
           {
-            "value": "https://pretix.eu",
-            "label": "Imprint URL",
+            "value": "DE",
+            "label": "Region",
             "readonly": false,
-            "help_text": "This should point e.g. to a part of your website that has your contact details and legal information."
+            "help_text": "Will be used to determine date and time formatting as well as default country for customer
+                          addresses and phone numbers. For formatting, this takes less priority than the language and
+                          is therefore mostly relevant for languages used in different regions globally (like English)."
           }
         },
         …
@@ -614,6 +602,8 @@ organizer level.
 .. http:patch:: /api/v1/organizers/(organizer)/events/(event)/settings/
 
    Updates event settings. Note that ``PUT`` is not allowed here, only ``PATCH``.
+
+   Permission "Can change event settings" is always required. Some keys require additional permissions.
 
     .. warning::
 
@@ -632,7 +622,7 @@ organizer level.
       Content-Type: application/json
 
       {
-        "imprint_url": "https://example.org/imprint/"
+        "region": "DE"
       }
 
    **Example response**:
@@ -644,7 +634,7 @@ organizer level.
       Content-Type: application/json
 
       {
-        "imprint_url": "https://example.org/imprint/",
+        "region": "DE",
         …
       }
 

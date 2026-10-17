@@ -24,9 +24,11 @@ import logging
 import time
 
 from django.conf import settings
-from django.contrib.gis.geoip2 import GeoIP2
+from django.contrib.auth import login as auth_login
+from django.contrib.gis import geoip2
 from django.core.cache import cache
-from django.utils.timezone import now
+from django.utils.formats import date_format
+from django.utils.timezone import localtime, now, override
 from django.utils.translation import gettext_lazy as _
 from django_countries.fields import Country
 from geoip2.errors import AddressNotFoundError
@@ -34,7 +36,7 @@ from geoip2.errors import AddressNotFoundError
 from pretix.base.i18n import language
 from pretix.base.services.mail import mail
 from pretix.helpers.http import get_client_ip
-from pretix.helpers.urls import build_absolute_uri
+from pretix.helpers.urls import mainreverse_absolute
 
 logger = logging.getLogger(__name__)
 
@@ -62,14 +64,20 @@ def get_user_agent_hash(request):
 _geoip = None
 
 
-def _get_country(request):
+def get_geoip() -> geoip2.GeoIP2:
+    # See https://code.djangoproject.com/ticket/36988#ticket
     global _geoip
 
-    if not _geoip:
-        _geoip = GeoIP2()
+    geoip2.SUPPORTED_DATABASE_TYPES.add("Geoacumen-Country")
 
+    if not _geoip:
+        _geoip = geoip2.GeoIP2()
+    return _geoip
+
+
+def _get_country(request):
     try:
-        res = _geoip.country(get_client_ip(request))
+        res = get_geoip().country(get_client_ip(request))
     except AddressNotFoundError:
         return None
     return res['country_code']
@@ -159,18 +167,36 @@ def handle_login_source(user, request):
         })
         if user.known_login_sources.count() > 1:
             # Do not send on first login or first login after introduction of this feature:
-            with language(user.locale):
+            with language(user.locale), override(user.timezone):
                 mail(
                     user.email,
-                    _('Login from new source detected'),
+                    _('New sign-in to your account'),
                     'pretixcontrol/email/login_notice.txt',
                     {
-                        'source': src,
-                        'country': Country(str(country)).name if country else _('Unknown country'),
+                        'when': date_format(localtime(src.last_seen), 'DATETIME_FORMAT'),
+                        'agent': src.agent_type,
+                        'os': src.os_type,
+                        # ua-parser returns "Other" for unidentified desktop devices.
+                        'device': src.device_type if src.device_type and src.device_type != 'Other' else None,
+                        'country': Country(str(country)).name if country else None,
                         'instance': settings.PRETIX_INSTANCE_NAME,
-                        'url': build_absolute_uri('control:user.settings')
+                        'url': mainreverse_absolute('control:user.settings')
                     },
                     event=None,
                     user=user,
                     locale=user.locale
                 )
+
+
+def session_login(request, user, keep_logged_in=False):
+    auth_login(request, user)
+    session_reauth(request)
+    request.session["pretix_auth_long_session"] = (
+        settings.PRETIX_LONG_SESSIONS and keep_logged_in
+    )
+
+
+def session_reauth(request):
+    t = int(time.time())
+    request.session['pretix_auth_login_time'] = t
+    request.session['pretix_auth_last_used'] = t

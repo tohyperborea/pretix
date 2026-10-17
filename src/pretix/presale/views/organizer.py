@@ -74,7 +74,7 @@ from pretix.helpers.formats.en.formats import (
 from pretix.helpers.http import redirect_to_url
 from pretix.helpers.i18n import parse_date_localized
 from pretix.helpers.thumb import get_thumbnail
-from pretix.multidomain.urlreverse import build_absolute_uri, eventreverse
+from pretix.multidomain.urlreverse import eventreverse, eventreverse_absolute
 from pretix.presale.forms.organizer import EventListFilterForm
 from pretix.presale.ical import get_public_ical
 from pretix.presale.signals import filter_subevents
@@ -576,7 +576,7 @@ def filter_subevents_with_plugins(subevents, sales_channel=None):
     if not app_cache:
         _populate_app_cache()
 
-    for receiver in filter_subevents._live_receivers(None):
+    for receiver in filter_subevents._live_receivers(None)[0]:
         app = get_defining_app(receiver)
         event_state = {}
 
@@ -599,6 +599,32 @@ def filter_subevents_with_plugins(subevents, sales_channel=None):
         ]
 
     return subevents
+
+
+def should_hide_subevent(settings, subevent, voucher=None):
+    hide = False
+    if settings.event_list_available_only:
+        hide = (
+            # Presale is over → the subevent is not available → hide
+            subevent.presale_has_ended or
+            # Not a single product is available on this sales channel → hide
+            # Note that means there could be products which are ignored for calendar availability (Quota.ignore_for_event_availability)
+            # or products only visible with a voucher. However, for customers with these scenarios, the event_list_available_only
+            # makes only very little sense as it would never do anything, so the flag can just be removed -- or the products should
+            # be made visible so people know why there are no products. In case a voucher is already entered on the calendar view,
+            # this is already respected and subevents are shown correctly.
+            subevent.best_availability_state is None or
+            (
+                # Sold out → hide, unless we have a voucher active that can bypass all quotas
+                (not voucher or not voucher.allow_ignore_quota) and
+                subevent.best_availability_state < Quota.AVAILABILITY_RESERVED
+            )
+        )
+
+    if settings.event_calendar_future_only:
+        if (subevent.date_to or subevent.date_from) < time_machine_now():
+            hide = True
+    return hide
 
 
 def add_subevents_for_days(qs, before, after, ebd, timezones, sales_channel, event=None, cart_namespace=None,
@@ -640,15 +666,8 @@ def add_subevents_for_days(qs, before, after, ebd, timezones, sales_channel, eve
             kwargs['cart_namespace'] = cart_namespace
 
         s = event.settings if event else se.event.settings
-
-        if s.event_list_available_only:
-            hide = se.presale_has_ended or (
-                (not voucher or not voucher.allow_ignore_quota) and
-                se.best_availability_state is not None and
-                se.best_availability_state < Quota.AVAILABILITY_RESERVED
-            )
-            if hide:
-                continue
+        if should_hide_subevent(s, se, voucher):
+            continue
 
         timezones.add(s.timezone)
         tz = ZoneInfo(s.timezone)
@@ -1380,7 +1399,7 @@ class OrganizerFavicon(View):
 
 class RedirectToOrganizerIndex(View):
     def get(self, *args, **kwargs):
-        return redirect_to_url(build_absolute_uri(self.request.organizer, "presale:organizer.index"))
+        return redirect_to_url(eventreverse_absolute(self.request.organizer, "presale:organizer.index"))
 
 
 class AccessibilityView(OrganizerViewMixin, EventListMixin, TemplateView):

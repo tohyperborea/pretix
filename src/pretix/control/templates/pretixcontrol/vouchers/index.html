@@ -72,7 +72,7 @@
                 {% endif %}
             </p>
 
-            {% if "can_change_vouchers" in request.eventpermset %}
+            {% if "event.vouchers:write" in request.eventpermset %}
                 <a href="{% url "control:event.vouchers.add" organizer=request.event.organizer.slug event=request.event.slug %}"
                         class="btn btn-primary btn-lg"><i class="fa fa-plus"></i> {% trans "Create a new voucher" %}</a>
                 <a href="{% url "control:event.vouchers.bulk" organizer=request.event.organizer.slug event=request.event.slug %}"
@@ -83,7 +83,7 @@
         </div>
     {% else %}
         <p>
-            {% if "can_change_vouchers" in request.eventpermset %}
+            {% if "event.vouchers:write" in request.eventpermset %}
                 <a href="{% url "control:event.vouchers.add" organizer=request.event.organizer.slug event=request.event.slug %}"
                         class="btn btn-default"><i class="fa fa-plus"></i> {% trans "Create a new voucher" %}</a>
                 <a href="{% url "control:event.vouchers.bulk" organizer=request.event.organizer.slug event=request.event.slug %}"
@@ -99,11 +99,14 @@
         </p>
         <form action="{% url "control:event.vouchers.bulkaction"  organizer=request.event.organizer.slug event=request.event.slug %}" method="post">
             {% csrf_token %}
+            {% for field in filter_form %}
+                {{ field.as_hidden }}
+            {% endfor %}
             <div class="table-responsive">
                 <table class="table table-hover table-quotas">
                     <thead>
                     <tr>
-                        {% if "can_change_vouchers" in request.eventpermset %}
+                        {% if "event.vouchers:write" in request.eventpermset %}
                             <th>
                                 <label aria-label="{% trans "select all rows for batch-operation" %}" class="batch-select-label">
                                     <input type="checkbox" data-toggle-table />
@@ -112,43 +115,55 @@
                         {% endif %}
                         <th>
                             {% trans "Voucher code" %}
-                            <a href="?{% url_replace request 'ordering' '-code' %}"><i class="fa fa-caret-down"></i></a>
-                            <a href="?{% url_replace request 'ordering' 'code' %}"><i class="fa fa-caret-up"></i></a>
+                            <a href="?{% url_replace request 'filter-ordering' '-code' %}"><i class="fa fa-caret-down"></i></a>
+                            <a href="?{% url_replace request 'filter-ordering' 'code' %}"><i class="fa fa-caret-up"></i></a>
                         </th>
                         <th>
                             {% trans "Redemptions" %}
-                            <a href="?{% url_replace request 'ordering' '-redeemed' %}"><i class="fa fa-caret-down"></i></a>
-                            <a href="?{% url_replace request 'ordering' 'redeemed' %}"><i class="fa fa-caret-up"></i></a>
+                            <a href="?{% url_replace request 'filter-ordering' '-redeemed' %}"><i class="fa fa-caret-down"></i></a>
+                            <a href="?{% url_replace request 'filter-ordering' 'redeemed' %}"><i class="fa fa-caret-up"></i></a>
                         </th>
                         <th>
                             {% trans "Expiry" %}
-                            <a href="?{% url_replace request 'ordering' '-valid_until' %}"><i class="fa fa-caret-down"></i></a>
-                            <a href="?{% url_replace request 'ordering' 'valid_until' %}"><i class="fa fa-caret-up"></i></a>
+                            <a href="?{% url_replace request 'filter-ordering' '-valid_until' %}"><i class="fa fa-caret-down"></i></a>
+                            <a href="?{% url_replace request 'filter-ordering' 'valid_until' %}"><i class="fa fa-caret-up"></i></a>
                         </th>
                         <th>
                             {% trans "Tag" %}
-                            <a href="?{% url_replace request 'ordering' '-tag' %}"><i class="fa fa-caret-down"></i></a>
-                            <a href="?{% url_replace request 'ordering' 'tag' %}"><i class="fa fa-caret-up"></i></a>
+                            <a href="?{% url_replace request 'filter-ordering' '-tag' %}"><i class="fa fa-caret-down"></i></a>
+                            <a href="?{% url_replace request 'filter-ordering' 'tag' %}"><i class="fa fa-caret-up"></i></a>
                         </th>
                         <th>
                             {% trans "Product" %}
-                            <a href="?{% url_replace request 'ordering' '-item' %}"><i class="fa fa-caret-down"></i></a>
-                            <a href="?{% url_replace request 'ordering' 'item' %}"><i class="fa fa-caret-up"></i></a>
+                            <a href="?{% url_replace request 'filter-ordering' '-item' %}"><i class="fa fa-caret-down"></i></a>
+                            <a href="?{% url_replace request 'filter-ordering' 'item' %}"><i class="fa fa-caret-up"></i></a>
                         </th>
                         {% if request.event.has_subevents %}
                             <th>
                                 {% trans "Date" context "subevent" %}
-                                <a href="?{% url_replace request 'ordering' '-subevent' %}"><i class="fa fa-caret-down"></i></a>
-                                <a href="?{% url_replace request 'ordering' 'subevent' %}"><i class="fa fa-caret-up"></i></a>
+                                <a href="?{% url_replace request 'filter-ordering' '-subevent' %}"><i class="fa fa-caret-down"></i></a>
+                                <a href="?{% url_replace request 'filter-ordering' 'subevent' %}"><i class="fa fa-caret-up"></i></a>
                             </th>
                         {% endif %}
                         <th></th>
                     </tr>
+                    {% if "event.vouchers:write" in request.eventpermset and page_obj.paginator.num_pages > 1 %}
+                        <tr class="table-select-all warning hidden">
+                            <td>
+                                <input type="checkbox" name="__ALL" id="__all" data-results-total="{{ page_obj.paginator.count }}">
+                            </td>
+                            <td colspan="5">
+                                <label for="__all">
+                                    {% trans "Select all results on other pages as well" %}
+                                </label>
+                            </td>
+                        </tr>
+                    {% endif %}
                     </thead>
                     <tbody>
                     {% for v in vouchers %}
                         <tr>
-                            {% if "can_change_vouchers" in request.eventpermset %}
+                            {% if "event.vouchers:write" in request.eventpermset %}
                                 <td>
                                     <label aria-label="{% trans "select row for batch-operation" %}" class="batch-select-label">
                                         <input type="checkbox" name="voucher" class="batch-select-checkbox" value="{{ v.pk }}"/>
@@ -192,7 +207,7 @@
                                 </td>
                             {% endif %}
                             <td class="text-right flip">
-                                {% if "can_change_vouchers" in request.eventpermset %}
+                                {% if "event.vouchers:write" in request.eventpermset %}
                                     <a href="{% url "control:event.vouchers.bulk" organizer=request.event.organizer.slug event=request.event.slug %}?copy_from={{ v.id }}"
                                        class="btn btn-sm btn-default" title="{% trans "Use as a template for new vouchers" %}" data-toggle="tooltip">
                                         <span class="fa fa-copy"></span>
@@ -205,11 +220,15 @@
                     </tbody>
                 </table>
             </div>
-            {% if "can_change_vouchers" in request.eventpermset %}
+            {% if "event.vouchers:write" in request.eventpermset %}
                 <div class="batch-select-actions">
                     <button type="submit" class="btn btn-danger" name="action" value="delete">
                         <i class="fa fa-trash" aria-hidden="true"></i>
                         {% trans "Delete selected" %}
+                    </button>
+                    <button type="submit" class="btn btn-primary btn-save" name="action" value="edit"
+                            formaction="{% url "control:event.vouchers.bulkedit"  organizer=request.event.organizer.slug event=request.event.slug %}">
+                        <i class="fa fa-edit"></i>{% trans "Edit selected" %}
                     </button>
                 </div>
             {% endif %}
