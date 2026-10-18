@@ -1,0 +1,9 @@
+{% load i18n %}
+{% load icon %}
+{% load static %}
+{% load eventurl %}
+<template id="sideburn-my-orders-link"><a href="{% abseventurl organizer "presale:organizer.customer.index" %}">
+    {% icon "shopping-cart" %}
+    {% trans "My Orders" %}</a>
+</template>
+<script src="{% static "pretix_sideburn_core/my_orders_link.js" %}"></script>
