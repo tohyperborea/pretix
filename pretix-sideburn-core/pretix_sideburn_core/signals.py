@@ -12,8 +12,7 @@ from pretix.base.models import Order
 from pretix.base.settings import settings_hierarkey
 from pretix.multidomain.urlreverse import eventreverse
 from pretix.presale.signals import (
-    customer_order_actions, global_html_footer, process_request,
-    waitinglist_form_class,
+    customer_order_actions, process_request, waitinglist_form_class,
 )
 
 from .forms import waitinglist_form_with_readonly_email
@@ -58,16 +57,6 @@ def require_customer_login(sender, request, **kwargs):
 @receiver(waitinglist_form_class, dispatch_uid="sideburn_core_waitinglist_readonly_email")
 def waitinglist_readonly_email(sender, cls, **kwargs):
     return waitinglist_form_with_readonly_email(cls)
-
-
-@receiver(global_html_footer, dispatch_uid="sideburn_core_my_orders_link")
-def my_orders_link(sender, request, **kwargs):
-    organizer = getattr(request, "organizer", None)
-    if not getattr(request, "customer", None) or not organizer or not organizer.settings.customer_accounts:
-        return None
-    template = get_template("pretix_sideburn_core/fragment/my_orders_link.html")
-    # Rendering with request= would run the context processors, which send this signal again.
-    return template.render({"organizer": organizer})
 
 
 @receiver(customer_order_actions, dispatch_uid="sideburn_core_customer_order_cancel")

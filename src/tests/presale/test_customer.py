@@ -205,6 +205,24 @@ def test_org_login_logout(env, client, mocker):
     assert r.status_code == 302
 
 
+# Sideburn: the header's account link reads "My Orders (name)", with the email when there's no name.
+@pytest.mark.django_db
+@pytest.mark.parametrize("name_parts,shown", [
+    ({'_scheme': 'full', 'full_name': 'John Doe'}, 'John Doe'),
+    ({}, 'john@example.org'),
+])
+def test_header_account_link_says_my_orders(env, client, name_parts, shown):
+    with scopes_disabled():
+        customer = env[0].customers.create(email='john@example.org', is_verified=True, name_parts=name_parts)
+        customer.set_password('foo')
+        customer.save()
+    r = client.post('/bigevents/account/login', {'email': 'john@example.org', 'password': 'foo'})
+    assert r.status_code == 302
+
+    r = client.get('/bigevents/account/')
+    assert 'My Orders ({})</a>'.format(shown) in r.content.decode()
+
+
 @pytest.mark.django_db
 def test_org_login_invalid_password(env, client, mocker):
     from pretix.base.signals import customer_signed_in

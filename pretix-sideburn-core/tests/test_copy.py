@@ -1,5 +1,6 @@
 """
-Sideburn copy: the default checkout email help text.
+Sideburn copy: the default checkout email help text, and the French translation of the core
+header's "My Orders" link.
 
 Run from the monorepo:
     cd src && pytest ../pretix-sideburn-core/tests/test_copy.py -v
@@ -48,3 +49,9 @@ def test_event_can_still_override_checkout_email_helptext(event):
 def test_checkout_email_helptext_in_french(event):
     with translation.override("fr"):
         assert str(event.settings.checkout_email_helptext) == HELPTEXT_FR
+
+
+@pytest.mark.skipif(not FR_CATALOG.exists(), reason="French catalog not compiled (run compilemessages)")
+def test_my_orders_in_french():
+    with translation.override("fr"):
+        assert translation.gettext("My Orders") == "Mes commandes"
