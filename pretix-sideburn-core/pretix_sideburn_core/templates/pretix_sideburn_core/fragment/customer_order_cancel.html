@@ -1,0 +1,18 @@
+{% load i18n %}
+{% load icon %}
+{% load eventurl %}
+<p class="text-right">
+    {% if state == "requested" %}
+        <span class="text-muted"><small>{% trans "Cancellation requested" %}</small></span>
+    {% else %}
+        <a href="{% abseventurl order.event "presale:event.order.cancel" order=order.code secret=order.secret %}"
+           class="btn btn-danger btn-sm">
+            {% icon "remove" %}
+            {% if state == "request" %}
+                {% trans "Request cancellation" %}
+            {% else %}
+                {% trans "Cancel order" %}
+            {% endif %}
+        </a>
+    {% endif %}
+</p>

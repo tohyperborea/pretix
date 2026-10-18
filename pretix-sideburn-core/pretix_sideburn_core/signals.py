@@ -3,13 +3,17 @@ from urllib.parse import quote
 from django.dispatch import receiver
 from django.http import Http404
 from django.shortcuts import redirect
+from django.template.loader import get_template
 from django.urls import Resolver404, resolve
 from django.utils.translation import gettext_noop
 from i18nfield.strings import LazyI18nString
 
+from pretix.base.models import Order
 from pretix.base.settings import settings_hierarkey
 from pretix.multidomain.urlreverse import eventreverse
-from pretix.presale.signals import process_request, waitinglist_form_class
+from pretix.presale.signals import (
+    customer_order_actions, process_request, waitinglist_form_class,
+)
 
 from .forms import waitinglist_form_with_readonly_email
 
@@ -53,3 +57,21 @@ def require_customer_login(sender, request, **kwargs):
 @receiver(waitinglist_form_class, dispatch_uid="sideburn_core_waitinglist_readonly_email")
 def waitinglist_readonly_email(sender, cls, **kwargs):
     return waitinglist_form_with_readonly_email(cls)
+
+
+@receiver(customer_order_actions, dispatch_uid="sideburn_core_customer_order_cancel")
+def customer_order_cancel_button(sender, order, request, **kwargs):
+    if order.user_cancel_allowed:
+        # Mirrors OrderCancelDo: only paid orders with a non-zero total go through approval.
+        requires_approval = (
+            order.status == Order.STATUS_PAID
+            and order.total != 0
+            and sender.settings.cancel_allow_user_paid_require_approval
+        )
+        state = "request" if requires_approval else "cancel"
+    elif order.cancellation_requests.exists():
+        state = "requested"
+    else:
+        return None
+    template = get_template("pretix_sideburn_core/fragment/customer_order_cancel.html")
+    return template.render({"order": order, "state": state})

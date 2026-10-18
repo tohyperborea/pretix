@@ -119,7 +119,7 @@ These signals are not in upstream pretix. They are used by the ``pretix-sideburn
 .. automodule:: pretix.presale.signals
    :no-index:
    :members: sold_out_availability, waitinglist_form_class, waitinglist_template_name, checkout_questions_top,
-      customer_profile_extra, change_information_form_class
+      customer_profile_extra, change_information_form_class, customer_order_actions
 
 .. automodule:: pretix.control.signals
    :no-index:

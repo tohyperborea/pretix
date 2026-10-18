@@ -511,3 +511,15 @@ account information block (e.g. after the phone field).
 
 The ``sender`` keyword argument is the HTTP request.
 """
+
+# Sideburn: not in upstream pretix (used by pretix-sideburn-core).
+customer_order_actions = EventPluginSignal()
+"""
+Arguments: ``order``, ``request``
+
+This signal is sent for every order in the order list on the customer account page. Receivers
+may return a SafeString containing HTML (or a string that will be HTML-escaped) to show below
+the order's "Details" link (e.g. a cancel button).
+
+As with all event plugin signals, the ``sender`` keyword argument will contain the order's event.
+"""

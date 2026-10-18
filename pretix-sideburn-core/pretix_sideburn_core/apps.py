@@ -17,7 +17,8 @@ class PluginApp(PluginConfig):
         name = gettext_lazy("Sideburn Core")
         author = "Ryan"
         description = gettext_lazy(
-            "Sideburn storefront customizations (login-required storefront, waiting-list form, copy)"
+            "Sideburn storefront customizations (login-required storefront, waiting-list form, "
+            "order cancel button, copy)"
         )
         visible = True
         version = __version__

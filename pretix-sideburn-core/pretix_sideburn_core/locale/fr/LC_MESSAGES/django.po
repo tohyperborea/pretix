@@ -14,3 +14,11 @@ msgid ""
 msgstr ""
 "Nous vous enverrons une confirmation de votre commande et un lien si vous "
 "souhaitez modifier votre commande ultérieurement."
+
+#: pretix_sideburn_core/templates/pretix_sideburn_core/fragment/customer_order_cancel.html
+msgid "Request cancellation"
+msgstr "Demander l’annulation"
+
+# Used in pretix core: src/pretix/presale/templates/pretixpresale/fragment_login_status.html
+msgid "My Orders"
+msgstr "Mes commandes"

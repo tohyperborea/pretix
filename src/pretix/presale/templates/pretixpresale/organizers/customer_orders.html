@@ -4,6 +4,7 @@
 {% load eventurl %}
 {% load money %}
 {% load textbubble %}
+{% load eventsignal %}
 {% block title %}{% trans "Your account" %}{% endblock %}
 {% block inner %}
     <div class="panel panel-default">
@@ -65,6 +66,8 @@
                                 {% icon "list-ul" %}
                                 {% trans "Details" %}
                             </a></p>
+                            {# Sideburn: plugin hook, not in upstream pretix (cancel button). #}
+                            {% eventsignal o.event "pretix.presale.signals.customer_order_actions" order=o request=request %}
                         </div>
                     </article>
                     {% endfor %}
