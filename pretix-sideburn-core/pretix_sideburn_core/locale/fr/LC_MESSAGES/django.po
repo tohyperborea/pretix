@@ -17,7 +17,7 @@ msgstr ""
 
 #: pretix_sideburn_core/templates/pretix_sideburn_core/fragment/customer_order_cancel.html
 msgid "Request cancellation"
-msgstr "Demander l'annulation"
+msgstr "Demander l’annulation"
 
 # Used in pretix core: src/pretix/presale/templates/pretixpresale/fragment_login_status.html
 msgid "My Orders"
