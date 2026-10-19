@@ -1,3 +1,5 @@
+from django.utils import translation
+
 from pretix_sideburn_lottery import __version__
 from pretix_sideburn_lottery.apps import PluginApp
 from pretix_sideburn_lottery.templatetags.ordinal import ordinal
@@ -23,3 +25,13 @@ def test_ordinal_filter():
     assert ordinal(13) == "13th"
     assert ordinal(21) == "21st"
     assert ordinal("bad") == "bad"
+
+
+def test_ordinal_filter_french():
+    with translation.override("fr"):
+        assert ordinal(1) == "1er"
+        assert ordinal(2) == "2e"
+        assert ordinal(3) == "3e"
+        assert ordinal(11) == "11e"
+        assert ordinal(21) == "21e"
+        assert ordinal("bad") == "bad"
