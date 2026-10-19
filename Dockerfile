@@ -19,7 +19,6 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
             python3-dev \
             sudo \
             supervisor \
-            tzdata-legacy \
             libmaxminddb0 \
             libmaxminddb-dev \
             zlib1g-dev \
@@ -31,7 +30,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     /usr/sbin/update-locale LANG=C.UTF-8 && \
     mkdir /etc/pretix && \
     mkdir /data && \
-    useradd -ms /bin/bash -d /pretix -u 2000 pretixuser && \
+    useradd -ms /bin/bash -d /pretix -u 15371 pretixuser && \
     chmod 0755 /pretix && \
     echo 'pretixuser ALL=(ALL) NOPASSWD:SETENV: /usr/bin/supervisord' >> /etc/sudoers && \
     mkdir /static && \
@@ -46,7 +45,7 @@ COPY deployment/docker/supervisord /etc/supervisord
 COPY deployment/docker/supervisord.all.conf /etc/supervisord.all.conf
 COPY deployment/docker/supervisord.web.conf /etc/supervisord.web.conf
 COPY deployment/docker/nginx.conf /etc/nginx/nginx.conf
-#COPY deployment/docker/nginx-max-body-size.conf /etc/nginx/conf.d/nginx-max-body-size.conf
+COPY deployment/docker/nginx-max-body-size.conf /etc/nginx/conf.d/nginx-max-body-size.conf
 COPY deployment/docker/production_settings.py /pretix/src/production_settings.py
 COPY pyproject.toml /pretix/pyproject.toml
 COPY _build /pretix/_build
@@ -55,57 +54,23 @@ COPY package.json /pretix/package.json
 COPY package-lock.json /pretix/package-lock.json
 COPY tsconfig.json /pretix/tsconfig.json
 COPY vite.config.ts /pretix/vite.config.ts
-COPY pretix-regex-validation /pretix/pretix-regex-validation
-COPY pretix-sideburn-twilio /pretix/pretix-sideburn-twilio
-COPY pretix-sideburn-lottery /pretix/pretix-sideburn-lottery
-COPY pretix-sideburn-core /pretix/pretix-sideburn-core
-COPY pretix-passbook /pretix/pretix-passbook
 
 RUN pip3 install -U \
         pip \
-        "setuptools<81" \
-        wheel && \
+        setuptools && \
     cd /pretix && \
     PRETIX_DOCKER_BUILD=TRUE pip3 install \
         -e ".[memcached]" \
         gunicorn django-extensions ipython && \
     rm -rf ~/.cache/pip
 
-# Sideburn plugins must be installed before "make production" so their static files are collected.
-RUN cd /pretix/pretix-sideburn-twilio && \
-    pip install -e . && \
-    make && \
-    cd ..
-
-RUN cd /pretix/pretix-sideburn-lottery && \
-    pip install -e . && \
-    make && \
-    cd ..
-
-RUN cd /pretix/pretix-sideburn-core && \
-    pip install -e . && \
-    make && \
-    cd ..
-
 RUN chmod +x /usr/local/bin/pretix && \
     rm /etc/nginx/sites-enabled/default && \
     cd /pretix/src && \
     rm -f pretix.cfg &&  \
     mkdir -p data && \
-    chmod +x /pretix/src/manage.py && \
     chown -R pretixuser:pretixuser /pretix /data data &&  \
     sudo -u pretixuser make production
-
-RUN cd /pretix/pretix-regex-validation && \
-    ls -al && \
-    pip install -e . && \
-    make && \
-    cd ..
-
-RUN cd /pretix/pretix-passbook && \
-    pip install -e . && \
-    make && \
-    cd ..
 
 USER pretixuser
 VOLUME ["/etc/pretix", "/data"]
