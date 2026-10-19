@@ -16,7 +16,8 @@ from pretix.base.signals import (
 from pretix.control.signals import waitinglist_index_html
 from pretix.multidomain.urlreverse import eventreverse
 from pretix.presale.signals import (
-    customer_order_actions, process_request, waitinglist_form_class,
+    customer_order_actions, front_page_bottom, process_request,
+    waitinglist_form_class,
 )
 
 from .forms import waitinglist_form_with_readonly_email
@@ -80,6 +81,11 @@ def customer_order_cancel_button(sender, order, request, **kwargs):
         return None
     template = get_template("pretix_sideburn_core/fragment/customer_order_cancel.html")
     return template.render({"order": order, "state": state})
+
+
+@receiver(front_page_bottom, dispatch_uid="sideburn_core_burning_man_disclaimer")
+def burning_man_disclaimer(sender, request, **kwargs):
+    return get_template("pretix_sideburn_core/fragment/burning_man_disclaimer.html").render({})
 
 
 @receiver(waitinglist_entry_validate, dispatch_uid="sideburn_core_validate_duplicate_voucher")

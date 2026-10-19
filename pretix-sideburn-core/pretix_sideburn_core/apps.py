@@ -18,8 +18,8 @@ class PluginApp(PluginConfig):
         author = "Ryan"
         description = gettext_lazy(
             "Sideburn storefront customizations (login-required storefront, waiting-list form, "
-            "order cancel button, copy) and waiting-list operations (quota bypass, duplicate "
-            "voucher check, deleting entries with vouchers)"
+            "order cancel button, Burning Man disclaimer, copy) and waiting-list operations "
+            "(quota bypass, duplicate voucher check, deleting entries with vouchers)"
         )
         visible = True
         version = __version__

@@ -4,8 +4,9 @@ Sideburn Core
 This is a plugin for `pretix`_.
 
 Sideburn customizations that don't belong to the lottery or Twilio plugins:
-login-required storefront, read-only waiting-list email, Sideburn-specific copy,
-and waiting-list operations (waiting-list vouchers bypass the quota, no signing
+login-required storefront, read-only waiting-list email, the Burning Man Project
+regional event disclaimer on the event front page, Sideburn-specific copy, and
+waiting-list operations (waiting-list vouchers bypass the quota, no signing
 up again while holding a live voucher, and an admin "Delete selected" that also
 deletes entries with vouchers).
 
