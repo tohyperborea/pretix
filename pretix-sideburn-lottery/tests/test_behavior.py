@@ -5,19 +5,15 @@ Run from the monorepo:
     cd src && pytest ../pretix-sideburn-lottery/tests/test_behavior.py -v
 """
 import datetime
-from datetime import timedelta
 
 import pytest
 from django.core import mail as djmail
-from django.core.exceptions import ValidationError
 from django.utils.timezone import now
 from django_scopes import scopes_disabled
 
 from pretix.base.models import (
-    CartPosition, Event, Item, Organizer, Quota, Team, Voucher,
-    WaitingListEntry,
+    Event, Item, Organizer, Quota, Team, WaitingListEntry,
 )
-from pretix.base.models.waitinglist import WaitingListException
 
 
 @pytest.fixture
@@ -47,52 +43,6 @@ def sign_up(client, item, email="foo@bar.com"):
         {"email": email, "itemvar": str(item.pk)},
         follow=True,
     )
-
-
-@pytest.mark.django_db
-def test_waiting_list_voucher_can_be_used_while_sold_out(client, behavior_env):
-    item = behavior_env["item"]
-    with scopes_disabled():
-        wle = WaitingListEntry.objects.create(
-            event=behavior_env["event"], item=item, email="foo@bar.com"
-        )
-        djmail.outbox = []
-        wle.send_voucher()
-        wle.refresh_from_db()
-        code = wle.voucher.code
-    assert len(djmail.outbox) == 1
-    assert code in djmail.outbox[0].body
-
-    client.post(
-        "/dummy/dummy/cart/add",
-        {"item_%d" % item.pk: "1", "_voucher_code": code},
-        follow=True,
-    )
-    with scopes_disabled():
-        assert CartPosition.objects.filter(item=item, voucher__code=code).count() == 1
-
-
-@pytest.mark.django_db
-@scopes_disabled()
-def test_send_voucher_respects_quota_without_plugin():
-    organizer = Organizer.objects.create(name="Plain", slug="plain")
-    event = Event.objects.create(
-        organizer=organizer,
-        name="Plain",
-        slug="plain",
-        date_from=now(),
-        live=True,
-    )
-    quota = Quota.objects.create(name="Test", size=0, event=event)
-    item = Item.objects.create(
-        event=event, name="Ticket", default_price=23, admission=True
-    )
-    quota.items.add(item)
-    wle = WaitingListEntry.objects.create(
-        event=event, item=item, email="foo@bar.com"
-    )
-    with pytest.raises(WaitingListException):
-        wle.send_voucher()
 
 
 @pytest.mark.django_db
@@ -142,67 +92,3 @@ def test_signing_up_through_the_api_sends_lottery_confirmation_email(client, beh
     assert len(djmail.outbox) == 1
     assert djmail.outbox[0].to == ["api@bar.com"]
     assert "lottery waiting list" in djmail.outbox[0].subject
-
-
-@pytest.mark.django_db
-def test_signup_rejected_when_customer_already_has_a_valid_voucher(client, behavior_env):
-    with scopes_disabled():
-        v = Voucher.objects.create(
-            event=behavior_env["event"], valid_until=now() + timedelta(days=1), redeemed=0
-        )
-        WaitingListEntry.objects.create(
-            event=behavior_env["event"], item=behavior_env["item"], email="foo@bar.com", voucher=v
-        )
-
-    response = sign_up(client, behavior_env["item"])
-
-    assert "You have already been assigned a ticket!" in response.content.decode()
-    with scopes_disabled():
-        assert WaitingListEntry.objects.filter(email="foo@bar.com").count() == 1
-
-
-@pytest.mark.django_db
-@scopes_disabled()
-def test_duplicate_allows_expired_unredeemed_voucher(behavior_env):
-    event = behavior_env["event"]
-    item = behavior_env["item"]
-    v = Voucher.objects.create(
-        event=event, valid_until=now() - timedelta(days=1), redeemed=0
-    )
-    WaitingListEntry.objects.create(
-        event=event, item=item, email="foo@bar.com", voucher=v
-    )
-    wle = WaitingListEntry(event=event, item=item, email="foo@bar.com")
-    wle.full_clean()
-
-
-@pytest.mark.django_db
-@scopes_disabled()
-def test_duplicate_blocks_redeemed_voucher(behavior_env):
-    event = behavior_env["event"]
-    item = behavior_env["item"]
-    v = Voucher.objects.create(
-        event=event, valid_until=now() - timedelta(days=1), redeemed=1
-    )
-    WaitingListEntry.objects.create(
-        event=event, item=item, email="foo@bar.com", voucher=v
-    )
-    wle = WaitingListEntry(event=event, item=item, email="foo@bar.com")
-    with pytest.raises(ValidationError):
-        wle.full_clean()
-
-
-@pytest.mark.django_db
-@scopes_disabled()
-def test_duplicate_blocks_valid_unredeemed_voucher(behavior_env):
-    event = behavior_env["event"]
-    item = behavior_env["item"]
-    v = Voucher.objects.create(
-        event=event, valid_until=now() + timedelta(days=1), redeemed=0
-    )
-    WaitingListEntry.objects.create(
-        event=event, item=item, email="foo@bar.com", voucher=v
-    )
-    wle = WaitingListEntry(event=event, item=item, email="foo@bar.com")
-    with pytest.raises(ValidationError):
-        wle.full_clean()

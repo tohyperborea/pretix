@@ -7,9 +7,7 @@ from pretix.base.email import SimpleFunctionalMailTextPlaceholder
 from pretix.base.settings import settings_hierarkey
 from pretix.base.signals import (
     register_mail_placeholders,
-    waiting_list_send_voucher,
     waitinglist_entry_created,
-    waitinglist_entry_validate,
 )
 from pretix.control.signals import waitinglist_index_html
 from pretix.presale.signals import (
@@ -24,7 +22,6 @@ from .services.rank import get_waiting_list_rank
 from .services.waitinglist import (
     DEFAULT_MAIL_TEXT_WAITING_LIST_CONFIRM,
     send_signup_confirmation,
-    validate_no_active_voucher_duplicate,
 )
 from .views.presale import get_waiting_list_ranks
 
@@ -131,21 +128,9 @@ def render_waitinglist_lottery_actions(sender, request, **kwargs):
             "plugins:pretix_sideburn_lottery:revert", kwargs=kwargs
         ),
     }
-    if "event.orders:write" in request.eventpermset:
-        ctx["delete_selected_url"] = reverse("plugins:pretix_sideburn_lottery:delete_selected_entries", kwargs=kwargs)
     return template.render(ctx, request=request)
 
 
 @receiver(waitinglist_entry_created, dispatch_uid="sideburn_lottery_signup_confirm")
 def send_waitinglist_signup_confirmation(sender, entry, **kwargs):
     send_signup_confirmation(entry, user=kwargs.get("user"), auth=kwargs.get("auth"))
-
-
-@receiver(waitinglist_entry_validate, dispatch_uid="sideburn_lottery_validate_duplicate_voucher")
-def validate_waitinglist_duplicate_voucher(sender, entry, **kwargs):
-    validate_no_active_voucher_duplicate(entry)
-
-
-@receiver(waiting_list_send_voucher, dispatch_uid="sideburn_lottery_ignore_quota")
-def allow_waitinglist_ignore_quota(sender, entry, **kwargs):
-    return {"ignore_quota": True}

@@ -1,11 +1,7 @@
-from django.core.exceptions import ValidationError
-from django.db.models import Q
-from django.utils.timezone import now
 from django.utils.translation import gettext_lazy, gettext_noop
 
 from pretix.base.email import get_email_context
 from pretix.base.i18n import language
-from pretix.base.models import WaitingListEntry
 from pretix.base.services.mail import mail
 
 DEFAULT_MAIL_TEXT_WAITING_LIST_CONFIRM = gettext_noop("""Hello,
@@ -26,11 +22,6 @@ DEFAULT_SIGNUP_SUBJECT = gettext_lazy(
     "You have been added to the lottery waiting list for {event}"
 )
 
-DUPLICATE_VOUCHER_MESSAGE = gettext_lazy(
-    "You have already been assigned a ticket! "
-    "Contact ticketing@sideburn.ca if this is in error."
-)
-
 
 def send_signup_confirmation(entry, user=None, auth=None):
     """Send the lottery waiting-list signup confirmation email."""
@@ -46,21 +37,3 @@ def send_signup_confirmation(entry, user=None, auth=None):
             entry.event,
             locale=entry.locale,
         )
-
-
-def validate_no_active_voucher_duplicate(entry):
-    """
-    Reject signup when the same email/product already has a live voucher assignment.
-    """
-    if WaitingListEntry.objects.filter(
-        item=entry.item,
-        variation=entry.variation,
-        email__iexact=entry.email,
-        voucher__isnull=False,
-        subevent=entry.subevent,
-    ).exclude(pk=entry.pk).filter(
-        Q(voucher__redeemed__gt=0)
-        | Q(voucher__valid_until__isnull=True)
-        | Q(voucher__valid_until__gte=now())
-    ).exists():
-        raise ValidationError(DUPLICATE_VOUCHER_MESSAGE)

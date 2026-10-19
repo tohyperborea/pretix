@@ -2,7 +2,7 @@
 "Delete selected (including entries with vouchers)" on the control waiting list.
 
 Run from the monorepo:
-    cd src && pytest ../pretix-sideburn-lottery/tests/test_selected_delete.py -v
+    cd src && pytest ../pretix-sideburn-core/tests/test_selected_delete.py -v
 """
 from datetime import timedelta
 
@@ -14,7 +14,7 @@ from pretix.base.models import (
     Event, Item, LogEntry, Organizer, Team, User, Voucher, WaitingListEntry,
 )
 
-URL = "/control/event/dummy/dummy/sideburn-lottery/delete-selected/"
+URL = "/control/event/dummy/dummy/sideburn-core/waitinglist/delete-selected/"
 WAITINGLIST_URL = "/control/event/dummy/dummy/waitinglist/"
 
 
@@ -23,7 +23,7 @@ def env():
     organizer = Organizer.objects.create(name="Dummy", slug="dummy")
     event = Event.objects.create(
         organizer=organizer, name="Dummy", slug="dummy", date_from=now(),
-        plugins="pretix_sideburn_lottery",
+        plugins="pretix_sideburn_core",
     )
     item1 = Item.objects.create(event=event, name="Ticket", default_price=23, admission=True)
     item2 = Item.objects.create(event=event, name="Ticket B", default_price=23, admission=True)
@@ -234,7 +234,7 @@ def test_entry_deletion_is_logged(admin_client, env):
 def test_waitinglist_page_has_button_template(admin_client, env):
     content = admin_client.get(WAITINGLIST_URL + "?status=a").content.decode()
     assert 'id="delete-selected-with-vouchers-template"' in content
-    assert 'formaction="/control/event/dummy/dummy/sideburn-lottery/delete-selected/?next=' in content
+    assert 'formaction="{}?next='.format(URL) in content
 
 
 @pytest.mark.django_db
