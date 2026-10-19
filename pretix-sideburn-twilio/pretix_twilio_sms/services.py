@@ -5,8 +5,10 @@ import logging
 import re
 from urllib.parse import urlencode
 
+from django.utils.translation import gettext, gettext_lazy
 from django_scopes import scope, scopes_disabled
 
+from pretix.base.i18n import language
 from pretix.base.services.tasks import TransactionAwareTask
 from pretix.celery_app import app
 from pretix.multidomain.urlreverse import eventreverse_absolute
@@ -15,12 +17,10 @@ from pretix_twilio_sms.models import CustomerSmsPreference
 
 logger = logging.getLogger(__name__)
 
-# Common footer for SMS opt-out compliance.
-SMS_OPT_OUT_FOOTER = "Reply STOP to opt out."
-
 # Message sent when we cannot resolve a waiting-list voucher URL.
-WAITING_LIST_SMS_MESSAGE = (
-    f"Your Sideburn waitlist number is up! {SMS_OPT_OUT_FOOTER}"
+WAITING_LIST_SMS_MESSAGE = gettext_lazy(
+    # Translators: "STOP" is Twilio's opt-out keyword and must stay in English.
+    "Your Sideburn waitlist number is up! Reply STOP to opt out."
 )
 
 # Minimum number of digits for a plausible phone number (E.164 allows 10–15).
@@ -45,11 +45,11 @@ def _build_waiting_list_sms_message(event, voucher):
     """
     redeem_url = _build_waiting_list_redeem_url(event, voucher)
     if not redeem_url:
-        return WAITING_LIST_SMS_MESSAGE
-    return (
-        f"Your Sideburn waitlist number is up! Use your voucher now: {redeem_url} "
-        f"{SMS_OPT_OUT_FOOTER}"
-    )
+        return str(WAITING_LIST_SMS_MESSAGE)
+    return gettext(
+        # Translators: "STOP" is Twilio's opt-out keyword and must stay in English.
+        "Your Sideburn waitlist number is up! Use your voucher now: {url} Reply STOP to opt out."
+    ).format(url=redeem_url)
 
 
 def _get_twilio_config():
@@ -297,6 +297,8 @@ def queue_waiting_list_sms_for_entry(*, entry):
         entry.pk,
         event_id,
     )
+    with language(entry.locale, event.settings.region):
+        message = _build_waiting_list_sms_message(event, voucher)
     send_waiting_list_sms_task.apply_async(
         kwargs={
             "event_id": event.pk,
@@ -304,7 +306,7 @@ def queue_waiting_list_sms_for_entry(*, entry):
             "customer_id": customer.pk if customer else None,
             "phone": phone,
             "sms_opt_in": sms_opt_in,
-            "message": _build_waiting_list_sms_message(event, voucher),
+            "message": message,
         }
     )
 
