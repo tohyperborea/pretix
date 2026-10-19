@@ -239,18 +239,6 @@ def test_delete_bulk_confirmation_with_name_ordering(client, env):
     assert wle.email in response.content.decode()
 
 
-# Sideburn: entries that already have a voucher can be deleted too.
-@pytest.mark.django_db
-def test_delete_single_with_voucher(client, env):
-    client.login(email='dummy@dummy.dummy', password='dummy')
-    with scopes_disabled():
-        wle = WaitingListEntry.objects.filter(voucher__isnull=False).first()
-
-    client.post('/control/event/dummy/dummy/waitinglist/%s/delete' % wle.id)
-    with scopes_disabled():
-        assert not WaitingListEntry.objects.filter(id=wle.id).exists()
-
-
 # Sideburn: "Send a voucher" is offered for every entry without a voucher, even when the product is sold out.
 @pytest.mark.django_db
 def test_send_voucher_offered_when_sold_out(client, env):

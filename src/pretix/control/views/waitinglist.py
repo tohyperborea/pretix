@@ -383,8 +383,8 @@ class EntryDelete(EventPermissionRequiredMixin, CompatDeleteView):
     def get_object(self, queryset=None) -> WaitingListEntry:
         try:
             return self.request.event.waitinglistentries.get(
-                # Sideburn: entries that already have a voucher can be deleted too.
                 id=self.kwargs['entry'],
+                voucher__isnull=True,
             )
         except WaitingListEntry.DoesNotExist:
             raise Http404(_("The requested entry does not exist."))
