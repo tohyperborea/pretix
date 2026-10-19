@@ -143,7 +143,7 @@
         <a href="?{% url_replace request "download" "yes" %}"
                 class="btn btn-default"><i class="fa fa-download"></i>
             {% trans "Download list" %}</a>
-        {# Sideburn: plugin hook, not in upstream pretix (lottery buttons). #}
+        {# Sideburn: plugin hook, not in upstream pretix (lottery buttons, delete with vouchers). #}
         {% eventsignal request.event "pretix.control.signals.waitinglist_index_html" request=request %}
     </form>
     </p>

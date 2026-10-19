@@ -778,7 +778,7 @@ perform side effects such as sending a confirmation email.
 As with all event-plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
-# Sideburn: not in upstream pretix (used by pretix-sideburn-lottery).
+# Sideburn: not in upstream pretix (used by pretix-sideburn-core).
 waitinglist_entry_validate = EventPluginSignal()
 """
 Arguments: ``entry``
@@ -789,7 +789,7 @@ This signal is sent during validation of a waiting list entry. Receivers may ret
 As with all event-plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
-# Sideburn: not in upstream pretix (used by pretix-sideburn-lottery).
+# Sideburn: not in upstream pretix (used by pretix-sideburn-core).
 waiting_list_send_voucher = EventPluginSignal()
 """
 Arguments: ``entry``, ``user``, ``auth``

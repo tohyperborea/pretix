@@ -227,7 +227,7 @@ Receivers should return a SafeString containing HTML, or a string that will be H
 As with all event plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
-# Sideburn: not in upstream pretix (used by pretix-sideburn-lottery).
+# Sideburn: not in upstream pretix (used by pretix-sideburn-lottery and pretix-sideburn-core).
 waitinglist_index_html = EventPluginSignal()
 """
 Arguments: ``request``

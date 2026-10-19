@@ -4,18 +4,23 @@ from django.dispatch import receiver
 from django.http import Http404
 from django.shortcuts import redirect
 from django.template.loader import get_template
-from django.urls import Resolver404, resolve
+from django.urls import Resolver404, resolve, reverse
 from django.utils.translation import gettext_noop
 from i18nfield.strings import LazyI18nString
 
 from pretix.base.models import Order
 from pretix.base.settings import settings_hierarkey
+from pretix.base.signals import (
+    waiting_list_send_voucher, waitinglist_entry_validate,
+)
+from pretix.control.signals import waitinglist_index_html
 from pretix.multidomain.urlreverse import eventreverse
 from pretix.presale.signals import (
     customer_order_actions, process_request, waitinglist_form_class,
 )
 
 from .forms import waitinglist_form_with_readonly_email
+from .waitinglist import validate_no_active_voucher_duplicate
 
 # Hierarkey defaults are global, so this applies to every event on the instance, with or
 # without the plugin enabled.
@@ -75,3 +80,27 @@ def customer_order_cancel_button(sender, order, request, **kwargs):
         return None
     template = get_template("pretix_sideburn_core/fragment/customer_order_cancel.html")
     return template.render({"order": order, "state": state})
+
+
+@receiver(waitinglist_entry_validate, dispatch_uid="sideburn_core_validate_duplicate_voucher")
+def validate_waitinglist_duplicate_voucher(sender, entry, **kwargs):
+    validate_no_active_voucher_duplicate(entry)
+
+
+@receiver(waiting_list_send_voucher, dispatch_uid="sideburn_core_ignore_quota")
+def allow_waitinglist_ignore_quota(sender, entry, **kwargs):
+    return {"ignore_quota": True}
+
+
+@receiver(waitinglist_index_html, dispatch_uid="sideburn_core_waitinglist_delete_selected")
+def render_waitinglist_delete_selected(sender, request, **kwargs):
+    if "event.orders:write" not in request.eventpermset:
+        return ""
+    template = get_template("pretix_sideburn_core/fragment/waitinglist_delete_selected.html")
+    return template.render({
+        "request": request,
+        "delete_selected_url": reverse("plugins:pretix_sideburn_core:delete_selected_entries", kwargs={
+            "organizer": request.event.organizer.slug,
+            "event": request.event.slug,
+        }),
+    }, request=request)
