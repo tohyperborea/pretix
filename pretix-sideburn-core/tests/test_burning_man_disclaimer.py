@@ -12,7 +12,7 @@ from pretix.base.models import Event, Organizer
 
 EMAIL = "customer@example.org"
 PASSWORD = "customerpass"
-DISCLAIMER = "Burning Man Project is not a producer or organizer of the Regional Event"
+DISCLAIMER = "Burning Man Project is not a producer or organizer of the Regional Event;<br>"
 
 
 @pytest.fixture
