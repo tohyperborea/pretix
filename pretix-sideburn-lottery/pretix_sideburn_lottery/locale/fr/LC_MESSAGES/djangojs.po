@@ -1,0 +1,70 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: pretix-sideburn-lottery\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-10-19 15:00-0400\n"
+"Language: fr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=n > 1;\n"
+
+#: pretix_sideburn_lottery/static/pretix_sideburn_lottery/js/waitinglist_lottery.js
+msgid ""
+"You must select a specific product to run the lottery. Please select a "
+"product from the dropdown and try again."
+msgstr ""
+"Vous devez sélectionner un produit précis pour lancer la loterie. Veuillez "
+"choisir un produit dans la liste déroulante et réessayer."
+
+#: pretix_sideburn_lottery/static/pretix_sideburn_lottery/js/waitinglist_lottery.js
+msgid "Confirm Lottery Run"
+msgstr "Confirmer le lancement de la loterie"
+
+#: pretix_sideburn_lottery/static/pretix_sideburn_lottery/js/waitinglist_lottery.js
+msgid "You are about to run the lottery for the following product:"
+msgstr "Vous êtes sur le point de lancer la loterie pour le produit suivant :"
+
+#: pretix_sideburn_lottery/static/pretix_sideburn_lottery/js/waitinglist_lottery.js
+msgid ""
+"This action will shuffle the waiting list priorities for this product. This "
+"cannot be easily undone."
+msgstr ""
+"Cette action mélangera les priorités de la liste d'attente pour ce produit. "
+"Elle ne peut pas être facilement annulée."
+
+#: pretix_sideburn_lottery/static/pretix_sideburn_lottery/js/waitinglist_lottery.js
+msgid "Yes, run the lottery"
+msgstr "Oui, lancer la loterie"
+
+#: pretix_sideburn_lottery/static/pretix_sideburn_lottery/js/waitinglist_lottery.js
+msgid ""
+"You must select a specific product to revert the list. Please select a "
+"product from the dropdown and try again."
+msgstr ""
+"Vous devez sélectionner un produit précis pour rétablir la liste. Veuillez "
+"choisir un produit dans la liste déroulante et réessayer."
+
+#: pretix_sideburn_lottery/static/pretix_sideburn_lottery/js/waitinglist_lottery.js
+msgid "Confirm List Reversion"
+msgstr "Confirmer le rétablissement de la liste"
+
+#: pretix_sideburn_lottery/static/pretix_sideburn_lottery/js/waitinglist_lottery.js
+msgid ""
+"You are about to revert the waiting list priorities for the following "
+"product:"
+msgstr ""
+"Vous êtes sur le point de rétablir les priorités de la liste d'attente pour "
+"le produit suivant :"
+
+#: pretix_sideburn_lottery/static/pretix_sideburn_lottery/js/waitinglist_lottery.js
+msgid ""
+"This action will restore the waiting list priorities to their original order."
+" This cannot be easily undone."
+msgstr ""
+"Cette action rétablira l'ordre d'origine des priorités de la liste d'attente."
+" Elle ne peut pas être facilement annulée."
+
+#: pretix_sideburn_lottery/static/pretix_sideburn_lottery/js/waitinglist_lottery.js
+msgid "Yes, revert the list"
+msgstr "Oui, rétablir la liste"
