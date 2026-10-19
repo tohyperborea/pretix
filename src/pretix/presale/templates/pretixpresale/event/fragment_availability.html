@@ -20,8 +20,22 @@
     </div>
 {% elif avail <= 10 %}
     <div class="col-md-2 col-sm-3 col-xs-6 availability-box gone">
-        {# Sideburn: replaces upstream's "SOLD OUT"/"FULLY BOOKED" + waiting-list link so plugins can change it; free and paid products look the same. #}
-        {% sold_out_availability_tag event item var %}
+        {# Sideburn: plugins can replace the sold-out label; upstream's markup is unchanged in the else branch. #}
+        {% sold_out_override event item var as override %}
+        {% if override %}{{ override }}{% else %}
+        {% if price or original_price %}
+            <strong>{% trans "SOLD OUT" %}</strong>
+        {% else %}
+            <strong>{% trans "FULLY BOOKED" %}</strong>
+        {% endif %}
+        {% if allow_waitinglist and item.allow_waitinglist %}
+            <br/>
+            <a href="{% eventurl event "presale:event.waitinglist" cart_namespace=cart_namespace|default_if_none:"" %}?item={{ item.pk }}{% if var %}&var={{ var.pk }}{% endif %}{% if subevent %}&subevent={{ subevent.pk }}{% endif %}" class="btn btn-default btn-block">
+                <span class="fa fa-plus-circle" aria-hidden="true"></span>
+                {% trans "Waiting list" %}
+            </a>
+        {% endif %}
+        {% endif %}
     </div>
 {% elif avail < 100 %}
     <div class="col-md-2 col-sm-3 col-xs-6 availability-box unavailable">
