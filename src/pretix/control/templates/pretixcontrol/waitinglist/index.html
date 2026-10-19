@@ -294,9 +294,7 @@
                                     <button class="btn btn-default btn-sm disabled">
                                         <span class="fa fa-thumbs-down"></span>
                                     </button>
-                                    {# Sideburn: entries with a voucher can be deleted too. #}
-                                    <a href="{% url "control:event.orders.waitinglist.delete" organizer=request.event.organizer.slug event=request.event.slug entry=e.id %}?next={{ request.get_full_path|urlencode }}"
-                                       class="btn btn-danger btn-sm"><i class="fa fa-trash"></i></a>
+                                    <span class="btn btn-danger btn-sm disabled"><i class="fa fa-trash"></i></span>
                                 {% endif %}
                             {% endif %}
                         </td>
