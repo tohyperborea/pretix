@@ -205,6 +205,7 @@ class WaitingView(EventViewMixin, FormView):
         )
 
         form.instance.log_action("pretix.event.orders.waitinglist.added")
+        # Sideburn: reworded to talk about tickets instead of products (SID-173).
         messages.success(self.request, _(
             "We've added you to the waiting list. You will receive an email "
             "at {email} when a ticket is available."
