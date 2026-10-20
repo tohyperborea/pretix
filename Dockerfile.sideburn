@@ -1,0 +1,45 @@
+# Sideburn layer on top of the image built from upstream's Dockerfile, which stays identical to upstream.
+#
+#   docker build -t pretix-base .
+#   docker build -f Dockerfile.sideburn --build-arg BASE_IMAGE=pretix-base -t pretix-sideburn .
+ARG BASE_IMAGE=pretix-base
+FROM ${BASE_IMAGE}
+
+USER root
+
+# Trixie dropped legacy timezone names like Canada/Eastern, which our pretix.cfg files still use.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends tzdata-legacy && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Keeps nginx's default 1 MB upload limit, as before; upstream raises it to 100M.
+RUN rm /etc/nginx/conf.d/nginx-max-body-size.conf
+
+COPY pretix-sideburn-core /pretix/pretix-sideburn-core
+COPY pretix-sideburn-lottery /pretix/pretix-sideburn-lottery
+COPY pretix-sideburn-twilio /pretix/pretix-sideburn-twilio
+COPY pretix-passbook /pretix/pretix-passbook
+COPY pretix-regex-validation /pretix/pretix-regex-validation
+
+RUN cd /pretix && \
+    pip3 install \
+        -e ./pretix-sideburn-core \
+        -e ./pretix-sideburn-lottery \
+        -e ./pretix-sideburn-twilio \
+        -e ./pretix-passbook \
+        -e ./pretix-regex-validation && \
+    for plugin in pretix-sideburn-core pretix-sideburn-lottery pretix-sideburn-twilio pretix-passbook pretix-regex-validation; do \
+        make -C "$plugin" || exit 1; \
+    done && \
+    rm -rf ~/.cache/pip
+
+# The staging and production volumes are owned by UID/GID 2000, upstream uses 15371.
+# make production must run after every plugin is installed, otherwise their static files aren't collected.
+RUN groupmod -g 2000 pretixuser && \
+    usermod -u 2000 pretixuser && \
+    chown -R pretixuser:pretixuser /pretix /data && \
+    cd /pretix/src && \
+    sudo -u pretixuser make production
+
+USER pretixuser
