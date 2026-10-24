@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -19,6 +19,7 @@
 # You should have received a copy of the GNU Affero General Public License along with this program.  If not, see
 # <https://www.gnu.org/licenses/>.
 #
+from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
 from pretix.api.serializers.i18n import I18nAwareModelSerializer
@@ -26,11 +27,16 @@ from pretix.base.models import WaitingListEntry
 
 
 class WaitingListSerializer(I18nAwareModelSerializer):
+    locale = serializers.ChoiceField(choices=[], required=False, allow_null=True)
 
     class Meta:
         model = WaitingListEntry
         fields = ('id', 'created', 'name', 'name_parts', 'email', 'phone', 'voucher', 'item', 'variation', 'locale', 'subevent', 'priority')
         read_only_fields = ('id', 'created', 'voucher')
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["locale"].choices = self.context['event'].settings.locales
 
     def validate(self, data):
         data = super().validate(data)
@@ -43,6 +49,13 @@ class WaitingListSerializer(I18nAwareModelSerializer):
                                          full_data.get('subevent'), self.instance.pk if self.instance else None)
         WaitingListEntry.clean_itemvar(event, full_data.get('item'), full_data.get('variation'))
         WaitingListEntry.clean_subevent(event, full_data.get('subevent'))
+
+        # Sideburn: plugin validation hook (waitinglist_entry_validate).
+        entry = self.instance or WaitingListEntry(event=event)
+        for field in ('email', 'item', 'variation', 'subevent'):
+            if field in full_data:
+                setattr(entry, field, full_data.get(field))
+        WaitingListEntry.run_plugin_validators(entry)
 
         if 'item' in data or 'variation' in data:
             availability = (
@@ -59,5 +72,8 @@ class WaitingListSerializer(I18nAwareModelSerializer):
             )
         if data.get('name_parts') and '_scheme' not in data.get('name_parts'):
             data['name_parts']['_scheme'] = event.settings.name_scheme
+
+        if data.get('locale', None) is None:
+            data['locale'] = event.settings.locale
 
         return data

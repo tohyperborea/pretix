@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -36,10 +36,13 @@ from rest_framework.permissions import SAFE_METHODS, BasePermission
 
 from pretix.api.models import OAuthAccessToken
 from pretix.base.models import Device, Event, User
-from pretix.base.models.auth import SuperuserPermissionSet
+from pretix.base.models.auth import (
+    EventPermissionSet, OrganizerPermissionSet, SuperuserPermissionSet,
+)
 from pretix.base.models.organizer import TeamAPIToken
 from pretix.helpers.security import (
-    SessionInvalid, SessionReauthRequired, assert_session_valid,
+    Session2FASetupRequired, SessionInvalid, SessionPasswordChangeRequired,
+    SessionReauthRequired, assert_session_valid,
 )
 
 
@@ -66,6 +69,10 @@ class EventPermission(BasePermission):
                 return False
             except SessionReauthRequired:
                 return False
+            except Session2FASetupRequired:
+                return False
+            except SessionPasswordChangeRequired:
+                return False
 
         perm_holder = (request.auth if isinstance(request.auth, (Device, TeamAPIToken))
                        else request.user)
@@ -80,7 +87,7 @@ class EventPermission(BasePermission):
             if isinstance(perm_holder, User) and perm_holder.has_active_staff_session(request.session.session_key):
                 request.eventpermset = SuperuserPermissionSet()
             else:
-                request.eventpermset = perm_holder.get_event_permission_set(request.organizer, request.event)
+                request.eventpermset = EventPermissionSet(perm_holder.get_event_permission_set(request.organizer, request.event))
 
             if isinstance(required_permission, (list, tuple)):
                 if not any(p in request.eventpermset for p in required_permission):
@@ -95,7 +102,7 @@ class EventPermission(BasePermission):
             if isinstance(perm_holder, User) and perm_holder.has_active_staff_session(request.session.session_key):
                 request.orgapermset = SuperuserPermissionSet()
             else:
-                request.orgapermset = perm_holder.get_organizer_permission_set(request.organizer)
+                request.orgapermset = OrganizerPermissionSet(perm_holder.get_organizer_permission_set(request.organizer))
 
             if isinstance(required_permission, (list, tuple)):
                 if not any(p in request.eventpermset for p in required_permission):
@@ -119,12 +126,12 @@ class EventCRUDPermission(EventPermission):
     def has_permission(self, request, view):
         if not super(EventCRUDPermission, self).has_permission(request, view):
             return False
-        elif view.action == 'create' and 'can_create_events' not in request.orgapermset:
+        elif view.action == 'create' and 'organizer.events:create' not in request.orgapermset:
             return False
-        elif view.action == 'destroy' and 'can_change_event_settings' not in request.eventpermset:
+        elif view.action == 'destroy' and 'event.settings.general:write' not in request.eventpermset:
             return False
         elif view.action in ['update', 'partial_update'] \
-                and 'can_change_event_settings' not in request.eventpermset:
+                and 'event.settings.general:write' not in request.eventpermset:
             return False
 
         return True
@@ -143,6 +150,10 @@ class ProfilePermission(BasePermission):
             except SessionInvalid:
                 return False
             except SessionReauthRequired:
+                return False
+            except Session2FASetupRequired:
+                return False
+            except SessionPasswordChangeRequired:
                 return False
 
         if isinstance(request.auth, OAuthAccessToken):
@@ -165,6 +176,10 @@ class AnyAuthenticatedClientPermission(BasePermission):
             except SessionInvalid:
                 return False
             except SessionReauthRequired:
+                return False
+            except Session2FASetupRequired:
+                return False
+            except SessionPasswordChangeRequired:
                 return False
 
         return True

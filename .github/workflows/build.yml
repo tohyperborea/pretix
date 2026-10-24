@@ -24,21 +24,21 @@ jobs:
     name: Packaging
     strategy:
       matrix:
-        python-version: ["3.11"]
+        python-version: ["3.13"]
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v1
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: actions/cache@v1
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
       - name: Install system dependencies
-        run: sudo apt update && sudo apt install gettext unzip
+        run: sudo apt update && sudo apt install -y gettext unzip
       - name: Install Python dependencies
         run: pip3 install -U setuptools build pip check-manifest
       - name: Run check-manifest
@@ -46,4 +46,7 @@ jobs:
       - name: Run build
         run: python -m build
       - name: Check files
-        run: unzip -l dist/pretix*whl | grep node_modules || exit 1
+        run: |
+          for pat in 'static.dist/vite/widget/widget.js' 'static.dist/vite/control/assets/checkinrules/main-' 'static.dist/vite/control/assets/webcheckin/main-'; do
+            unzip -l dist/pretix*whl | grep -q "$pat" || { echo "Missing: $pat"; exit 1; }
+          done

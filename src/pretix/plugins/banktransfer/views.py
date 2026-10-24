@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -44,33 +44,28 @@ from typing import Set
 
 from django import forms
 from django.contrib import messages
-from django.core.exceptions import ValidationError
-from django.core.validators import validate_email
+from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.db.models import Count, Q, QuerySet
-from django.http import FileResponse, Http404, JsonResponse
+from django.http import FileResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
-from django.utils.decorators import method_decorator
 from django.utils.functional import cached_property
 from django.utils.timezone import now
 from django.utils.translation import gettext as _
-from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.generic import DetailView, FormView, ListView, View
 from django.views.generic.detail import SingleObjectMixin
 from localflavor.generic.forms import BICFormField, IBANFormField
 
 from pretix.base.forms.widgets import DatePickerWidget
 from pretix.base.models import Event, Order, OrderPayment, OrderRefund, Quota
-from pretix.base.services.mail import SendMailException
+from pretix.base.models.organizer import TeamQuerySet
 from pretix.base.settings import SettingsSandbox
 from pretix.base.templatetags.money import money_filter
-from pretix.control.permissions import (
-    EventPermissionRequiredMixin, OrganizerPermissionRequiredMixin,
-)
+from pretix.control.permissions import EventPermissionRequiredMixin
 from pretix.control.views.organizer import OrganizerDetailViewMixin
 from pretix.helpers.json import CustomJSONEncoder
-from pretix.plugins.banktransfer import csvimport, mt940import
+from pretix.plugins.banktransfer import camtimport, csvimport, mt940import
 from pretix.plugins.banktransfer.models import (
     BankImportJob, BankTransaction, RefundExport,
 )
@@ -78,15 +73,15 @@ from pretix.plugins.banktransfer.payment import BankTransfer
 from pretix.plugins.banktransfer.refund_export import (
     build_sepa_xml, get_refund_export_csv,
 )
-from pretix.plugins.banktransfer.tasks import process_banktransfers
-from pretix.presale.views import EventViewMixin
-from pretix.presale.views.order import OrderDetailMixin
+from pretix.plugins.banktransfer.tasks import (
+    notify_incomplete_payment, process_banktransfers,
+)
 
 logger = logging.getLogger('pretix.plugins.banktransfer')
 
 
 class ActionView(View):
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
 
     def _discard(self, trans):
         trans.state = BankTransaction.STATE_DISCARDED
@@ -166,17 +161,17 @@ class ActionView(View):
             p.confirm(user=self.request.user)
         except Quota.QuotaExceededException:
             pass
-        except SendMailException:
-            return JsonResponse({
-                'status': 'error',
-                'message': _('Problem sending email.')
-            })
         trans.state = BankTransaction.STATE_VALID
         trans.save()
         trans.order.payments.filter(
             provider='banktransfer',
             state__in=(OrderPayment.PAYMENT_STATE_CREATED, OrderPayment.PAYMENT_STATE_PENDING),
         ).update(state=OrderPayment.PAYMENT_STATE_CANCELED)
+
+        trans.order.refresh_from_db()
+        if trans.order.pending_sum > Decimal('0.00') and trans.order.status == Order.STATUS_PENDING:
+            notify_incomplete_payment(trans.order)
+
         return JsonResponse({
             'status': 'ok',
         })
@@ -210,6 +205,7 @@ class ActionView(View):
             'plain': comment,
         })
 
+    @transaction.atomic()
     def post(self, request, *args, **kwargs):
         for k, v in request.POST.items():
             if not k.startswith('action_'):
@@ -291,7 +287,7 @@ class ActionView(View):
 
 class JobDetailView(DetailView):
     template_name = 'pretixplugins/banktransfer/job_detail.html'
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
     context_objectname = 'job'
 
     def redirect_form(self):
@@ -380,7 +376,7 @@ class BankTransactionFilterForm(forms.Form):
 
 class ImportView(ListView):
     template_name = 'pretixplugins/banktransfer/import_form.html'
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
     context_object_name = 'transactions_unhandled'
     paginate_by = 30
 
@@ -425,6 +421,9 @@ class ImportView(ListView):
         ):
             return self.process_mt940()
 
+        elif 'file' in self.request.FILES and '.xml' in self.request.FILES.get('file').name.lower():
+            return self.process_camt()
+
         elif self.request.FILES.get('file') is None:
             messages.error(self.request, _('You must choose a file to import.'))
             return self.redirect_back()
@@ -437,6 +436,14 @@ class ImportView(ListView):
     @cached_property
     def settings(self):
         return SettingsSandbox('payment', 'banktransfer', getattr(self.request, 'event', self.request.organizer))
+
+    def process_camt(self):
+        try:
+            return self.start_processing(camtimport.parse(self.request.FILES.get('file')))
+        except:
+            logger.exception('Failed to import CAMT file')
+            messages.error(self.request, _('We were unable to process your input.'))
+            return self.redirect_back()
 
     def process_mt940(self):
         try:
@@ -626,50 +633,60 @@ class ImportView(ListView):
 
 class OrganizerBanktransferView:
     def dispatch(self, request, *args, **kwargs):
+        has_any_event_perm = request.user.get_events_with_permission(
+            "event.orders:write", request=request
+        ).filter(organizer=request.organizer).exists()
+        if not has_any_event_perm:
+            raise PermissionDenied()
         return super().dispatch(request, *args, **kwargs)
 
 
 class EventImportView(EventPermissionRequiredMixin, ImportView):
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
 
 
-class OrganizerImportView(OrganizerBanktransferView, OrganizerPermissionRequiredMixin, OrganizerDetailViewMixin,
+class OrganizerImportView(OrganizerBanktransferView, OrganizerDetailViewMixin,
                           ImportView):
-    permission = 'can_change_orders'
+    pass
 
 
 class EventJobDetailView(EventPermissionRequiredMixin, JobDetailView):
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
 
 
-class OrganizerJobDetailView(OrganizerBanktransferView, OrganizerPermissionRequiredMixin, OrganizerDetailViewMixin,
+class OrganizerJobDetailView(OrganizerBanktransferView, OrganizerDetailViewMixin,
                              JobDetailView):
-    permission = 'can_change_orders'
+    pass
 
 
 class EventActionView(EventPermissionRequiredMixin, ActionView):
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
 
 
-class OrganizerActionView(OrganizerBanktransferView, OrganizerPermissionRequiredMixin, OrganizerDetailViewMixin,
+class OrganizerActionView(OrganizerBanktransferView, OrganizerDetailViewMixin,
                           ActionView):
-    permission = 'can_change_orders'
 
     def order_qs(self):
-        all = self.request.user.teams.filter(organizer=self.request.organizer, can_change_orders=True,
-                                             can_view_orders=True, all_events=True).exists()
+        all = self.request.user.teams.filter(
+            TeamQuerySet.event_permission_q("event.orders:read"),
+            TeamQuerySet.event_permission_q("event.orders:write"),
+            all_events=True,
+            organizer=self.request.organizer,
+        ).exists()
         if self.request.user.has_active_staff_session(self.request.session.session_key) or all:
             return Order.objects.filter(event__organizer=self.request.organizer)
         else:
             return Order.objects.filter(
                 event_id__in=self.request.user.teams.filter(
-                    organizer=self.request.organizer, can_change_orders=True, can_view_orders=True
+                    TeamQuerySet.event_permission_q("event.orders:read"),
+                    TeamQuerySet.event_permission_q("event.orders:write"),
+                    organizer=self.request.organizer,
                 ).values_list('limit_events__id', flat=True)
             )
 
 
 def _row_key_func(row):
-    return row['iban'], row['bic']
+    return row['iban'], row.get('bic') or ''
 
 
 def _unite_transaction_rows(transaction_rows):
@@ -680,6 +697,7 @@ def _unite_transaction_rows(transaction_rows):
         united_transactions_rows.append({
             "iban": iban,
             "bic": bic,
+            "locale": rows[0].get('locale', 'en'),
             "id": ", ".join(sorted(set(r['id'] for r in rows))),
             "payer": ", ".join(sorted(set(r['payer'] for r in rows))),
             "amount": sum(r['amount'] for r in rows),
@@ -732,6 +750,7 @@ class RefundExportListView(ListView):
                     "amount": refund.amount,
                     "id": refund.full_id,
                     "comment": refund.comment,
+                    "locale": refund.order.locale,
                     **{key: data.get(key) for key in ("payer", "iban", "bic")}
                 })
                 refund.done(user=self.request.user)
@@ -754,7 +773,7 @@ class RefundExportListView(ListView):
 
 
 class EventRefundExportListView(EventPermissionRequiredMixin, RefundExportListView):
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
 
     def get_success_url(self):
         return reverse('plugins:banktransfer:refunds.list', kwargs={
@@ -776,8 +795,7 @@ class EventRefundExportListView(EventPermissionRequiredMixin, RefundExportListVi
         )
 
 
-class OrganizerRefundExportListView(OrganizerPermissionRequiredMixin, RefundExportListView):
-    permission = 'can_change_orders'
+class OrganizerRefundExportListView(OrganizerBanktransferView, RefundExportListView):
 
     def get_success_url(self):
         return reverse('plugins:banktransfer:refunds.list', kwargs={
@@ -810,7 +828,7 @@ class DownloadRefundExportView(DetailView):
 
 
 class EventDownloadRefundExportView(EventPermissionRequiredMixin, DownloadRefundExportView):
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
 
     def get_object(self, *args, **kwargs):
         return get_object_or_404(
@@ -820,8 +838,7 @@ class EventDownloadRefundExportView(EventPermissionRequiredMixin, DownloadRefund
         )
 
 
-class OrganizerDownloadRefundExportView(OrganizerPermissionRequiredMixin, OrganizerDetailViewMixin, DownloadRefundExportView):
-    permission = 'can_change_orders'
+class OrganizerDownloadRefundExportView(OrganizerBanktransferView, OrganizerDetailViewMixin, DownloadRefundExportView):
 
     def get_object(self, *args, **kwargs):
         return get_object_or_404(
@@ -849,9 +866,9 @@ class SepaXMLExportView(SingleObjectMixin, FormView):
     template_name = 'pretixplugins/banktransfer/sepa_export.html'
     context_object_name = "export"
 
-    def setup(self, request, *args, **kwargs):
-        super().setup(request, *args, **kwargs)
+    def dispatch(self, request, *args, **kwargs):
         self.object: RefundExport = self.get_object()
+        return super().dispatch(request, *args, **kwargs)
 
     def form_valid(self, form):
         self.object.downloaded = True
@@ -868,7 +885,7 @@ class SepaXMLExportView(SingleObjectMixin, FormView):
 
 
 class EventSepaXMLExportView(EventPermissionRequiredMixin, SepaXMLExportView):
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
 
     def get_object(self, *args, **kwargs):
         return get_object_or_404(
@@ -883,8 +900,7 @@ class EventSepaXMLExportView(EventPermissionRequiredMixin, SepaXMLExportView):
         return form
 
 
-class OrganizerSepaXMLExportView(OrganizerPermissionRequiredMixin, OrganizerDetailViewMixin, SepaXMLExportView):
-    permission = 'can_change_orders'
+class OrganizerSepaXMLExportView(OrganizerBanktransferView, OrganizerDetailViewMixin, SepaXMLExportView):
 
     def get_object(self, *args, **kwargs):
         return get_object_or_404(
@@ -892,42 +908,3 @@ class OrganizerSepaXMLExportView(OrganizerPermissionRequiredMixin, OrganizerDeta
             organizer=self.request.organizer,
             pk=self.kwargs.get('id')
         )
-
-
-@method_decorator(xframe_options_exempt, 'dispatch')
-class SendInvoiceMailView(EventViewMixin, OrderDetailMixin, View):
-    def post(self, request, *args, **kwargs):
-        if not self.order:
-            raise Http404(_('Unknown order code or not authorized to access this order.'))
-        try:
-            validate_email(request.POST['email'])
-        except ValidationError:
-            messages.error(request, _('Please enter a valid email address.'))
-            return redirect(self.get_order_url())
-
-        last_payment = self.order.payments.last()
-        if (not last_payment
-                or last_payment.provider != BankTransfer.identifier
-                or last_payment.state != OrderPayment.PAYMENT_STATE_CREATED):
-            messages.error(request, _('No pending bank transfer payment found. Maybe the order has been paid already?'))
-            return redirect(self.get_order_url())
-        if not last_payment.payment_provider.settings.get('invoice_email', as_type=bool):
-            messages.error(request, _('Sending invoices via email is disabled by the event organizer.'))
-            return redirect(self.get_order_url())
-
-        last_invoice = self.order.invoices.last()
-        if not last_invoice:
-            messages.error(request, _('No invoice found, please request an invoice first.'))
-            return redirect(self.get_order_url())
-
-        provider = last_payment.payment_provider
-        provider.send_invoice_to_alternate_email(self.order, last_invoice, request.POST['email'])
-
-        last_payment.info_data = {
-            **last_payment.info_data,
-            'send_invoice_to': request.POST['email'],
-        }
-        last_payment.save(update_fields=['info'])
-
-        messages.success(request, _('Sending the latest invoice via e-mail to {email}.').format(email=request.POST['email']))
-        return redirect(self.get_order_url())

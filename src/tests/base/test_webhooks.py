@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -25,7 +25,6 @@ from decimal import Decimal
 
 import pytest
 import responses
-from django.db import transaction
 from django.utils.timezone import now
 from django_scopes import scopes_disabled
 
@@ -65,6 +64,7 @@ def order(event):
         code='FOO', event=event, email='dummy@dummy.test',
         status=Order.STATUS_PENDING, locale='en',
         datetime=now(), expires=now() + timedelta(days=10),
+        sales_channel=event.organizer.sales_channels.get(identifier="web"),
         total=Decimal('46.00'),
     )
     tr19 = event.tax_rules.create(rate=Decimal('19.00'))
@@ -81,14 +81,9 @@ def force_str(v):
     return v.decode() if isinstance(v, bytes) else str(v)
 
 
-@pytest.fixture
-def monkeypatch_on_commit(monkeypatch):
-    monkeypatch.setattr("django.db.transaction.on_commit", lambda t: t())
-
-
 @pytest.mark.django_db
 @responses.activate
-def test_webhook_trigger_event_specific(event, order, webhook, monkeypatch_on_commit):
+def test_webhook_trigger_event_specific(event, order, webhook, django_capture_on_commit_callbacks):
     responses.add_callback(
         responses.POST, 'https://google.com',
         callback=lambda r: (200, {}, 'ok'),
@@ -96,7 +91,7 @@ def test_webhook_trigger_event_specific(event, order, webhook, monkeypatch_on_co
         match_querystring=None,  # https://github.com/getsentry/responses/issues/464
     )
 
-    with transaction.atomic():
+    with django_capture_on_commit_callbacks(execute=True):
         le = order.log_action('pretix.event.order.paid', {})
     assert len(responses.calls) == 1
     assert json.loads(force_str(responses.calls[0].request.body)) == {
@@ -118,12 +113,12 @@ def test_webhook_trigger_event_specific(event, order, webhook, monkeypatch_on_co
 
 @pytest.mark.django_db
 @responses.activate
-def test_webhook_trigger_global(event, order, webhook, monkeypatch_on_commit):
+def test_webhook_trigger_global(event, order, webhook, django_capture_on_commit_callbacks):
     webhook.limit_events.clear()
     webhook.all_events = True
     webhook.save()
     responses.add(responses.POST, 'https://google.com', status=200)
-    with transaction.atomic():
+    with django_capture_on_commit_callbacks(execute=True):
         le = order.log_action('pretix.event.order.paid', {})
     assert len(responses.calls) == 1
     assert json.loads(force_str(responses.calls[0].request.body)) == {
@@ -137,13 +132,13 @@ def test_webhook_trigger_global(event, order, webhook, monkeypatch_on_commit):
 
 @pytest.mark.django_db
 @responses.activate
-def test_webhook_trigger_global_wildcard(event, order, webhook, monkeypatch_on_commit):
+def test_webhook_trigger_global_wildcard(event, order, webhook, django_capture_on_commit_callbacks):
     webhook.listeners.create(action_type="pretix.event.order.changed.*")
     webhook.limit_events.clear()
     webhook.all_events = True
     webhook.save()
     responses.add(responses.POST, 'https://google.com', status=200)
-    with transaction.atomic():
+    with django_capture_on_commit_callbacks(execute=True):
         le = order.log_action('pretix.event.order.changed.item', {})
     assert len(responses.calls) == 1
     assert json.loads(force_str(responses.calls[0].request.body)) == {
@@ -157,30 +152,30 @@ def test_webhook_trigger_global_wildcard(event, order, webhook, monkeypatch_on_c
 
 @pytest.mark.django_db
 @responses.activate
-def test_webhook_ignore_wrong_action_type(event, order, webhook, monkeypatch_on_commit):
+def test_webhook_ignore_wrong_action_type(event, order, webhook, django_capture_on_commit_callbacks):
     responses.add(responses.POST, 'https://google.com', status=200)
-    with transaction.atomic():
+    with django_capture_on_commit_callbacks(execute=True):
         order.log_action('pretix.event.order.changed.item', {})
     assert len(responses.calls) == 0
 
 
 @pytest.mark.django_db
 @responses.activate
-def test_webhook_ignore_disabled(event, order, webhook, monkeypatch_on_commit):
+def test_webhook_ignore_disabled(event, order, webhook, django_capture_on_commit_callbacks):
     webhook.enabled = False
     webhook.save()
     responses.add(responses.POST, 'https://google.com', status=200)
-    with transaction.atomic():
+    with django_capture_on_commit_callbacks(execute=True):
         order.log_action('pretix.event.order.changed.item', {})
     assert len(responses.calls) == 0
 
 
 @pytest.mark.django_db
 @responses.activate
-def test_webhook_ignore_wrong_event(event, order, webhook, monkeypatch_on_commit):
+def test_webhook_ignore_wrong_event(event, order, webhook, django_capture_on_commit_callbacks):
     webhook.limit_events.clear()
     responses.add(responses.POST, 'https://google.com', status=200)
-    with transaction.atomic():
+    with django_capture_on_commit_callbacks(execute=True):
         order.log_action('pretix.event.order.changed.item', {})
     assert len(responses.calls) == 0
 
@@ -188,10 +183,10 @@ def test_webhook_ignore_wrong_event(event, order, webhook, monkeypatch_on_commit
 @pytest.mark.django_db
 @pytest.mark.xfail(reason="retries can't be tested with celery_always_eager")
 @responses.activate
-def test_webhook_retry(event, order, webhook, monkeypatch_on_commit):
+def test_webhook_retry(event, order, webhook, django_capture_on_commit_callbacks):
     responses.add(responses.POST, 'https://google.com', status=500)
     responses.add(responses.POST, 'https://google.com', status=200)
-    with transaction.atomic():
+    with django_capture_on_commit_callbacks(execute=True):
         order.log_action('pretix.event.order.paid', {})
     assert len(responses.calls) == 2
     with scopes_disabled():
@@ -215,9 +210,9 @@ def test_webhook_retry(event, order, webhook, monkeypatch_on_commit):
 
 @pytest.mark.django_db
 @responses.activate
-def test_webhook_disable_gone(event, order, webhook, monkeypatch_on_commit):
+def test_webhook_disable_gone(event, order, webhook, django_capture_on_commit_callbacks):
     responses.add(responses.POST, 'https://google.com', status=410)
-    with transaction.atomic():
+    with django_capture_on_commit_callbacks(execute=True):
         order.log_action('pretix.event.order.paid', {})
     assert len(responses.calls) == 1
     webhook.refresh_from_db()

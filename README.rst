@@ -5,9 +5,10 @@ pretix
    :target: https://pypi.python.org/pypi/pretix
 
 .. image:: https://github.com/pretix/pretix/workflows/Documentation/badge.svg
-   :target: https://docs.pretix.eu/en/latest/
+   :target: https://docs.pretix.eu/
 
 .. image:: https://github.com/pretix/pretix/workflows/Tests/badge.svg
+   :target: https://github.com/pretix/pretix/actions/workflows/tests.yml
 
 .. image:: https://codecov.io/gh/pretix/pretix/branch/master/graph/badge.svg
    :target: https://codecov.io/gh/pretix/pretix
@@ -56,8 +57,8 @@ License
 The code in this repository is covered by different licenses. Most of it is available to everyone under the terms of
 the GNU AGPL license v3 with additional terms. See the LICENSE file for the complete license details.
 
-.. _installation guide: https://docs.pretix.eu/en/latest/admin/installation/index.html
-.. _developer documentation: https://docs.pretix.eu/en/latest/development/index.html
-.. _Code of Conduct: https://docs.pretix.eu/en/latest/development/contribution/codeofconduct.html
+.. _installation guide: https://docs.pretix.eu/self-hosting/installation/general/
+.. _developer documentation: https://docs.pretix.eu/dev/development/index.html
+.. _Code of Conduct: https://docs.pretix.eu/dev/development/contribution/codeofconduct.html
 .. _pretix.eu: https://pretix.eu
 .. _blog: https://pretix.eu/about/en/blog/

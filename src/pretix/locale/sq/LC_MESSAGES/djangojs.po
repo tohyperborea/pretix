@@ -1,0 +1,1232 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: PACKAGE VERSION\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-09-30 07:26+0000\n"
+"PO-Revision-Date: 2025-12-14 00:00+0000\n"
+"Last-Translator: Lachlan Struthers <lachlan.struthers@om.org>\n"
+"Language-Team: Albanian <https://translate.pretix.eu/projects/pretix/pretix-"
+"js/sq/>\n"
+"Language: sq\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=n != 1;\n"
+"X-Generator: Weblate 5.14.3\n"
+
+#: pretix/plugins/banktransfer/static/pretixplugins/banktransfer/ui.js
+msgid "Marked as paid"
+msgstr "Shënuar se u pagua"
+
+#: pretix/plugins/banktransfer/static/pretixplugins/banktransfer/ui.js
+msgid "Comment:"
+msgstr "Komente:"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+msgid "PayPal"
+msgstr "PayPal"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+msgid "Venmo"
+msgstr "Venmo"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#: pretix/static/pretixpresale/js/walletdetection.js
+#, fuzzy
+msgid "Apple Pay"
+msgstr "Apple Pay"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "Itaú"
+msgstr "Itaú"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "PayPal Credit"
+msgstr "PayPal Credit"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+msgid "Credit Card"
+msgstr "Kartë Krediti"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+msgid "PayPal Pay Later"
+msgstr "Bëj PayPal Pay më vonë"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+msgid "iDEAL | Wero"
+msgstr ""
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "SEPA Direct Debit"
+msgstr "Debit direkt me SEPA"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "Bancontact"
+msgstr "Bancontact"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "giropay"
+msgstr "giropay"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "SOFORT"
+msgstr "SOFORT"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "eps"
+msgstr "eps"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "MyBank"
+msgstr "MyBank"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "Przelewy24"
+msgstr "Przelewy24"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "Verkkopankki"
+msgstr "Verkkopankki"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "PayU"
+msgstr "PayU"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "BLIK"
+msgstr "BLIK"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "Trustly"
+msgstr "Trustly"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "Zimpler"
+msgstr "Zimpler"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "Maxima"
+msgstr "Maxima"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "OXXO"
+msgstr "OXXO"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "Boleto"
+msgstr "Boleto"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "WeChat Pay"
+msgstr "WeChat Pay"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#, fuzzy
+msgid "Mercado Pago"
+msgstr "Mercado Pago"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid "Continue"
+msgstr "Vazhdoni"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js
+msgid "Confirming your payment …"
+msgstr "Duke e konfirmuar pagesën …"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+msgid "Payment method unavailable"
+msgstr "Metodë e padisponueshme të pagesës"
+
+#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js
+msgid "Placed orders"
+msgstr "Porositje të bëra"
+
+#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js
+msgid "Paid orders"
+msgstr "Porositje të paguara"
+
+#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js
+msgid "Attendees (ordered)"
+msgstr ""
+
+#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js
+msgid "Attendees (paid)"
+msgstr ""
+
+#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js
+msgid "Total revenue"
+msgstr "Të ardhurat totale"
+
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js
+msgid "Contacting Stripe …"
+msgstr "Duke e kontaktuar Stripe …"
+
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js
+msgid "Total"
+msgstr "Shuma totale"
+
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js
+msgid "Contacting your bank …"
+msgstr "Duke e kontaktuar bankën tuaj …"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Select a check-in list"
+msgstr "Zgjidhni një listë check-in"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "No active check-in lists found."
+msgstr "Nuk u gjet asnjë listë check-in."
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Switch check-in list"
+msgstr "Shkëmbeni listë check-in"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Search results"
+msgstr "Rezultatet e kërkimit"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "No tickets found"
+msgstr "Nuk u gjetën bileta"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Result"
+msgstr "Rezultati"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "This ticket requires special attention"
+msgstr "Kjo biletë duhet kujdes të veçantë"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Switch direction"
+msgstr "Ndryshoni drejtimin"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Entry"
+msgstr "Hyrje"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Exit"
+msgstr "Dalje"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Scan a ticket or search and press return…"
+msgstr "Skanoni një biletë ose kërkoni dhe shtypni butonin 'Enter'…"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Load more"
+msgstr "Ngarkoni më shumë"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Valid"
+msgstr "e vlefshme"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Unpaid"
+msgstr "e papaguar"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Canceled"
+msgstr "e anuluar"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Confirmed"
+msgstr "e konfirmuar"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Approval pending"
+msgstr "Duke pritur aprovimin"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Redeemed"
+msgstr "e përdorur"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Cancel"
+msgstr "Anuloni"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Ticket not paid"
+msgstr "Bileta nuk është paguar"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "This ticket is not yet paid. Do you want to continue anyways?"
+msgstr "Kjo biletë ende nuk është paguar. A dëshironi të vazhdoni gjithsesi?"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Additional information required"
+msgstr "Më shumë informacione kërkohen"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Valid ticket"
+msgstr "Biletë të vlefshme"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Exit recorded"
+msgstr "Dalja u regjistrua"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Ticket already used"
+msgstr "Bileta tashmë është përdorur"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Information required"
+msgstr "Informacion i domosdoshëm"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Unknown ticket"
+msgstr "Biletë e panjohur"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Ticket type not allowed here"
+msgstr "Ky lloj bilete nuk lejohet këtu"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Entry not allowed"
+msgstr "Hyrja nuk lejohet"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Ticket code revoked/changed"
+msgstr "Kodi i biletës është anuluar/ndryshuar"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Ticket blocked"
+msgstr "Bileta u bllokua"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Ticket not valid at this time"
+msgstr "Bileta nuk është e vlefshme për momentin"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Order canceled"
+msgstr "Porositja ësthë anuluar"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Ticket code is ambiguous on list"
+msgstr "Kodi i biletës është e paqartë në listë"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Order not approved"
+msgstr "Porositje nuk është aprovuar"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Checked-in Tickets"
+msgstr "Bileta të regjistruara"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Valid Tickets"
+msgstr "Bileta të vlefshme"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Currently inside"
+msgstr "Aktualisht brenda"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+#: pretix/static/pretixcontrol/js/ui/question.js
+#: pretix/static/pretixpresale/js/ui/questions.js
+msgid "Yes"
+msgstr "Po"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+#: pretix/static/pretixcontrol/js/ui/question.js
+#: pretix/static/pretixpresale/js/ui/questions.js
+msgid "No"
+msgstr "Jo"
+
+#: pretix/static/lightbox/js/lightbox.js
+msgid "close"
+msgstr "Mbyllni"
+
+#: pretix/static/pretixbase/js/addressform.js
+#: pretix/static/pretixpresale/js/ui/main.js
+msgid "required"
+msgstr "të domosdoshme"
+
+#: pretix/static/pretixbase/js/asynctask.js
+msgid ""
+"Your request is currently being processed. Depending on the size of your "
+"event, this might take up to a few minutes."
+msgstr ""
+"Këkesa juaj po proçesohet tani. Në varësi të masës së eventit tuaj, mund të "
+"kërkojë disa minuta."
+
+#: pretix/static/pretixbase/js/asynctask.js
+msgid "Your request has been queued on the server and will soon be processed."
+msgstr ""
+"Kërkesa juaj është në pritje në server dhe do të proçesohet së shpejti."
+
+#: pretix/static/pretixbase/js/asynctask.js
+msgid ""
+"Your request arrived on the server but we still wait for it to be processed. "
+"If this takes longer than two minutes, please contact us or go back in your "
+"browser and try again."
+msgstr ""
+"Kërkesa juaj arriti në server por ende presim të proçesohet. Nëse kalon më "
+"shumë se dy minuta, ju lutemi t'na kontaktoni ose të ktheheni më përpara dhe "
+"të provoni përsëri."
+
+#: pretix/static/pretixbase/js/asynctask.js
+#: pretix/static/pretixcontrol/js/ui/mail.js
+msgid "An error of type {code} occurred."
+msgstr "Një gabim të llojit {kodi} ka ndodhur."
+
+#: pretix/static/pretixbase/js/asynctask.js
+msgid ""
+"We currently cannot reach the server, but we keep trying. Last error code: "
+"{code}"
+msgstr ""
+"Nuk mund t'a kontaktojmë serverin për momentin, por vazhdojmë t'a provojmë. "
+"Kodi gabimi i fundit: {kodi}"
+
+#: pretix/static/pretixbase/js/asynctask.js
+#: pretix/static/pretixcontrol/js/ui/mail.js
+msgid "The request took too long. Please try again."
+msgstr "Kërkesa juaj kërkonte tepër kohë. Ju lutemi të provoni përsëri."
+
+#: pretix/static/pretixbase/js/asynctask.js
+#: pretix/static/pretixcontrol/js/ui/mail.js
+msgid ""
+"We currently cannot reach the server. Please try again. Error code: {code}"
+msgstr ""
+"Nuk mund t'a kontaktojmë serverin për momentin. Ju lutemi, provoni përsëri. "
+"Kodi gabimi i fundit: {kodi}"
+
+#: pretix/static/pretixbase/js/asynctask.js
+msgid "We are processing your request …"
+msgstr "Ne po e proçesojmë kërkesën tuaj …"
+
+#: pretix/static/pretixbase/js/asynctask.js
+msgid ""
+"We are currently sending your request to the server. If this takes longer "
+"than one minute, please check your internet connection and then reload this "
+"page and try again."
+msgstr ""
+"Tani po e dërgojmë kërkesën tuaj në server. Nëse kalon më shumë se një "
+"minutë, ju lutemi t'a kontrolloni lidhjen tuaj në internet dhe pastak t'a "
+"rifreskoni këtë faqe që të provoni përsëri."
+
+#: pretix/static/pretixbase/js/asynctask.js
+msgid "If this takes longer than a few minutes, please contact us."
+msgstr "Nëse kalon më shumë se disa minuta, ju lutemi t'na kontaktoni."
+
+#: pretix/static/pretixbase/js/asynctask.js
+msgid "Close message"
+msgstr "Mbyllni mesazhin"
+
+#: pretix/static/pretixcontrol/js/clipboard.js
+msgid "Copied!"
+msgstr "E kopjuar!"
+
+#: pretix/static/pretixcontrol/js/clipboard.js
+msgid "Press Ctrl-C to copy!"
+msgstr "Shtypni Ctrl+C për të kopjuar!"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/App.vue
+msgid "Edit"
+msgstr ""
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/App.vue
+msgid "Visualize"
+msgstr ""
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/App.vue
+msgid ""
+"Your rule always filters by product or variation, but the following products "
+"or variations are not contained in any of your rule parts so people with "
+"these tickets will not get in:"
+msgstr ""
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/App.vue
+msgid "Please double-check if this was intentional."
+msgstr ""
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "All of the conditions below (AND)"
+msgstr "Të gjitha gjendjet më poshtë (DHE)"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "At least one of the conditions below (OR)"
+msgstr "Të paktën një nga gjendjet më poshtë (OSE)"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Event start"
+msgstr "Fillimi i eventit"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Event end"
+msgstr "Mbarimi i eventit"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Event admission"
+msgstr "Hyrja në event"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "custom date and time"
+msgstr "datë dhe orë e kustomizuar"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "custom time"
+msgstr "orë e kustomizuar"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Tolerance (minutes)"
+msgstr "Toleranca (minuta)"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Add condition"
+msgstr "Shtoni gjendje"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "minutes"
+msgstr "minuta"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Duplicate"
+msgstr "Kopjoni"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgctxt "entry_status"
+msgid "present"
+msgstr "pranishëm"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgctxt "entry_status"
+msgid "absent"
+msgstr "munguar"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "is one of"
+msgstr "është një nga"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "is before"
+msgstr "është para"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "is after"
+msgstr "është pas"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "="
+msgstr "="
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Product"
+msgstr "Produkti"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Product variation"
+msgstr "Varianti i produktit"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Gate"
+msgstr "Porta"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Current date and time"
+msgstr "Datë dhe orë aktuale"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Current day of the week (1 = Monday, 7 = Sunday)"
+msgstr "Dita aktuale e javës (1 = Të hënën, 7 = Të dielën)"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Current entry status"
+msgstr "Gjendja aktuale e hyrjes"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of previous entries"
+msgstr "Shuma e hyrjeve të mëparshme"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of previous entries since midnight"
+msgstr "Shuma e hyrjeve të mëparshme nga mesnata"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of previous entries since"
+msgstr "Shuma e hyrjeve të mëparshme nga"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of previous entries before"
+msgstr "Shuma e hyrjeve të mëparshme përpara"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of days with a previous entry"
+msgstr "Shuma e ditëve me një hyrje të mëparshme"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of days with a previous entry since"
+msgstr "Shuma e ditëve me një hyrje të mëparshme nga"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of days with a previous entry before"
+msgstr "Shuma e ditëve me një hyrje të mëparshme përpara"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Minutes since last entry (-1 on first entry)"
+msgstr "Minuta nga hyrja e fundit (-1 në hyrjen e parë)"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Minutes since first entry (-1 on first entry)"
+msgstr "Minuta nga hyrja e parë (-1 në hyrjen e parë)"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/django-interop.ts
+msgid "Error: Product not found!"
+msgstr "Gabim: Produkti nuk u gjet!"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/django-interop.ts
+msgid "Error: Variation not found!"
+msgstr "Gabim: Varianti nuk u gjet!"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Check-in QR"
+msgstr "Kodi QR për check-in"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "The PDF background file could not be loaded for the following reason:"
+msgstr "Faili bazë PDF nuk mund të shkarkohej për këto arsye:"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Group of objects"
+msgstr "Grupi i sendeve"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Text object (deprecated)"
+msgstr "Objekt teksti (i dalë nga përdorimi)"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Text box"
+msgstr "Kutia teksti"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Barcode area"
+msgstr "Zona e barkodit"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Image area"
+msgstr "Zona për imazhe"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Powered by pretix"
+msgstr "Mundësuar nga pretix"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Object"
+msgstr "Objekt"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Ticket design"
+msgstr "Dizajni i biletës"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Saving failed."
+msgstr "Ruajtja nuk u krye."
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Error while uploading your PDF file, please try again."
+msgstr "Pati gabim në ngarkimin e failit tuaj PDF, ju lutemi, provoni përsëri."
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Do you really want to leave the editor without saving your changes?"
+msgstr ""
+"A vërtetë dëshironi të dilni nga redaktori pa ruajtur ndryshimet tuaja?"
+
+#: pretix/static/pretixcontrol/js/ui/mail.js
+msgid "An error has occurred."
+msgstr "Një gabim ka ndodhur."
+
+#: pretix/static/pretixcontrol/js/ui/mail.js
+msgid "Generating messages …"
+msgstr "Duke prodhuar mesazhe …"
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "Unknown error."
+msgstr "Gabim i panjohur."
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "Your color has great contrast and will provide excellent accessibility."
+msgstr ""
+"Ngjyra juaj ka kontrast shumë të mirë dhe do të ofrojë aksesueshmëri të "
+"shkëlqyer."
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid ""
+"Your color has decent contrast and is sufficient for minimum accessibility "
+"requirements."
+msgstr ""
+"Ngjyra juaj ka kontrast të mirë dhe përmbush kërkesat minimale të "
+"aksesueshmërisë."
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid ""
+"Your color has insufficient contrast to white. Accessibility of your site "
+"will be impacted."
+msgstr ""
+"Ngjyra juaj nuk ka kontrast të mjaftueshëm me të bardhën. Kjo mund të "
+"ndikojë në aksesueshmërinë e faqes suaj."
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "Search query"
+msgstr "Kërkim"
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "All"
+msgstr "Të gjitha"
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "None"
+msgstr "Asnjë"
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "Selected only"
+msgstr "Vetëm të zghedhura"
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "Enter page number between 1 and %(max)s."
+msgstr "Shkruani numrin e faqes midis 1 dhe %(max)s."
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "Invalid page number."
+msgstr "Numër faqe i pavlefshëm."
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "Use a different name internally"
+msgstr "Përdorni një emër tjetër brenda sistemit"
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "Click to close"
+msgstr "Shtypni për të mbyllur"
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "You have unsaved changes!"
+msgstr "Ju keni ndryshime të paruajtur!"
+
+#: pretix/static/pretixcontrol/js/ui/orderchange.js
+msgid "Calculating default price…"
+msgstr "Duke e llogaritur çmimin e parazgjedhur…"
+
+#: pretix/static/pretixcontrol/js/ui/plugins.js
+msgid "No results"
+msgstr "S'ka rezultate"
+
+#: pretix/static/pretixcontrol/js/ui/question.js
+msgid "Others"
+msgstr "Të tjera"
+
+#: pretix/static/pretixcontrol/js/ui/question.js
+msgid "Count"
+msgstr "Sasia"
+
+#: pretix/static/pretixcontrol/js/ui/subevent.js
+msgid "(one more date)"
+msgid_plural "({num} more dates)"
+msgstr[0] "(edhe një datë)"
+msgstr[1] "(edhe {num} më shumë data)"
+
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid ""
+"The items in your cart are no longer reserved for you. You can still "
+"complete your order as long as they’re available."
+msgstr ""
+"Sendet në shportën tuaj nuk janë të rezervuar më për ju. Ju mund t'a "
+"përmbushni porosinë tuaj derisa janë ende të disponueshëm."
+
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid "Cart expired"
+msgstr "Shporta juaj u skadua"
+
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid "Your cart is about to expire."
+msgstr "Shporta juaj do të skadohet së shpejti."
+
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid "The items in your cart are reserved for you for one minute."
+msgid_plural "The items in your cart are reserved for you for {num} minutes."
+msgstr[0] "Sendet në shportën tuaj janë të rezervuar për ju për një minutë."
+msgstr[1] "Sendet në shportën tuaj janë të rezervuar për ju për {num} minuta."
+
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid "Your cart has expired."
+msgstr "Shporta juaj është skaduar."
+
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid ""
+"The items in your cart are no longer reserved for you. You can still "
+"complete your order as long as they're available."
+msgstr ""
+"Sendet në shportën tuaj nuk janë të rezervuar më për ju. Ju mund t'a "
+"përmbushni porosinë derisa janë ende të disponueshëm."
+
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid "Do you want to renew the reservation period?"
+msgstr "A dëshironi t'a rivendosni periudhën e rezervimit?"
+
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid "Renew reservation"
+msgstr "Rivendosni rezervimin"
+
+#: pretix/static/pretixpresale/js/ui/main.js
+msgid "The organizer keeps %(currency)s %(amount)s"
+msgstr "Organizatori mban %(currency)s %(amount)s"
+
+#: pretix/static/pretixpresale/js/ui/main.js
+msgid "You get %(currency)s %(amount)s back"
+msgstr "Ju merrni %(currency)s %(amount)s kusur"
+
+#: pretix/static/pretixpresale/js/ui/main.js
+msgid "Please enter the amount the organizer can keep."
+msgstr "Ju lutemi të shkruani shumën që mund të mbajë organizatori."
+
+#: pretix/static/pretixpresale/js/ui/main.js
+msgid "Your local time:"
+msgstr "Koha juaj vendase:"
+
+#: pretix/static/pretixpresale/js/walletdetection.js
+#, fuzzy
+msgid "Google Pay"
+msgstr "Google Pay"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Quantity"
+msgstr "Sasi"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Decrease quantity"
+msgstr "Ulni sasinë"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Increase quantity"
+msgstr "Rrisni sasinë"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Filter events by"
+msgstr "Filtroni ngjarjet nga"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Filter"
+msgstr "Filtri"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Price"
+msgstr "Çmimi"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+#, javascript-format
+msgctxt "widget"
+msgid "Original price: %s"
+msgstr "Çmimi origjinal:%s"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+#, javascript-format
+msgctxt "widget"
+msgid "New price: %s"
+msgstr "Çmimi i ri:%s"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Select"
+msgstr "Zgjidhni"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+#, javascript-format
+msgctxt "widget"
+msgid "Select %s"
+msgstr "Zgjidhni%s"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+#, javascript-format
+msgctxt "widget"
+msgid "Select variant %s"
+msgstr "Zgjidhni variant %s"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Sold out"
+msgstr "Shitur të gjitha"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Buy"
+msgstr "Blini"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Register"
+msgstr "Regjistrohuni"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Reserved"
+msgstr "Të rezervuar"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "FREE"
+msgstr "FALAS"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "from %(currency)s %(price)s"
+msgstr "nga %(currency)s %(price)s"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+#, javascript-format
+msgctxt "widget"
+msgid "Image of %s"
+msgstr "Imazh i %s"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "incl. %(rate)s% %(taxname)s"
+msgstr "përfsh. %(rate)s% %(taxname)s"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "plus %(rate)s% %(taxname)s"
+msgstr "shtesë %(rate)s% %(taxname)s"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "incl. taxes"
+msgstr "përfsh. taksat"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "plus taxes"
+msgstr "duke shtuar taksat"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+#, javascript-format
+msgctxt "widget"
+msgid "currently available: %s"
+msgstr "aktualisht të disponueshëm: %s"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Only available with a voucher"
+msgstr "Të disponueshëm vetëm me një kupon"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Not yet available"
+msgstr "Të padisponushëm ende"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Not available anymore"
+msgstr "Nuk është të disponueshëm më"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Currently not available"
+msgstr "Të padisponueshëm për momentin"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+#, javascript-format
+msgctxt "widget"
+msgid "minimum amount to order: %s"
+msgstr "sasia minimale për porosi: %s"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Close ticket shop"
+msgstr "Mbyllni dyqanin e biletave"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "The ticket shop could not be loaded."
+msgstr "Dyqani i biletave nuk mund të hapej."
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid ""
+"There are currently a lot of users in this ticket shop. Please open the shop "
+"in a new tab to continue."
+msgstr ""
+"Ka shumë përdorës në dyqanin e biletave tani. Ju lutemi, hapni dyqanin në "
+"një skedë të re për të vazhduar."
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Open ticket shop"
+msgstr "Hapni dyqanin e biletave"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Checkout"
+msgstr "Pagesa"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "The cart could not be created. Please try again later"
+msgstr "Shporta juaj nuk mund të krijohej. Ju lutemi, provoni përsëri më vonë"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid ""
+"We could not create your cart, since there are currently too many users in "
+"this ticket shop. Please click \"Continue\" to retry in a new tab."
+msgstr ""
+"Nuk mund të krijonim shportën tuaj sepse ka më tepër përdorës në këtë dyqan "
+"të biletave. Ju lutemi, shtypni \"Vazhdoni\" të provoni përsëri në një skedë "
+"të re."
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Waiting list"
+msgstr "Lista e pritjes"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid ""
+"You currently have an active cart for this event. If you select more "
+"products, they will be added to your existing cart."
+msgstr ""
+"Ju keni tashmë një shportë aktive për këtë ngjarje. Nëse zgjidhni më shumë "
+"produkte, do të shtohen në shportën tuaj aktuale."
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Resume checkout"
+msgstr "Vazhdoni pagesën"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Redeem a voucher"
+msgstr "Përdorni një kupon"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Redeem"
+msgstr "Përdorni"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Voucher code"
+msgstr "Kodi i kuponit"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Close"
+msgstr "Mbyllni"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Close checkout"
+msgstr "Kthehuni nga pagesa"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "You cannot cancel this operation. Please wait for loading to finish."
+msgstr "Ju nuk mund t'a anuloni këtë veprim. Ju lutemi, prisni për ngarkimin."
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Continue"
+msgstr "Vazhdoni"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Show variants"
+msgstr "Tregoni variantet"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Hide variants"
+msgstr "Fshehni variantet"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Choose a different event"
+msgstr "Zgjidhni një ngjarje tjetër"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Choose a different date"
+msgstr "Zgjidhni një datë tjetër"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Back"
+msgstr "Kthehuni"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Next month"
+msgstr "Muaji tjetër"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Previous month"
+msgstr "Muaji i fundit"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Next week"
+msgstr "Java tjetër"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Previous week"
+msgstr "Java e fundit"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Open seat selection"
+msgstr "Hapni zgjedhjen e sendileve"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid ""
+"Some or all ticket categories are currently sold out. If you want, you can "
+"add yourself to the waiting list. We will then notify if seats are available "
+"again."
+msgstr ""
+"Disa ose të gjitha kategoritë e biletave janë të shitura. Nëse dëshironi, "
+"mund të shtoheni në listën e pritjes. Ne do t'ju njoftojmë nëse sendile "
+"bëhen të disponueshme përsëri."
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Load more"
+msgstr "Ngarkoni më shumë"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Mo"
+msgstr "Hë"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Tu"
+msgstr "Ma"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "We"
+msgstr "Më"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Th"
+msgstr "En"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Fr"
+msgstr "Pr"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Sa"
+msgstr "Sh"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Su"
+msgstr "Di"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Monday"
+msgstr "E Hënë"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Tuesday"
+msgstr "E Martë"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Wednesday"
+msgstr "E Mërkurë"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Thursday"
+msgstr "E Enjte"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Friday"
+msgstr "E Premte"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Saturday"
+msgstr "E Shtunë"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Sunday"
+msgstr "E Diel"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "January"
+msgstr "Janar"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "February"
+msgstr "Shkurt"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "March"
+msgstr "Mars"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "April"
+msgstr "Prill"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "May"
+msgstr "Maj"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "June"
+msgstr "Qershor"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "July"
+msgstr "Korrik"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "August"
+msgstr "Gusht"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "September"
+msgstr "Shtator"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "October"
+msgstr "Tetor"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "November"
+msgstr "Nëntor"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "December"
+msgstr "Dhjetor"
+
+#, fuzzy
+#~ msgid "iDEAL"
+#~ msgstr "iDEAL"

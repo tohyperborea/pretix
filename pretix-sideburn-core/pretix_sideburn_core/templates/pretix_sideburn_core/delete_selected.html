@@ -1,0 +1,69 @@
+{% extends "pretixcontrol/event/base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Delete entries" %}{% endblock %}
+{% block content %}
+    <h1>{% trans "Delete entries (including entries with vouchers)" %}</h1>
+    <form action="" method="post" class="form-horizontal">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="confirm">
+        <p>
+            {% blocktrans trimmed count num=total %}
+                Are you sure you want to delete the following entry?
+            {% plural %}
+                Are you sure you want to delete the following {{ num }} entries?
+            {% endblocktrans %}
+            {% trans "Orders are not affected. This cannot be undone." %}
+        </p>
+        {% for label, entries in groups %}
+            {% if entries %}
+                <h4>{{ label }} ({{ entries|length }})</h4>
+                <ul>
+                    {% for e in entries %}
+                        <li>
+                            {{ e }}{% if e.voucher %} – <code>{{ e.voucher.code }}</code>{% endif %}
+                            <input type="hidden" name="entry" value="{{ e.pk }}">
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+        {% endfor %}
+        {% if has_valid %}
+            <div class="alert alert-danger">
+                <p>
+                    <strong>{% trans "Warning:" %}</strong>
+                    {% trans "Deleting an entry does not cancel its voucher. Choose what happens to the vouchers that are still valid:" %}
+                </p>
+                <div class="radio">
+                    <label>
+                        <input type="radio" name="voucher_action" value="expire" checked>
+                        {% trans "Expire them now (recommended)" %}
+                    </label>
+                </div>
+                <div class="radio">
+                    <label>
+                        <input type="radio" name="voucher_action" value="delete">
+                        {% trans "Delete them" %}
+                    </label>
+                </div>
+                <div class="radio">
+                    <label>
+                        <input type="radio" name="voucher_action" value="keep">
+                        {% trans "Leave them active (people can still buy tickets with them)" %}
+                    </label>
+                </div>
+            </div>
+        {% endif %}
+        <div class="form-group submit-group">
+            <a href="{{ back_url }}" class="btn btn-default btn-cancel">
+                {% trans "Cancel" %}
+            </a>
+            <button type="submit" class="btn btn-danger btn-save">
+                {% blocktrans trimmed count num=total %}
+                    Delete {{ num }} entry
+                {% plural %}
+                    Delete {{ num }} entries
+                {% endblocktrans %}
+            </button>
+        </div>
+    </form>
+{% endblock %}

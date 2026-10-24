@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -20,115 +20,90 @@
 # <https://www.gnu.org/licenses/>.
 #
 from datetime import timedelta
-from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.contrib import messages
 from django.db import transaction
-from django.http import JsonResponse
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.decorators import method_decorator
+from django.utils.functional import cached_property
 from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _, pgettext_lazy
-from django.views.generic import FormView, TemplateView, View
+from django.views.generic import FormView, TemplateView
 
 from pretix.base.models import Quota, SubEvent
+from pretix.base.signals import waitinglist_entry_created
 from pretix.base.templatetags.urlreplace import url_replace
 from pretix.multidomain.urlreverse import eventreverse
-from pretix.presale.signals import waitinglist_form_class
+from pretix.presale.signals import (
+    waitinglist_form_class, waitinglist_template_name,
+)
 from pretix.presale.views import EventViewMixin, iframe_entry_view_wrapper
-from pretix.presale.views.customer import CustomerRequiredMixin
 
 from ...base.i18n import get_language_without_region
 from ...base.models import Voucher, WaitingListEntry
 from ..forms.waitinglist import WaitingListForm
+from ..productlist import prepare_item_list_for_shop
 from . import allow_frame_if_namespaced
-
-
-def get_waiting_list_ranks(event, customer_email):
-    """
-    Get waiting list ranks for a customer.
-    
-    Returns a list of product data dictionaries with rank information.
-    Each dictionary contains: item_id, item_name, variation_id, variation_name, rank, lottery_run, 
-    and optionally voucher_code, voucher_expired, and voucher_expired_date.
-    """
-    entries = WaitingListEntry.objects.filter(
-        event=event,
-        email__iexact=customer_email
-    ).select_related('item', 'variation', 'voucher').order_by('item', 'variation', '-created', '-pk')
-    
-    # Group entries by product (item + variation combination)
-    products_data = []
-    seen_products = set()
-    
-    for entry in entries:
-        # Create a unique key for this product (item + variation)
-        product_key = (entry.item_id, entry.variation_id if entry.variation else None)
-        
-        # Only process the most recent entry for each product
-        if product_key in seen_products:
-            continue
-        
-        seen_products.add(product_key)
-        
-        rank = entry.get_rank()
-        
-        # Check if this is an expired voucher (rank is None but voucher exists and is expired)
-        voucher_expired = False
-        voucher_expired_date = None
-        if rank is None and entry.voucher and not entry.voucher.is_active():
-            # Check if voucher expired (not just fully redeemed)
-            if entry.voucher.valid_until and entry.voucher.valid_until < now():
-                voucher_expired = True
-                # Convert to event timezone for display
-                tz = ZoneInfo(event.settings.timezone)
-                voucher_expired_date = entry.voucher.valid_until.astimezone(tz)
-        
-        # Skip entries that are no longer active (rank is None) unless they have expired vouchers
-        if rank is None and not voucher_expired:
-            continue
-        
-        # Check if lottery has been run for this product
-        lottery_date = event.settings.get(f'lottery_date_for_item_{entry.item_id}')
-        lottery_run = bool(lottery_date)
-        
-        product_data = {
-            'item_id': entry.item_id,
-            'item_name': str(entry.item),
-            'variation_id': entry.variation_id,
-            'variation_name': str(entry.variation) if entry.variation else None,
-            'rank': rank,
-            'lottery_run': lottery_run
-        }
-        
-        # Include voucher code if rank is 0 (user has an unredeemed voucher)
-        if rank == 0 and entry.voucher:
-            product_data['voucher_code'] = entry.voucher.code
-        
-        # Include expired voucher information
-        if voucher_expired:
-            product_data['voucher_expired'] = True
-            product_data['voucher_expired_date'] = voucher_expired_date
-        
-        products_data.append(product_data)
-    
-    return products_data
 
 
 @method_decorator(allow_frame_if_namespaced, 'dispatch')
 @method_decorator(iframe_entry_view_wrapper, 'dispatch')
-class WaitingView(EventViewMixin, CustomerRequiredMixin, FormView):
+class WaitingView(EventViewMixin, FormView):
     template_name = 'pretixpresale/event/waitinglist.html'
     form_class = WaitingListForm
 
+    # Sideburn: lets plugins extend the form (sideburn-core locks the email, Twilio adds an SMS
+    # opt-in). Not in upstream pretix.
     def get_form_class(self):
-        form_class = WaitingListForm
-        for receiver, response in waitinglist_form_class.send(self.request.event):
+        return waitinglist_form_class.send_chained(self.request.event, 'cls', cls=WaitingListForm)
+
+    # Sideburn: lets a plugin replace the page template (the lottery's waiting-list page). Not in
+    # upstream pretix.
+    def get_template_names(self):
+        for receiver, response in waitinglist_template_name.send(self.request.event):
             if response is not None:
-                form_class = response
-                break
-        return form_class
+                return [response]
+        return [self.template_name]
+
+    @cached_property
+    def itemvars(self):
+        customer = getattr(self.request, 'customer', None)
+        items, display_add_to_cart = prepare_item_list_for_shop(
+            self.request.event,
+            subevent=self.subevent,
+            require_seat=None,
+            channel=self.request.organizer.sales_channels.get(identifier="web"),
+            memberships=(
+                customer.usable_memberships(
+                    for_event=self.subevent or self.request.event,
+                    testmode=self.request.event.testmode
+                )
+                if customer else None
+            ),
+        )
+        groups = {}
+        for i in items:
+            if not i.allow_waitinglist:
+                continue
+
+            category_name = str(i.category.name) if i.category else ''
+            group = groups.setdefault(category_name, [])
+
+            if i.has_variations:
+                for v in i.available_variations:
+                    if v.cached_availability[0] == Quota.AVAILABILITY_OK:
+                        continue
+                    group.append((f'{i.pk}-{v.pk}', f'{i.name} – {v.value}'))
+
+            else:
+                if i.cached_availability[0] == Quota.AVAILABILITY_OK:
+                    continue
+                group.append((f'{i.pk}', f'{i.name}'))
+
+        # Remove categories where all items were available (no waiting list choices)
+        return [(cat, choices) for cat, choices in groups.items() if choices]
 
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
@@ -138,8 +113,7 @@ class WaitingView(EventViewMixin, CustomerRequiredMixin, FormView):
             event=self.request.event, locale=get_language_without_region(),
             subevent=self.subevent
         )
-        kwargs['channel'] = self.request.sales_channel.identifier
-        kwargs['customer'] = getattr(self.request, 'customer', None)
+        kwargs['itemvars'] = self.itemvars
         kwargs.setdefault('initial', {})
         if 'var' in self.request.GET:
             kwargs['initial']['itemvar'] = f'{self.request.GET.get("item")}-{self.request.GET.get("var")}'
@@ -159,7 +133,8 @@ class WaitingView(EventViewMixin, CustomerRequiredMixin, FormView):
         if request.GET.get('iframe', '') == '1' and 'require_cookie' not in request.GET:
             # Widget just opened. Let's to a stupid redirect to check if cookies are disabled
             return redirect(request.get_full_path() + '&require_cookie=true')
-        elif 'require_cookie' in request.GET and settings.SESSION_COOKIE_NAME not in request.COOKIES:
+        elif 'require_cookie' in request.GET and settings.SESSION_COOKIE_NAME not in request.COOKIES and\
+                '__Host-' + settings.SESSION_COOKIE_NAME not in self.request.COOKIES:
             # Cookies are in fact not supported. We can't even display the form, since we can't get CSRF right without
             # cookies.
             r = render(request, 'pretixpresale/event/cookies.html', {
@@ -167,8 +142,12 @@ class WaitingView(EventViewMixin, CustomerRequiredMixin, FormView):
                     request.event, "presale:event.waitinglist", kwargs={'cart_namespace': kwargs.get('cart_namespace')}
                 ) + '?' + url_replace(request, 'require_cookie', '', 'iframe', '', 'locale', request.GET.get('locale', get_language_without_region()))
             })
-            r._csp_ignore = True
             return r
+
+        if not self.itemvars:
+            messages.info(request, _("No ticket types are available for the waiting list, have a look at the "
+                                     "ticket shop instead."))
+            return redirect(self.get_index_url())
 
         return super().get(request, *args, **kwargs)
 
@@ -190,11 +169,18 @@ class WaitingView(EventViewMixin, CustomerRequiredMixin, FormView):
         self.subevent = None
         if request.event.has_subevents:
             if 'subevent' in request.GET:
-                self.subevent = get_object_or_404(SubEvent, event=request.event, pk=request.GET['subevent'],
-                                                  active=True)
+                try:
+                    self.subevent = get_object_or_404(SubEvent, event=request.event, pk=request.GET['subevent'],
+                                                      active=True)
+                except ValueError:
+                    raise Http404()
             else:
                 messages.error(request, pgettext_lazy('subevent', "You need to select a date."))
                 return redirect(self.get_index_url())
+
+        if not (self.subevent or self.request.event).waiting_list_active:
+            messages.error(request, _("Waiting lists are disabled for this event."))
+            return redirect(self.get_index_url())
 
         return super().dispatch(request, *args, **kwargs)
 
@@ -210,12 +196,20 @@ class WaitingView(EventViewMixin, CustomerRequiredMixin, FormView):
             return redirect(self.get_index_url())
 
         form.save()
-        form.instance.send_confirm()
+        # Sideburn: not in upstream pretix.
+        waitinglist_entry_created.send(
+            self.request.event,
+            entry=form.instance,
+            user=None,
+            auth=None,
+        )
 
         form.instance.log_action("pretix.event.orders.waitinglist.added")
-        messages.success(self.request, _("We've added you to the waiting list. You will receive "
-                                         "an email when a ticket is available."))
-
+        # Sideburn: reworded to talk about tickets instead of products (SID-173).
+        messages.success(self.request, _(
+            "We've added you to the waiting list. You will receive an email "
+            "at {email} when a ticket is available."
+        ).format(email=form.instance.email))
         return super().form_valid(form)
 
     def get_success_url(self):
@@ -223,7 +217,7 @@ class WaitingView(EventViewMixin, CustomerRequiredMixin, FormView):
 
 
 @method_decorator(allow_frame_if_namespaced, 'dispatch')
-class WaitingRemoveView(EventViewMixin, CustomerRequiredMixin, TemplateView):
+class WaitingRemoveView(EventViewMixin, TemplateView):
     template_name = 'pretixpresale/event/waitinglist_remove.html'
 
     def get_context_data(self, **kwargs):

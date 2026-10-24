@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -34,6 +34,7 @@
 
 import datetime
 import os
+from dataclasses import dataclass
 
 from django import forms
 from django.conf import settings
@@ -123,8 +124,6 @@ class ClearableBasenameFileInput(forms.ClearableFileInput):
 
         @property
         def name(self):
-            if hasattr(self.file, 'display_name'):
-                return self.file.display_name
             return self.file.name
 
         @property
@@ -173,7 +172,9 @@ class CachedFileInput(forms.ClearableFileInput):
         from ...base.models import CachedFile
         v = super().value_from_datadict(data, files, name)
         if v is None and data.get(name + '-cachedfile'):  # An explicit "[x] clear" would be False, not None
-            return CachedFile.objects.filter(id=data[name + '-cachedfile']).first()
+            v = CachedFile.objects.filter(id=data[name + '-cachedfile']).first()
+            if not v.allowed_for_session(self.request):
+                v = None
         return v
 
     def get_context(self, name, value, attrs):
@@ -219,15 +220,17 @@ class ExtValidationMixin:
 
     def clean(self, *args, **kwargs):
         data = super().clean(*args, **kwargs)
-        if isinstance(data, UploadedFile):
-            filename = data.name
+
+        from ...base.models import CachedFile
+        if isinstance(data, (UploadedFile, CachedFile)):
+            filename = data.name if isinstance(data, UploadedFile) else data.filename
             ext = os.path.splitext(filename)[1]
             ext = ext.lower()
             if ext not in self.ext_whitelist:
                 raise forms.ValidationError(_("Filetype not allowed!"))
 
             if ext in IMAGE_EXTS:
-                validate_uploaded_file_for_valid_image(data)
+                validate_uploaded_file_for_valid_image(data if isinstance(data, UploadedFile) else data.file)
 
         return data
 
@@ -243,6 +246,11 @@ class ExtFileField(ExtValidationMixin, SizeFileField):
 class CachedFileField(ExtFileField):
     widget = CachedFileInput
 
+    def __init__(self, *args, **kwargs):
+        self.request = kwargs.pop("request", None)
+        super().__init__(*args, **kwargs)
+        self.widget.request = self.request
+
     def to_python(self, data):
         from ...base.models import CachedFile
 
@@ -257,6 +265,12 @@ class CachedFileField(ExtFileField):
         if isinstance(data, File):
             if hasattr(data, '_uploaded_to'):
                 return data._uploaded_to
+
+            try:
+                self.clean(data)
+            except ValidationError:
+                return None
+
             cf = CachedFile.objects.create(
                 expires=now() + datetime.timedelta(days=1),
                 date=now(),
@@ -264,10 +278,15 @@ class CachedFileField(ExtFileField):
                 filename=data.name,
                 type=data.content_type,
             )
+            if self.request:
+                cf.bind_to_session(self.request)  # no salt because we want direct web access
             cf.file.save(data.name, data.file)
             cf.save()
             data._uploaded_to = cf
             return cf
+        if isinstance(data, CachedFile):
+            return data
+
         return super().bound_data(data, initial)
 
     def clean(self, *args, **kwargs):
@@ -284,6 +303,8 @@ class CachedFileField(ExtFileField):
                 filename=data.name,
                 type=data.content_type,
             )
+            if self.request:
+                cf.bind_to_session(self.request)  # no salt because we want direct web access
             cf.file.save(data.name, data.file)
             cf.save()
             data._uploaded_to = cf
@@ -411,7 +432,71 @@ class SplitDateTimeField(forms.SplitDateTimeField):
 class FontSelect(forms.RadioSelect):
     option_template_name = 'pretixcontrol/font_option.html'
 
+    @dataclass
+    class FontOption:
+        title: str
+        data: str
+
 
 class ItemMultipleChoiceField(SafeModelMultipleChoiceField):
     def label_from_instance(self, obj):
         return str(obj) if obj.active else mark_safe(f'<strike class="text-muted">{escape(obj)}</strike>')
+
+
+class ButtonGroupRadioSelect(forms.RadioSelect):
+    template_name = 'pretixcontrol/button_group_radio.html'
+    option_template_name = 'pretixcontrol/button_group_radio_option.html'
+
+    def __init__(self, *args, **kwargs):
+        self.option_icons = kwargs.pop('option_icons')
+        super().__init__(*args, **kwargs)
+
+    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
+        attrs['icon'] = self.option_icons[value]
+        opt = super().create_option(name, value, label, selected, index, subindex, attrs)
+        return opt
+
+
+class SalesChannelCheckboxSelectMultiple(forms.CheckboxSelectMultiple):
+    option_template_name = 'pretixbase/forms/widgets/checkbox_sales_channel_option.html'
+
+    def __init__(self, event, attrs=None, choices=()):
+        self.event = event
+        super().__init__(attrs, choices)
+
+    def create_option(
+        self, name, value, label, selected, index, subindex=None, attrs=None
+    ):
+        plugin = value.instance.type_instance.required_event_plugin
+        return {
+            **super().create_option(name, value, label, selected, index, subindex, attrs),
+            "plugin_missing": plugin and plugin not in self.event.get_plugins(),
+        }
+
+
+class ModelChoiceIteratorWithNone(forms.models.ModelChoiceIterator):
+    # see django.forms.models.ModelChoiceIterator for original implementation
+    def __iter__(self):
+        if self.field.empty_label is not None:
+            yield ("", self.field.empty_label)
+        if self.field.none_label is not None:
+            yield ("_none", self.field.none_label)
+        queryset = self.queryset
+        # Can't use iterator() when queryset uses prefetch_related()
+        if not queryset._prefetch_related_lookups:
+            queryset = queryset.iterator()
+        for obj in queryset:
+            yield self.choice(obj)
+
+
+class ModelChoiceFieldWithNone(forms.ModelChoiceField):
+    iterator = ModelChoiceIteratorWithNone
+
+    def __init__(self, *args, **kwargs):
+        self.none_label = kwargs.pop("none_label", None)
+        super().__init__(*args, **kwargs)
+
+    def to_python(self, value):
+        if value == "_none":
+            return value
+        return super().to_python(value)

@@ -1,0 +1,22 @@
+[project]
+name = "sideburn-dev-tools"
+version = "0.1.0"
+description = "Dev-only fixtures and management commands for Sideburn pretix staging"
+readme = "README.md"
+license = {text = "Apache"}
+requires-python = ">=3.9"
+authors = [
+    {name = "Ryan", email = "rdn0613@hotmail.com"},
+]
+dependencies = []
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["sideburn_devtools*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+sideburn_devtools = ["fixtures/*.json"]

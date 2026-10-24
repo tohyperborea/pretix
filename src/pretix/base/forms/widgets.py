@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -33,13 +33,21 @@
 # License for the specific language governing permissions and limitations under the License.
 
 import os
-from datetime import date
+from datetime import datetime
 
 from django import forms
 from django.utils.formats import get_format
 from django.utils.functional import lazy
+from django.utils.html import escape
 from django.utils.timezone import get_current_timezone, now
 from django.utils.translation import gettext_lazy as _
+
+from pretix.helpers.format import PlainHtmlAlternativeString
+from pretix.helpers.i18n import (
+    get_format_without_seconds, get_javascript_format,
+    get_javascript_format_without_seconds,
+)
+from pretix.helpers.safedownload import get_token
 
 
 def replace_arabic_numbers(inp):
@@ -60,11 +68,18 @@ def replace_arabic_numbers(inp):
     return inp.translate(table)
 
 
+def format_placeholder_help_text(placeholder_name, sample_value):
+    if isinstance(sample_value, PlainHtmlAlternativeString):
+        sample_value = sample_value.plain
+    title = (_("Sample: %s") % sample_value) if sample_value else ""
+    return ('<button type="button" class="content-placeholder" title="%s">{%s}</button>' % (escape(title), escape(placeholder_name)))
+
+
 def format_placeholders_help_text(placeholders, event=None):
     placeholders = [(k, v.render_sample(event) if event else v) for k, v in placeholders.items()]
     placeholders.sort(key=lambda x: x[0])
     phs = [
-        '<button type="button" class="content-placeholder" title="%s">{%s}</button>' % (_("Sample: %s") % v if v else "", k)
+        format_placeholder_help_text(k, v)
         for k, v in placeholders
     ]
     return _('Available placeholders: {list}').format(
@@ -98,7 +113,7 @@ class DatePickerWidget(forms.DateInput):
 
 
 class TimePickerWidget(forms.TimeInput):
-    def __init__(self, attrs=None, time_format=None):
+    def __init__(self, attrs=None, time_format=None, without_seconds=False):
         attrs = attrs or {}
         if 'placeholder' in attrs:
             del attrs['placeholder']
@@ -107,8 +122,27 @@ class TimePickerWidget(forms.TimeInput):
         time_attrs['class'] += ' timepickerfield'
         time_attrs['autocomplete'] = 'off'
 
+        if time_format or without_seconds:
+            # Explicitly set data-format attributes for the JS layer instead of relying on the body-wide config
+            def time_format_attr():
+                if without_seconds:
+                    return get_javascript_format_without_seconds(time_format or "TIME_INPUT_FORMATS")
+                return get_javascript_format(time_format or "TIME_INPUT_FORMATS")
+
+            time_attrs['data-format'] = lazy(time_format_attr, str)
+
+            def time_format_attr():
+                if without_seconds:
+                    return get_javascript_format_without_seconds(time_format or "TIME_INPUT_FORMATS")
+                return get_javascript_format(time_format or "TIME_INPUT_FORMATS")
+
+            time_attrs['data-format'] = lazy(time_format_attr, str)
+
         def placeholder():
-            tf = time_format or get_format('TIME_INPUT_FORMATS')[0]
+            if without_seconds:
+                tf = time_format or get_format_without_seconds('TIME_INPUT_FORMATS')
+            else:
+                tf = time_format or get_format('TIME_INPUT_FORMATS')[0]
             return now().replace(
                 year=2000, month=1, day=1, hour=0, minute=0, second=0, microsecond=0
             ).strftime(tf)
@@ -124,36 +158,26 @@ class TimePickerWidget(forms.TimeInput):
 
 class UploadedFileWidget(forms.ClearableFileInput):
     def __init__(self, *args, **kwargs):
-        self.position = kwargs.pop('position')
-        self.event = kwargs.pop('event')
         self.answer = kwargs.pop('answer')
+        self.request = kwargs.pop('request')
         super().__init__(*args, **kwargs)
 
     class FakeFile:
-        def __init__(self, file, position, event, answer):
+        def __init__(self, file, answer, request):
             self.file = file
-            self.position = position
-            self.event = event
             self.answer = answer
+            self.request = request
 
         def __str__(self):
             return os.path.basename(self.file.name).split('.', 1)[-1]
 
         @property
         def url(self):
-            from pretix.base.models import OrderPosition
-            from pretix.multidomain.urlreverse import eventreverse
-
-            if isinstance(self.position, OrderPosition):
-                return eventreverse(self.event, 'presale:event.order.download.answer', kwargs={
-                    'order': self.position.order.code,
-                    'secret': self.position.order.secret,
-                    'answer': self.answer.pk,
-                })
+            token = get_token(self.request, self.answer)
+            if self.request.resolver_match.namespace == 'control':
+                return self.answer.backend_file_url + '?token=' + token
             else:
-                return eventreverse(self.event, 'presale:event.cart.download.answer', kwargs={
-                    'answer': self.answer.pk,
-                })
+                return self.answer.frontend_file_url + '?token=' + token
 
     def get_context(self, name, value, attrs):
         # Browsers can't recognize that the server already has a file uploaded
@@ -166,13 +190,13 @@ class UploadedFileWidget(forms.ClearableFileInput):
 
     def format_value(self, value):
         if self.is_initial(value):
-            return self.FakeFile(value, self.position, self.event, self.answer)
+            return self.FakeFile(value, self.answer, self.request)
 
 
 class SplitDateTimePickerWidget(forms.SplitDateTimeWidget):
     template_name = 'pretixbase/forms/widgets/splitdatetime.html'
 
-    def __init__(self, attrs=None, date_format=None, time_format=None, min_date=None, max_date=None):
+    def __init__(self, attrs=None, date_format=None, time_format=None, min_date=None, max_date=None, without_seconds=False):
         attrs = attrs or {}
         if 'placeholder' in attrs:
             del attrs['placeholder']
@@ -188,28 +212,53 @@ class SplitDateTimePickerWidget(forms.SplitDateTimeWidget):
         time_attrs['autocomplete'] = 'off'
         if min_date:
             date_attrs['data-min'] = (
-                min_date if isinstance(min_date, date) else min_date.astimezone(get_current_timezone()).date()
+                min_date if not isinstance(min_date, datetime) else min_date.astimezone(get_current_timezone()).date()
             ).isoformat()
         if max_date:
             date_attrs['data-max'] = (
-                max_date if isinstance(max_date, date) else max_date.astimezone(get_current_timezone()).date()
+                max_date if not isinstance(max_date, datetime) else max_date.astimezone(get_current_timezone()).date()
             ).isoformat()
 
+        if date_format or time_format or without_seconds:
+            # Explicitly set data-format attributes for the JS layer instead of relying on the body-wide config
+            def date_format_attr():
+                if without_seconds:
+                    return get_javascript_format_without_seconds(date_format or "DATE_INPUT_FORMATS")
+                return get_javascript_format(date_format or "DATE_INPUT_FORMATS")
+
+            date_attrs['data-format'] = lazy(date_format_attr, str)
+
+            def time_format_attr():
+                if without_seconds:
+                    return get_javascript_format_without_seconds(time_format or "TIME_INPUT_FORMATS")
+                return get_javascript_format(time_format or "TIME_INPUT_FORMATS")
+
+            time_attrs['data-format'] = lazy(time_format_attr, str)
+
         def date_placeholder():
-            df = date_format or get_format('DATE_INPUT_FORMATS')[0]
+            if without_seconds:
+                df = date_format or get_format_without_seconds('DATE_INPUT_FORMATS')
+            else:
+                df = date_format or get_format('DATE_INPUT_FORMATS')[0]
             return now().replace(
                 year=2000, month=12, day=31, hour=18, minute=0, second=0, microsecond=0
             ).strftime(df)
 
         def time_placeholder():
-            tf = time_format or get_format('TIME_INPUT_FORMATS')[0]
+            if without_seconds:
+                tf = time_format or get_format_without_seconds('TIME_INPUT_FORMATS')
+            else:
+                tf = time_format or get_format('TIME_INPUT_FORMATS')[0]
             return now().replace(
                 year=2000, month=1, day=1, hour=0, minute=0, second=0, microsecond=0
             ).strftime(tf)
 
         date_attrs['placeholder'] = lazy(date_placeholder, str)
         time_attrs['placeholder'] = lazy(time_placeholder, str)
-
+        date_attrs['aria-label'] = _('Date')
+        time_attrs['aria-label'] = _('Time')
+        if 'aria-label' in attrs:
+            del attrs['aria-label']
         widgets = (
             forms.DateInput(attrs=date_attrs, format=date_format),
             forms.TimeInput(attrs=time_attrs, format=time_format),
@@ -256,3 +305,18 @@ class BusinessBooleanRadio(forms.RadioSelect):
             'False': False,
             False: False,
         }.get(value)
+
+
+class OptionAttrsSelect(forms.Select):
+    def __init__(self, *args, option_attrs=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.option_attrs = option_attrs or {}
+
+    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
+        option = super().create_option(
+            name, value, label, selected, index, subindex=subindex, attrs=attrs
+        )
+        extra = self.option_attrs.get(str(value))
+        if extra:
+            option["attrs"].update(extra)
+        return option

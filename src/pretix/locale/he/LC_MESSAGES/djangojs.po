@@ -7,9 +7,9 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2023-09-25 23:12+0000\n"
-"PO-Revision-Date: 2021-09-24 13:54+0000\n"
-"Last-Translator: ofirtro <ofir.tro@gmail.com>\n"
+"POT-Creation-Date: 2026-09-30 07:26+0000\n"
+"PO-Revision-Date: 2026-02-09 21:00+0000\n"
+"Last-Translator: roi belotsercovsky <rbelotsercovsky@gmail.com>\n"
 "Language-Team: Hebrew <https://translate.pretix.eu/projects/pretix/pretix-js/"
 "he/>\n"
 "Language: he\n"
@@ -18,324 +18,348 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=4; plural=(n == 1) ? 0 : ((n == 2) ? 1 : ((n > 10 && "
 "n % 10 == 0) ? 2 : 3));\n"
-"X-Generator: Weblate 4.8\n"
+"X-Generator: Weblate 5.15.2\n"
 
-#: pretix/plugins/banktransfer/static/pretixplugins/banktransfer/ui.js:56
-#: pretix/plugins/banktransfer/static/pretixplugins/banktransfer/ui.js:62
-#: pretix/plugins/banktransfer/static/pretixplugins/banktransfer/ui.js:68
+#: pretix/plugins/banktransfer/static/pretixplugins/banktransfer/ui.js
 msgid "Marked as paid"
 msgstr "סומן כשולם"
 
-#: pretix/plugins/banktransfer/static/pretixplugins/banktransfer/ui.js:76
+#: pretix/plugins/banktransfer/static/pretixplugins/banktransfer/ui.js
 msgid "Comment:"
 msgstr "תגובה:"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:34
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "PayPal"
-msgstr ""
+msgstr "PayPal"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:35
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Venmo"
-msgstr ""
+msgstr "Venmo"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:36
-#: pretix/static/pretixpresale/js/walletdetection.js:38
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#: pretix/static/pretixpresale/js/walletdetection.js
 msgid "Apple Pay"
-msgstr ""
+msgstr "Apple Pay"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:37
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Itaú"
-msgstr ""
+msgstr "Itaú"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:38
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "PayPal Credit"
-msgstr ""
+msgstr "יתרת PayPal"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:39
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Credit Card"
-msgstr ""
+msgstr "כרטיס אשראי"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:40
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "PayPal Pay Later"
+msgstr "PayPal Pay Later"
+
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+msgid "iDEAL | Wero"
 msgstr ""
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:41
-msgid "iDEAL"
-msgstr ""
-
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:42
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "SEPA Direct Debit"
-msgstr ""
+msgstr "SEPA חיוב מיידי"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:43
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Bancontact"
-msgstr ""
+msgstr "Bancontact"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:44
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "giropay"
-msgstr ""
+msgstr "giropay"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:45
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "SOFORT"
-msgstr ""
+msgstr "SOFORT"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:46
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "eps"
-msgstr ""
+msgstr "eps"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:47
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "MyBank"
-msgstr ""
+msgstr "MyBank"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:48
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Przelewy24"
-msgstr ""
+msgstr "Przelewy24"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:49
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Verkkopankki"
-msgstr ""
+msgstr "Verkkopankki"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:50
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "PayU"
-msgstr ""
+msgstr "PayU"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:51
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "BLIK"
-msgstr ""
+msgstr "BLIK"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:52
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Trustly"
-msgstr ""
+msgstr "Trustly"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:53
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Zimpler"
-msgstr ""
+msgstr "Zimpler"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:54
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Maxima"
-msgstr ""
+msgstr "Maxima"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:55
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "OXXO"
-msgstr ""
+msgstr "OXXO"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:56
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Boleto"
-msgstr ""
+msgstr "Boleto"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:57
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "WeChat Pay"
-msgstr ""
+msgstr "WeChat Pay"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:58
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Mercado Pago"
-msgstr ""
+msgstr "Mercado Pago"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:164
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:48
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+#: pretix/static/pretixpresale/js/ui/cart.js
 msgid "Continue"
 msgstr "המשך"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:222
-#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:204
-#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:235
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js
 msgid "Confirming your payment …"
 msgstr "מאמת את התשלום שלך…"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:247
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Payment method unavailable"
-msgstr ""
+msgstr "אמצעי התשלום אינו זמין"
 
-#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js:15
-#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js:39
+#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js
 msgid "Placed orders"
 msgstr "הזמנות שבוצעו"
 
-#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js:15
-#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js:39
+#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js
 msgid "Paid orders"
 msgstr "הזמנות ששולמו"
 
-#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js:27
+#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js
+msgid "Attendees (ordered)"
+msgstr "משתתפים(הוזמנו)"
+
+#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js
+msgid "Attendees (paid)"
+msgstr "משתתפים (שילמו)"
+
+#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js
 msgid "Total revenue"
 msgstr "הכנסה כוללת"
 
-#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:13
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js
 msgid "Contacting Stripe …"
-msgstr ""
+msgstr "יוצר קשר עם Stripe…"
 
-#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:70
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js
 msgid "Total"
 msgstr "סה\"כ"
 
-#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:211
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js
 msgid "Contacting your bank …"
 msgstr "יוצר קשר עם הבנק שלך…"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:30
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Select a check-in list"
-msgstr ""
+msgstr "רשימת צ'ק-אין"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:31
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "No active check-in lists found."
-msgstr ""
+msgstr "לא נמצאו רשימות צ'ק-אין פעילות."
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:32
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Switch check-in list"
-msgstr ""
+msgstr "החלפת צ'ק-אין"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:33
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Search results"
-msgstr "חיפוש"
+msgstr "תוצאות חיפוש"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:34
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "No tickets found"
 msgstr "לא נמצאו כרטיסים"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:35
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Result"
 msgstr "תוצאות"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:36
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "This ticket requires special attention"
-msgstr ""
+msgstr "כרטיס זה דורש התייחסות מיוחדת"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:37
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Switch direction"
-msgstr ""
+msgstr "החלף כיוון"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:38
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Entry"
 msgstr "כניסה"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:39
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Exit"
 msgstr "יציאה"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:40
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Scan a ticket or search and press return…"
 msgstr "סרוק כרטיס או חפש…"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:41
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Load more"
 msgstr "טען עוד"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:42
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Valid"
 msgstr "תקף"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:43
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Unpaid"
 msgstr "לא שולם"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:44
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:45
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Canceled"
 msgstr "בוטל"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:46
-msgid "Redeemed"
-msgstr ""
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Confirmed"
+msgstr "מאושר"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:47
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Approval pending"
+msgstr "ממתין לאישור"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Redeemed"
+msgstr "מומש"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Cancel"
 msgstr "בטל"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:49
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:58
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Ticket not paid"
 msgstr "כרטיס לא שולם"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:50
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "This ticket is not yet paid. Do you want to continue anyways?"
 msgstr "הכרטיס עדיין לא שולם. רוצה להמשיך בכל זאת?"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:51
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Additional information required"
 msgstr "מידע נוסף"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:52
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Valid ticket"
 msgstr "כרטיס תקף"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:53
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Exit recorded"
-msgstr ""
+msgstr "יציאה נרשמה"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:54
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Ticket already used"
-msgstr ""
+msgstr "כרטיס כבר שומש"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:55
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Information required"
-msgstr ""
+msgstr "נדרש מידע"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:56
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Unknown ticket"
 msgstr "כרטיס לא מזוהה"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:57
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Ticket type not allowed here"
-msgstr ""
+msgstr "סוג כרטיס לא מאושר כאן"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:59
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Entry not allowed"
-msgstr ""
+msgstr "כניסה לא מאושרת"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:60
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Ticket code revoked/changed"
-msgstr ""
+msgstr "קוד כרטיס נשלל/שונה"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:61
-#, fuzzy
-#| msgid "Ticket not paid"
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Ticket blocked"
-msgstr "כרטיס לא שולם"
+msgstr "כרטיס נחסם"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:62
-#, fuzzy
-#| msgid "Ticket not paid"
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Ticket not valid at this time"
-msgstr "כרטיס לא שולם"
+msgstr "כרטיס לא תקף בזמן זה"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:63
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Order canceled"
 msgstr "הזמנה בוטלה"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:64
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Ticket code is ambiguous on list"
-msgstr ""
+msgstr "קוד כרטיס מעורפל ברשימה"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:65
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Order not approved"
+msgstr "הזמנה לא מאושרת"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Checked-in Tickets"
-msgstr ""
+msgstr "כרטיסים רשומים"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:66
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Valid Tickets"
 msgstr "כרטיסים תקפים"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:67
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Currently inside"
-msgstr ""
+msgstr "כרגע בפנים"
 
-#: pretix/static/lightbox/js/lightbox.js:96
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+#: pretix/static/pretixcontrol/js/ui/question.js
+#: pretix/static/pretixpresale/js/ui/questions.js
+msgid "Yes"
+msgstr "כן"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+#: pretix/static/pretixcontrol/js/ui/question.js
+#: pretix/static/pretixpresale/js/ui/questions.js
+msgid "No"
+msgstr "לא"
+
+#: pretix/static/lightbox/js/lightbox.js
 msgid "close"
-msgstr ""
+msgstr "סגור"
 
-#: pretix/static/pretixbase/js/asynctask.js:58
-#: pretix/static/pretixbase/js/asynctask.js:135
+#: pretix/static/pretixbase/js/addressform.js
+#: pretix/static/pretixpresale/js/ui/main.js
+msgid "required"
+msgstr "נדרש"
+
+#: pretix/static/pretixbase/js/asynctask.js
 msgid ""
 "Your request is currently being processed. Depending on the size of your "
 "event, this might take up to a few minutes."
 msgstr "הבקשה שלך מתבצעת ויכולה לקחת כמה דקות בהתאם לגודל האירוע."
 
-#: pretix/static/pretixbase/js/asynctask.js:63
-#: pretix/static/pretixbase/js/asynctask.js:140
+#: pretix/static/pretixbase/js/asynctask.js
 msgid "Your request has been queued on the server and will soon be processed."
 msgstr "הבקשה שלך תבוצע בהקדם."
 
-#: pretix/static/pretixbase/js/asynctask.js:69
-#: pretix/static/pretixbase/js/asynctask.js:146
+#: pretix/static/pretixbase/js/asynctask.js
 msgid ""
 "Your request arrived on the server but we still wait for it to be processed. "
 "If this takes longer than two minutes, please contact us or go back in your "
@@ -344,650 +368,828 @@ msgstr ""
 "הבקשה שלך הגיעה לשרת אבל עדיין לא התחילה. אם זה לוקח יותר משתי דקות, אנא צור "
 "איתנו קשר או נסה שנית."
 
-#: pretix/static/pretixbase/js/asynctask.js:105
-#: pretix/static/pretixbase/js/asynctask.js:193
-#: pretix/static/pretixbase/js/asynctask.js:198
-#: pretix/static/pretixcontrol/js/ui/mail.js:24
+#: pretix/static/pretixbase/js/asynctask.js
+#: pretix/static/pretixcontrol/js/ui/mail.js
 msgid "An error of type {code} occurred."
 msgstr "שגיאה {code} התרחשה."
 
-#: pretix/static/pretixbase/js/asynctask.js:108
+#: pretix/static/pretixbase/js/asynctask.js
 msgid ""
 "We currently cannot reach the server, but we keep trying. Last error code: "
 "{code}"
 msgstr "אנחנו לא מצליחים לגשת לשרת, אבל ממשיכים לנסות. שגיאה אחרונה: {code}"
 
-#: pretix/static/pretixbase/js/asynctask.js:160
-#: pretix/static/pretixcontrol/js/ui/mail.js:21
+#: pretix/static/pretixbase/js/asynctask.js
+#: pretix/static/pretixcontrol/js/ui/mail.js
 msgid "The request took too long. Please try again."
 msgstr "הבקשה לקחה יותר מידי זמן. נסה שנית."
 
-#: pretix/static/pretixbase/js/asynctask.js:201
-#: pretix/static/pretixcontrol/js/ui/mail.js:26
+#: pretix/static/pretixbase/js/asynctask.js
+#: pretix/static/pretixcontrol/js/ui/mail.js
 msgid ""
 "We currently cannot reach the server. Please try again. Error code: {code}"
 msgstr "אירעה שגיאה. אנא נסה שנית. שגיאה: {code}"
 
-#: pretix/static/pretixbase/js/asynctask.js:230
+#: pretix/static/pretixbase/js/asynctask.js
 msgid "We are processing your request …"
 msgstr "הבקשה שלך מתבצעת…"
 
-#: pretix/static/pretixbase/js/asynctask.js:238
+#: pretix/static/pretixbase/js/asynctask.js
 msgid ""
 "We are currently sending your request to the server. If this takes longer "
 "than one minute, please check your internet connection and then reload this "
 "page and try again."
 msgstr ""
+"אנחנו כרגע שולחים את הבקשה שלך לשרת. במידה והתהליך נמשך יותר מדקה, בדוק "
+"בבקשה את חיבור הרשת שלך, רענן את הדף ונסה שוב."
 
-#: pretix/static/pretixbase/js/asynctask.js:301
-#: pretix/static/pretixcontrol/js/ui/main.js:71
+#: pretix/static/pretixbase/js/asynctask.js
+msgid "If this takes longer than a few minutes, please contact us."
+msgstr "במידה וזה לוקח יותר מכמה דקות, צור עימנו קשר."
+
+#: pretix/static/pretixbase/js/asynctask.js
 msgid "Close message"
-msgstr ""
+msgstr "סגור הודעה"
 
-#: pretix/static/pretixcontrol/js/clipboard.js:23
+#: pretix/static/pretixcontrol/js/clipboard.js
 msgid "Copied!"
-msgstr ""
+msgstr "הועתק!"
 
-#: pretix/static/pretixcontrol/js/clipboard.js:29
+#: pretix/static/pretixcontrol/js/clipboard.js
 msgid "Press Ctrl-C to copy!"
+msgstr "לחץ Ctrl-C להעתיק!"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/App.vue
+msgid "Edit"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:12
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:18
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:24
-msgid "is one of"
+#: pretix/static/pretixcontrol/js/ui/checkinrules/App.vue
+msgid "Visualize"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:30
-msgid "is before"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:34
-msgid "is after"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:93
-msgid "Product"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:97
-msgid "Product variation"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:101
-msgid "Gate"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:105
-msgid "Current date and time"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:109
-msgid "Current day of the week (1 = Monday, 7 = Sunday)"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:113
-msgid "Number of previous entries"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:117
-msgid "Number of previous entries since midnight"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:121
-msgid "Number of previous entries since"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:125
-msgid "Number of previous entries before"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:129
-msgid "Number of days with a previous entry"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:133
-msgid "Minutes since last entry (-1 on first entry)"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:137
-msgid "Minutes since first entry (-1 on first entry)"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:164
-msgid "All of the conditions below (AND)"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:165
-msgid "At least one of the conditions below (OR)"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:166
-msgid "Event start"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:167
-msgid "Event end"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:168
-msgid "Event admission"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:169
-msgid "custom date and time"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:170
-msgid "custom time"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:171
-msgid "Tolerance (minutes)"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:172
-msgid "Add condition"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:173
-msgid "minutes"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:174
-msgid "Duplicate"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:72
-msgid "Check-in QR"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:387
-msgid "The PDF background file could not be loaded for the following reason:"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:648
-msgid "Group of objects"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:653
-msgid "Text object"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:655
-msgid "Barcode area"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:657
-msgid "Image area"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:659
-msgid "Powered by pretix"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:661
-msgid "Object"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:665
-msgid "Ticket design"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:964
-msgid "Saving failed."
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:1033
-#: pretix/static/pretixcontrol/js/ui/editor.js:1083
-msgid "Error while uploading your PDF file, please try again."
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:1066
-msgid "Do you really want to leave the editor without saving your changes?"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/mail.js:19
-msgid "An error has occurred."
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/mail.js:52
-msgid "Generating messages …"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/main.js:109
-msgid "Unknown error."
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/main.js:311
-msgid "Your color has great contrast and is very easy to read!"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/main.js:315
-msgid "Your color has decent contrast and is probably good-enough to read!"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/main.js:319
+#: pretix/static/pretixcontrol/js/ui/checkinrules/App.vue
 msgid ""
-"Your color has bad contrast for text on white background, please choose a "
-"darker shade."
+"Your rule always filters by product or variation, but the following products "
+"or variations are not contained in any of your rule parts so people with "
+"these tickets will not get in:"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/main.js:468
-#: pretix/static/pretixcontrol/js/ui/main.js:488
+#: pretix/static/pretixcontrol/js/ui/checkinrules/App.vue
+msgid "Please double-check if this was intentional."
+msgstr ""
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "All of the conditions below (AND)"
+msgstr "כל התנאים מטה (ו)"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "At least one of the conditions below (OR)"
+msgstr "לפחות אחד מהתנאים מטה (או)"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Event start"
+msgstr "תחילת אירוע"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Event end"
+msgstr "סוף אירוע"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Event admission"
+msgstr "כניסה לאירוע"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "custom date and time"
+msgstr "תאריך ושעה מותאמים אישית"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "custom time"
+msgstr "שעה מותאמת אישית"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Tolerance (minutes)"
+msgstr "סבילות (דקות)"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Add condition"
+msgstr "הוסף תנאי"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "minutes"
+msgstr "דקות"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Duplicate"
+msgstr "שכפול"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgctxt "entry_status"
+msgid "present"
+msgstr "נוכח"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgctxt "entry_status"
+msgid "absent"
+msgstr "נעדר"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "is one of"
+msgstr "הוא אחד מ"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "is before"
+msgstr "לפני"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "is after"
+msgstr "אחרי"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "="
+msgstr "="
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Product"
+msgstr "מוצר"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Product variation"
+msgstr "וריאצית מוצר"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Gate"
+msgstr "שער"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Current date and time"
+msgstr "זמן ותאריך נוכחי"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Current day of the week (1 = Monday, 7 = Sunday)"
+msgstr "יום נוכחי בשבוע (1 = יום שני, 7 = יום ראשון)"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Current entry status"
+msgstr "סטטוס כניסה נוכחי"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of previous entries"
+msgstr "מספר כניסות קודמות"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of previous entries since midnight"
+msgstr "מספר כניסות קודמות מחצות"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of previous entries since"
+msgstr "מספר כניסות קודמות מ"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of previous entries before"
+msgstr "מספר כניסות קודמות לפני"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of days with a previous entry"
+msgstr "מספר ימים עם כניסה קודמת"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of days with a previous entry since"
+msgstr "מספר ימים עם כניסה קודמת מאז"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of days with a previous entry before"
+msgstr "מספר ימים עם כניסה קודמת לפני"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Minutes since last entry (-1 on first entry)"
+msgstr "דקות מאז כניסה אחרונה (-1 לכניסה הראשונה)"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Minutes since first entry (-1 on first entry)"
+msgstr "דקות מאז הכניסה הראשונה (-1 לכניסה הראשונה)"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/django-interop.ts
+msgid "Error: Product not found!"
+msgstr "תקלה: מוצר לא נמצא!"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/django-interop.ts
+msgid "Error: Variation not found!"
+msgstr "תקלה: וריאציה לא נמצאה!"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Check-in QR"
+msgstr "ברקוד צ'ק אין"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "The PDF background file could not be loaded for the following reason:"
+msgstr "קובץ הPDF ברקע לא יכל להיטען מהסיבה הנ\"ל:"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Group of objects"
+msgstr "קבוצת אובייקטים"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Text object (deprecated)"
+msgstr "אובייקט טקסט (הונמך בערכו)"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Text box"
+msgstr "קופסת טקסט"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Barcode area"
+msgstr "אזור ברקוד"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Image area"
+msgstr "אזור תמונה"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Powered by pretix"
+msgstr "מופעל ע\"י Pretix"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Object"
+msgstr "אובייקט"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Ticket design"
+msgstr "עיצוב כרטיס"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Saving failed."
+msgstr "שמירה נכשלה."
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Error while uploading your PDF file, please try again."
+msgstr "אירעה שגיאה בהעלאת קובץ הPDF, נסה שוב."
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Do you really want to leave the editor without saving your changes?"
+msgstr "האם אתה בטוח שברצונך לצאת מהעורך מבלי לשמור את השינויים שלך?"
+
+#: pretix/static/pretixcontrol/js/ui/mail.js
+msgid "An error has occurred."
+msgstr "אירעה שגיאה."
+
+#: pretix/static/pretixcontrol/js/ui/mail.js
+msgid "Generating messages …"
+msgstr "יוצר הודעות…"
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "Unknown error."
+msgstr "שגיאה לא ידועה."
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "Your color has great contrast and will provide excellent accessibility."
+msgstr "לצבע שלך יש ניגודיות מצויינת ויאפשר נגישות טובה."
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid ""
+"Your color has decent contrast and is sufficient for minimum accessibility "
+"requirements."
+msgstr "לצבע שלך יש ניגודיות סבירה ומתאים לדרישות הנגישות המינימליות."
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid ""
+"Your color has insufficient contrast to white. Accessibility of your site "
+"will be impacted."
+msgstr "לצבע שלך יש ניגודיות חלשה מדי ביחד לצבע לבן. נגישות האתר תיפגע."
+
+#: pretix/static/pretixcontrol/js/ui/main.js
 msgid "Search query"
-msgstr ""
+msgstr "שאילתת חיפוש"
 
-#: pretix/static/pretixcontrol/js/ui/main.js:486
+#: pretix/static/pretixcontrol/js/ui/main.js
 msgid "All"
-msgstr ""
+msgstr "הכל"
 
-#: pretix/static/pretixcontrol/js/ui/main.js:487
+#: pretix/static/pretixcontrol/js/ui/main.js
 msgid "None"
-msgstr ""
+msgstr "כלום"
 
-#: pretix/static/pretixcontrol/js/ui/main.js:491
+#: pretix/static/pretixcontrol/js/ui/main.js
 msgid "Selected only"
-msgstr ""
+msgstr "שנבחרו בלבד"
 
-#: pretix/static/pretixcontrol/js/ui/main.js:926
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "Enter page number between 1 and %(max)s."
+msgstr "הכנס מספר דף בין 1 ל %(max)s."
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "Invalid page number."
+msgstr "מספר דף לא תקין."
+
+#: pretix/static/pretixcontrol/js/ui/main.js
 msgid "Use a different name internally"
-msgstr ""
+msgstr "השתמש בשם אחר לצורך פנימי"
 
-#: pretix/static/pretixcontrol/js/ui/main.js:966
+#: pretix/static/pretixcontrol/js/ui/main.js
 msgid "Click to close"
-msgstr ""
+msgstr "לחץ לסגירה"
 
-#: pretix/static/pretixcontrol/js/ui/main.js:1041
+#: pretix/static/pretixcontrol/js/ui/main.js
 msgid "You have unsaved changes!"
-msgstr ""
+msgstr "יש לך שינויים שלא נשמרו!"
 
-#: pretix/static/pretixcontrol/js/ui/orderchange.js:25
+#: pretix/static/pretixcontrol/js/ui/orderchange.js
 msgid "Calculating default price…"
-msgstr ""
+msgstr "מחשב מחיר ברירת מחדל…"
 
-#: pretix/static/pretixcontrol/js/ui/question.js:42
+#: pretix/static/pretixcontrol/js/ui/plugins.js
+msgid "No results"
+msgstr "אין תוצאות"
+
+#: pretix/static/pretixcontrol/js/ui/question.js
 msgid "Others"
-msgstr ""
+msgstr "אחרים"
 
-#: pretix/static/pretixcontrol/js/ui/question.js:82
+#: pretix/static/pretixcontrol/js/ui/question.js
 msgid "Count"
-msgstr ""
+msgstr "ספירה"
 
-#: pretix/static/pretixcontrol/js/ui/question.js:137
-#: pretix/static/pretixpresale/js/ui/questions.js:270
-msgid "Yes"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/question.js:138
-#: pretix/static/pretixpresale/js/ui/questions.js:270
-msgid "No"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/subevent.js:111
+#: pretix/static/pretixcontrol/js/ui/subevent.js
 msgid "(one more date)"
 msgid_plural "({num} more dates)"
-msgstr[0] ""
-msgstr[1] ""
-msgstr[2] ""
-msgstr[3] ""
+msgstr[0] "תאריך נוסף"
+msgstr[1] "תאריכים נוספים"
+msgstr[2] "תאריכים נוספים"
+msgstr[3] "{num} תאריכים נוספים"
 
-#: pretix/static/pretixpresale/js/ui/cart.js:43
+#: pretix/static/pretixpresale/js/ui/cart.js
 msgid ""
 "The items in your cart are no longer reserved for you. You can still "
 "complete your order as long as they’re available."
 msgstr ""
+"יש מוצרים בסל הקניות שאינם שמורים עבורך עוד. אתה יכול להשלים את הרכישה כל "
+"עוד הם זמינים."
 
-#: pretix/static/pretixpresale/js/ui/cart.js:45
+#: pretix/static/pretixpresale/js/ui/cart.js
 msgid "Cart expired"
-msgstr ""
+msgstr "פג תוקפו של סל הקניות"
 
-#: pretix/static/pretixpresale/js/ui/cart.js:50
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid "Your cart is about to expire."
+msgstr "תוקף סל הקניות שלך עומד לפוג."
+
+#: pretix/static/pretixpresale/js/ui/cart.js
 msgid "The items in your cart are reserved for you for one minute."
 msgid_plural "The items in your cart are reserved for you for {num} minutes."
-msgstr[0] ""
-msgstr[1] ""
-msgstr[2] ""
-msgstr[3] ""
+msgstr[0] "המוצרים בעגלה שמורים עבורך למשך דקה אחת."
+msgstr[1] "המוצרים בעגלה שמורים עבורך למשך {num} דקות."
+msgstr[2] "המוצרים בעגלה שמורים עבורך למשך {num} דקות."
+msgstr[3] "המוצרים בעגלה שמורים עבורך למשך {num} דקות."
 
-#: pretix/static/pretixpresale/js/ui/main.js:171
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid "Your cart has expired."
+msgstr "פג תוקפו של סל הקניות שלך."
+
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid ""
+"The items in your cart are no longer reserved for you. You can still "
+"complete your order as long as they're available."
+msgstr ""
+"המוצרים בסל הקניות שלך אינם שמורים עבורך יותר. תוכל להשלים את הרכישה כל עוד "
+"הם זמינים."
+
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid "Do you want to renew the reservation period?"
+msgstr "האם תרצה לחדש את זמן השמירה?"
+
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid "Renew reservation"
+msgstr "חידוש שמירה"
+
+#: pretix/static/pretixpresale/js/ui/main.js
 msgid "The organizer keeps %(currency)s %(amount)s"
-msgstr ""
+msgstr "המארגן שומר %(currency)s %(amount)s"
 
-#: pretix/static/pretixpresale/js/ui/main.js:179
+#: pretix/static/pretixpresale/js/ui/main.js
 msgid "You get %(currency)s %(amount)s back"
-msgstr ""
+msgstr "אתה מקבל %(currency)s %(amount)s בחזרה"
 
-#: pretix/static/pretixpresale/js/ui/main.js:195
+#: pretix/static/pretixpresale/js/ui/main.js
 msgid "Please enter the amount the organizer can keep."
-msgstr ""
+msgstr "נא הזן את הכמות שהמארגן יכול לשמור."
 
-#: pretix/static/pretixpresale/js/ui/main.js:412
-msgid "Please enter a quantity for one of the ticket types."
-msgstr ""
-
-#: pretix/static/pretixpresale/js/ui/main.js:448
-msgid "required"
-msgstr ""
-
-#: pretix/static/pretixpresale/js/ui/main.js:551
-#: pretix/static/pretixpresale/js/ui/main.js:570
-msgid "Time zone:"
-msgstr ""
-
-#: pretix/static/pretixpresale/js/ui/main.js:561
+#: pretix/static/pretixpresale/js/ui/main.js
 msgid "Your local time:"
-msgstr ""
+msgstr "הזמן המקומי שלך הוא:"
 
-#: pretix/static/pretixpresale/js/walletdetection.js:39
+#: pretix/static/pretixpresale/js/walletdetection.js
 msgid "Google Pay"
-msgstr ""
+msgstr "Google Pay"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:16
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Quantity"
-msgstr ""
+msgstr "כמות"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:17
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Decrease quantity"
-msgstr ""
+msgstr "הנמכת כמות"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:18
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Increase quantity"
-msgstr ""
+msgstr "הגדלת כמות"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:19
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Filter events by"
+msgstr "סינון אירועים לפי"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Filter"
+msgstr "סינון"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Price"
-msgstr ""
+msgstr "מחיר"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:20
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+#, javascript-format
+msgctxt "widget"
+msgid "Original price: %s"
+msgstr "מחיר מקורי: %s"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+#, javascript-format
+msgctxt "widget"
+msgid "New price: %s"
+msgstr "מחיר חדש: %s"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Select"
+msgstr "בחר"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 #, javascript-format
 msgctxt "widget"
 msgid "Select %s"
-msgstr ""
+msgstr "בחר %s"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:21
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 #, javascript-format
 msgctxt "widget"
 msgid "Select variant %s"
-msgstr ""
+msgstr "בחר וריאציה %s"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:22
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Sold out"
-msgstr ""
+msgstr "אזל המלאי"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:23
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Buy"
-msgstr ""
+msgstr "לרכישה"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:24
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Register"
-msgstr ""
+msgstr "הירשם"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:25
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Reserved"
-msgstr ""
+msgstr "שמור"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:26
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "FREE"
-msgstr ""
+msgstr "חינם"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:27
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "from %(currency)s %(price)s"
-msgstr ""
+msgstr "מ %(currency)s %(price)s"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:28
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+#, javascript-format
+msgctxt "widget"
+msgid "Image of %s"
+msgstr "תמונה של %s"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "incl. %(rate)s% %(taxname)s"
-msgstr ""
+msgstr "%(rate)s% %(taxname)s כלול"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:29
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "plus %(rate)s% %(taxname)s"
-msgstr ""
+msgstr "ו %(rate)s% %(taxname)s"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:30
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "incl. taxes"
-msgstr ""
+msgstr "כולל מיסים"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:31
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "plus taxes"
-msgstr ""
+msgstr "בתוספת מיסים"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:32
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 #, javascript-format
 msgctxt "widget"
 msgid "currently available: %s"
-msgstr ""
+msgstr "זמין כרגע: %s"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:33
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Only available with a voucher"
-msgstr ""
+msgstr "זמין רק בשימוש בשובר"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:34
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Not yet available"
+msgstr "עדיין לא זמין"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Not available anymore"
+msgstr "כבר לא זמין"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Currently not available"
+msgstr "לא זמין כרגע"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 #, javascript-format
 msgctxt "widget"
 msgid "minimum amount to order: %s"
-msgstr ""
+msgstr "כמות מינימאלית להזמנה: %s"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:35
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Close ticket shop"
-msgstr ""
+msgstr "סגור את חנות הכרטיסים"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:36
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "The ticket shop could not be loaded."
-msgstr ""
+msgstr "אירעה שגיאה בטעינת חנות הכרטיסים."
 
-#: pretix/static/pretixpresale/js/widget/widget.js:37
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid ""
 "There are currently a lot of users in this ticket shop. Please open the shop "
 "in a new tab to continue."
-msgstr ""
+msgstr "יש כרגע עומס על המערכת. נסה לפתוח את האתר בכרטיסייה חדשה."
 
-#: pretix/static/pretixpresale/js/widget/widget.js:39
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Open ticket shop"
-msgstr ""
+msgstr "פתח חנות כרטיסים"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:40
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Checkout"
+msgstr "לתשלום"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "The cart could not be created. Please try again later"
-msgstr ""
+msgstr "אירעה שגיאה ביצירת סל הקניות. נסה שוב מאוחר יותר"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:41
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid ""
 "We could not create your cart, since there are currently too many users in "
 "this ticket shop. Please click \"Continue\" to retry in a new tab."
 msgstr ""
+"לא הצלחנו ליצור את סל הקניות מכיוון ויש עומס על המערכת. נסה לפתוח את האתר "
+"מחדש בכרטיסייה חדשה."
 
-#: pretix/static/pretixpresale/js/widget/widget.js:43
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Waiting list"
-msgstr ""
+msgstr "רשימת המתנה"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:44
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid ""
 "You currently have an active cart for this event. If you select more "
 "products, they will be added to your existing cart."
 msgstr ""
+"יש לך כבר סל קניות קיים לאירוע זה. אם תבחר מוצרים נוספים, הם יתווספו לסל "
+"הקניות הקיים."
 
-#: pretix/static/pretixpresale/js/widget/widget.js:46
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Resume checkout"
-msgstr ""
+msgstr "המשך לתשלום"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:47
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Redeem a voucher"
-msgstr ""
+msgstr "מימוש שובר"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:48
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Redeem"
-msgstr ""
+msgstr "מימוש"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:49
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Voucher code"
-msgstr ""
+msgstr "קוד שובר"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:50
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Close"
-msgstr ""
+msgstr "סגור"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:51
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Close checkout"
+msgstr "סגירת רכישה"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "You cannot cancel this operation. Please wait for loading to finish."
+msgstr "לא ניתן לבטל פעולה זו. נא להמתין לסיום הטעינה."
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Continue"
-msgstr ""
+msgstr "המשך"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:52
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
-msgid "See variations"
-msgstr ""
+msgid "Show variants"
+msgstr "הצג וריאציות"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:53
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Hide variants"
+msgstr "הסתר וריאציות"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Choose a different event"
-msgstr ""
+msgstr "בחר אירוע אחר"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:54
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Choose a different date"
-msgstr ""
+msgstr "בחר תאריך אחר"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:55
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Back"
-msgstr ""
+msgstr "חזרה אחורה"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:56
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Next month"
-msgstr ""
+msgstr "חודש הבא"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:57
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Previous month"
-msgstr ""
+msgstr "חודש קודם"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:58
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Next week"
-msgstr ""
+msgstr "שבוע הבא"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:59
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Previous week"
-msgstr ""
+msgstr "שבוע קודם"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:60
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Open seat selection"
-msgstr ""
+msgstr "פתח בחירת מושבים"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:61
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid ""
 "Some or all ticket categories are currently sold out. If you want, you can "
 "add yourself to the waiting list. We will then notify if seats are available "
 "again."
 msgstr ""
+"אזל המלאי של כל קטגוריות הכרטיסים או חלק מהן. אפשר להירשם לרשימת ההמתנה "
+"ונעדכן אותך במידה והכרטיסים יהיו זמינים שוב."
 
-#: pretix/static/pretixpresale/js/widget/widget.js:62
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Load more"
-msgstr ""
+msgstr "טען עוד"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:64
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "Mo"
-msgstr ""
+msgstr "יום ב'"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:65
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "Tu"
-msgstr ""
+msgstr "יום ג'"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:66
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "We"
-msgstr ""
+msgstr "יום ד'"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:67
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "Th"
-msgstr ""
+msgstr "יום ה'"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:68
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "Fr"
-msgstr ""
+msgstr "יום ו'"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:69
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "Sa"
-msgstr ""
+msgstr "יום ש'"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:70
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "Su"
-msgstr ""
+msgstr "יום א'"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:73
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Monday"
+msgstr "יום שני"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Tuesday"
+msgstr "יום שלישי"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Wednesday"
+msgstr "יום רביעי"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Thursday"
+msgstr "יום חמישי"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Friday"
+msgstr "יום שישי"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Saturday"
+msgstr "יום שבת"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Sunday"
+msgstr "יום ראשון"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "January"
-msgstr ""
+msgstr "ינואר"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:74
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "February"
-msgstr ""
+msgstr "פברואר"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:75
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "March"
-msgstr ""
+msgstr "מרץ"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:76
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "April"
-msgstr ""
+msgstr "אפריל"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:77
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "May"
-msgstr ""
+msgstr "מאי"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:78
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "June"
-msgstr ""
+msgstr "יוני"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:79
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "July"
-msgstr ""
+msgstr "יולי"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:80
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "August"
-msgstr ""
+msgstr "אוגוסט"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:81
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "September"
-msgstr ""
+msgstr "ספטמבר"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:82
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "October"
-msgstr ""
+msgstr "אוקטובר"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:83
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "November"
-msgstr ""
+msgstr "נובמבר"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:84
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "December"
-msgstr ""
+msgstr "דצמבר"
+
+#~ msgid "iDEAL"
+#~ msgstr "iDEAL"

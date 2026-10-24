@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -33,20 +33,21 @@
 # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations under the License.
 
-import hashlib
-import ipaddress
+import logging
 
 from django import forms
 from django.conf import settings
 from django.contrib.auth.password_validation import (
     password_validators_help_texts, validate_password,
 )
-from django.utils.functional import cached_property
 from django.utils.translation import gettext_lazy as _
 
+from pretix.base.metrics import pretix_failed_logins
 from pretix.base.models import User
 from pretix.helpers.dicts import move_to_end
-from pretix.helpers.http import get_client_ip
+from pretix.helpers.ratelimit import rate_limit
+
+logger = logging.getLogger(__name__)
 
 
 class LoginForm(forms.Form):
@@ -55,6 +56,7 @@ class LoginForm(forms.Form):
     username/password logins.
     """
     keep_logged_in = forms.BooleanField(label=_("Keep me logged in"), required=False)
+    origin = forms.CharField(widget=forms.HiddenInput, required=False)
 
     error_messages = {
         'invalid_login': _("This combination of credentials is not known to our system."),
@@ -80,36 +82,20 @@ class LoginForm(forms.Form):
         else:
             move_to_end(self.fields, 'keep_logged_in')
 
-    @cached_property
-    def ratelimit_key(self):
-        if not settings.HAS_REDIS:
-            return None
-        client_ip = get_client_ip(self.request)
-        if not client_ip:
-            return None
-        try:
-            client_ip = ipaddress.ip_address(client_ip)
-        except ValueError:
-            # Web server not set up correctly
-            return None
-        if client_ip.is_private:
-            # This is the private IP of the server, web server not set up correctly
-            return None
-        return 'pretix_login_{}'.format(hashlib.sha1(str(client_ip).encode()).hexdigest())
-
     def clean(self):
         if all(k in self.cleaned_data for k, f in self.fields.items() if f.required):
-            if self.ratelimit_key:
-                from django_redis import get_redis_connection
-                rc = get_redis_connection("redis")
-                cnt = rc.get(self.ratelimit_key)
-                if cnt and int(cnt) > 10:
-                    raise forms.ValidationError(self.error_messages['rate_limit'], code='rate_limit')
+            rate_limit_kwargs = dict(include_ip_from_request=self.request, max_num=10, expire_time=300)
+            if rate_limit("login", **rate_limit_kwargs, increase=False):
+                # Check rate limit without counting up, we increase below only on failed logins
+                pretix_failed_logins.inc(1, reason="ratelimit")
+                logger.info("Backend login rejected due to rate limit.")
+                raise forms.ValidationError(self.error_messages['rate_limit'], code='rate_limit')
             self.user_cache = self.backend.form_authenticate(self.request, self.cleaned_data)
             if self.user_cache is None:
-                if self.ratelimit_key:
-                    rc.incr(self.ratelimit_key)
-                    rc.expire(self.ratelimit_key, 300)
+                logger.info("Backend login invalid.")
+                pretix_failed_logins.inc(1, reason="invalid")
+                # Count towards rate limit (result is ignored, we are checking above)
+                rate_limit("login", **rate_limit_kwargs)
                 raise forms.ValidationError(
                     self.error_messages['invalid_login'],
                     code='invalid_login'
@@ -131,6 +117,8 @@ class LoginForm(forms.Form):
         If the given user may log in, this method should return None.
         """
         if not user.is_active:
+            logger.info("Backend login rejected due to user inactive.")
+            pretix_failed_logins.inc(1, reason="inactive")
             raise forms.ValidationError(
                 self.error_messages['inactive'],
                 code='inactive',
@@ -185,8 +173,7 @@ class RegistrationForm(forms.Form):
     def clean_password(self):
         password1 = self.cleaned_data.get('password', '')
         user = User(email=self.cleaned_data.get('email'))
-        if validate_password(password1, user=user) is not None:
-            raise forms.ValidationError(_(password_validators_help_texts()), code='pw_invalid')
+        validate_password(password1, user=user)
         return password1
 
     def clean_email(self):
@@ -203,21 +190,38 @@ class PasswordRecoverForm(forms.Form):
     error_messages = {
         'pw_mismatch': _("Please enter the same password twice"),
     }
+    email = forms.EmailField(
+        max_length=255,
+        disabled=True,
+        label=_("Your email address"),
+        widget=forms.EmailInput(
+            attrs={'autocomplete': 'username'},
+        ),
+    )
     password = forms.CharField(
         label=_('Password'),
-        widget=forms.PasswordInput,
+        widget=forms.PasswordInput(attrs={
+            'autocomplete': 'new-password',
+        }),
         max_length=4096,
         required=True
     )
     password_repeat = forms.CharField(
         label=_('Repeat password'),
-        widget=forms.PasswordInput,
+        widget=forms.PasswordInput(attrs={
+            'autocomplete': 'new-password',
+        }),
         max_length=4096,
     )
 
     def __init__(self, user_id=None, *args, **kwargs):
-        self.user_id = user_id
-        super().__init__(*args, **kwargs)
+        initial = kwargs.pop('initial', {})
+        try:
+            self.user = User.objects.get(id=user_id)
+            initial['email'] = self.user.email
+        except User.DoesNotExist:
+            self.user = None
+        super().__init__(*args, initial=initial, **kwargs)
 
     def clean(self):
         password1 = self.cleaned_data.get('password', '')
@@ -232,18 +236,14 @@ class PasswordRecoverForm(forms.Form):
 
     def clean_password(self):
         password1 = self.cleaned_data.get('password', '')
-        try:
-            user = User.objects.get(id=self.user_id)
-        except User.DoesNotExist:
-            user = None
-        if validate_password(password1, user=user) is not None:
+        if validate_password(password1, user=self.user) is not None:
             raise forms.ValidationError(_(password_validators_help_texts()), code='pw_invalid')
         return password1
 
 
 class PasswordForgotForm(forms.Form):
     email = forms.EmailField(
-        label=_('E-mail'),
+        label=_('Email'),
     )
 
     def __init__(self, *args, **kwargs):
@@ -296,3 +296,10 @@ class ReauthForm(forms.Form):
                 self.error_messages['inactive'],
                 code='inactive',
             )
+
+
+class ConfirmationCodeForm(forms.Form):
+    code = forms.IntegerField(
+        label=_('Confirmation code'),
+        widget=forms.NumberInput(attrs={'class': 'confirmation-code-input', 'inputmode': 'numeric', 'type': 'text'}),
+    )

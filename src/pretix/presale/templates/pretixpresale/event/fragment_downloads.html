@@ -35,10 +35,10 @@
             </p>
         </div>
     </div>
-{% elif can_download and download_buttons and order.count_positions %}
+{% elif can_download and download_buttons and order.count_positions and tickets_with_download  %}
     <div class="info-download">
         <h3 class="sr-only">{% trans "Ticket download" %}</h3>
-        {% if cart.positions|length > 1 and can_download_multi %} {# never True on ticket page #}
+        {% if tickets_with_download|length > 1 and can_download_multi %} {# never True on ticket page #}
             <div>
             {% for b in download_buttons %}
                 {% if b.multi %}
@@ -88,7 +88,7 @@
         </p>
         {% endif %}
     </div>
-{% elif not can_download and plugins_allow_ticket_download and ticket_download_date %}
+{% elif not can_download and plugins_allow_ticket_download and ticket_download_date and event.settings.ticket_download %}
     {% if order.status == 'p' %}
         <div class="alert alert-info info-download">
             {% blocktrans trimmed with date=ticket_download_date|date:"SHORT_DATE_FORMAT" %}

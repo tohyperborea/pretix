@@ -23,7 +23,7 @@
         text-align: center;
 
         &.gone, .gone {
-            color: $alert-danger-text;
+            color: $brand-danger;
         }
         &.unavailable, .unavailable {
             color: $alert-warning-text;
@@ -53,7 +53,7 @@
     &.variation label {
         font-weight: normal;
     }
-    h4 {
+    h4, .h4 {
         font-size: inherit;
         margin: 0;
         line-height: inherit;
@@ -62,7 +62,7 @@
             font-weight: bold;
         }
     }
-    h5 {
+    h5, .h5 {
         font-size: inherit;
         font-weight: inherit;
         margin: 0;
@@ -96,6 +96,15 @@
         &::before {
             border-top: 1px solid $table-border-color;
         }
+    }
+}
+
+.product-appendix-row {
+    border-top: 1px solid $table-border-color;
+    border-bottom: 1px solid $table-border-color;
+    padding: 1.25*$line-height-computed 0;
+    & > :last-child {
+        margin-bottom: 0;
     }
 }
 
@@ -136,9 +145,18 @@ article.item-with-variations .product-row:last-child:after {
     display: none;
 }
 
+.panel-body:not(:has(*)) {
+  padding: 0;
+}
+
 .panel-body > *:last-child,
 .panel-body address:last-child {
     margin-bottom: 0;
+}
+
+.panel > hr {
+    margin: 0;
+    border-top: 1px solid $table-border-color;
 }
 
 .product-row {
@@ -194,7 +212,7 @@ div.front-page {
     padding: 5px;
     text-align: center;
 
-    a {
+    a, .btn-link {
         text-decoration: underline;
         color: white;
     }
@@ -231,41 +249,26 @@ div.front-page {
     }
 }
 
-.subevent-list {
-    background-color: white;
-
-    .row {
-        margin: 0;
-    }
-    .label {
-        text-decoration: none;
-    }
-    .subevent-row a {
-        display: block;
-        color: $text-color;
-        padding: 3px 0;
-    }
-    .subevent-row:nth-child(2n) a {
-        background-color: $gray-lighter;
-    }
-    .subevent-row:hover a {
-        background-color: darken($gray-lighter, 10%);
-    }
-    .subevent-row .row > div {
-        padding: 5px;
-        min-height: 35px; /* label height */
-        vertical-align: middle;
-    }
-}
-
-.calendar-nav, .calendar-nav li {
+.calendar-nav, .calendar-nav > li {
     list-style: none;
     margin: 0;
     padding: 0
 }
-.calendar-nav li {
-    padding: 10px 0;
+.calendar-nav > li {
+    padding: 0 0 10px;
 }
+.calendar-nav {
+    display: flex;
+    align-items: end;
+}
+.calendar-nav > li {
+    width: 60%;
+}
+.calendar-nav > li:first-child,
+.calendar-nav > li:last-child {
+    width: 20%;
+}
+
 
 .subevent-toggle {
     display: none;
@@ -282,7 +285,7 @@ h2.subevent-head {
         background: $brand-success;
     }
     .slider-handle {
-        @include slider_background-image($brand-success, darken($brand-success, 5%), mix($brand-success, darken($brand-success, 5%)));
+        @include slider_background-image($brand-success, var(--pretix-brand-success-darken-5), $brand-success);
     }
 
     .slider-tick-container {

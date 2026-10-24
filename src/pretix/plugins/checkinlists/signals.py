@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -34,6 +34,12 @@ def register_csv(sender, **kwargs):
 def register_pdf(sender, **kwargs):
     from .exporters import PDFCheckinList
     return PDFCheckinList
+
+
+@receiver(register_data_exporters, dispatch_uid="export_checkin_code_csv")
+def register_csv_codes(sender, **kwargs):
+    from .exporters import CSVCheckinCodeList
+    return CSVCheckinCodeList
 
 
 @receiver(register_data_exporters, dispatch_uid="export_checkin_list")

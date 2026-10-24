@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -32,26 +32,28 @@
 # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations under the License.
 import logging
+import time
 
 from django.conf import settings
-from django.core.files.storage import default_storage
 from django.utils import translation
 from django.utils.translation import get_language_info
 from django_scopes import get_scope
 from i18nfield.strings import LazyI18nString
 
-from pretix.base.settings import GlobalSettingsObject
+from pretix.base.settings import COUNTRY_STATE_LABEL, GlobalSettingsObject
 from pretix.helpers.i18n import (
     get_javascript_format_without_seconds, get_moment_locale,
 )
 
 from ..base.i18n import get_language_without_region
+from ..base.services.placeholders import PlaceholderContext
+from ..multidomain.urlreverse import eventreverse
 from .cookies import get_cookie_providers
 from .signals import (
     footer_link, global_footer_link, global_html_footer, global_html_head,
     global_html_page_header, html_footer, html_head, html_page_header,
 )
-from .views.cart import cart_session, get_or_create_cart_id
+from .views.theme import _get_source_cache_key
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +72,6 @@ def _default_context(request):
         return {}
 
     ctx = {
-        'css_file': None,
         'DEBUG': settings.DEBUG,
     }
     _html_head = []
@@ -80,10 +81,28 @@ def _default_context(request):
 
     if hasattr(request, 'event') and request.event:
         pretix_settings = request.event.settings
+
+        # This makes sure a new version of the theme is loaded whenever settings or the source files have changed
+        theme_css_version = (f'{_get_source_cache_key()}-'
+                             f'{request.organizer.cache.get_or_set("css_version", default=lambda: int(time.time()))}-'
+                             f'{request.event.cache.get_or_set("css_version", default=lambda: int(time.time()))}')
+        ctx['css_theme'] = eventreverse(request.event, "presale:event.theme.css") + "?version=" + theme_css_version
+
+        templating_context = PlaceholderContext(event=request.event)
+        ctx['event_texts'] = {
+            field: templating_context.format(str(request.event.settings.get(field)))
+            for field in ('banner_text', 'banner_text_bottom', 'voucher_explanation_text')
+        }
+
     elif hasattr(request, 'organizer') and request.organizer:
         pretix_settings = request.organizer.settings
+
+        # This makes sure a new version of the theme is loaded whenever settings or the source files have changed
+        theme_css_version = f'{_get_source_cache_key()}-{request.organizer.cache.get_or_set("css_version", default=lambda: int(time.time()))}'
+        ctx['css_theme'] = eventreverse(request.organizer, "presale:organizer.theme.css") + "?version=" + theme_css_version
     else:
         pretix_settings = GlobalSettingsObject().settings
+        ctx['css_theme'] = None
 
     text = pretix_settings.get('footer_text', as_type=LazyI18nString)
     link = pretix_settings.get('footer_link', as_type=LazyI18nString)
@@ -94,19 +113,20 @@ def _default_context(request):
         else:
             ctx['footer_text'] = str(text)
 
-    for receiver, response in global_html_page_header.send(None, request=request):
-        _html_page_header.append(response)
-    for receiver, response in global_html_head.send(None, request=request):
-        _html_head.append(response)
-    for receiver, response in global_html_footer.send(None, request=request):
-        _html_foot.append(response)
-    for receiver, response in global_footer_link.send(None, request=request):
-        if isinstance(response, list):
-            _footer += response
-        else:
-            _footer.append(response)
+    if request.resolver_match:  # do not run on 404 pages
+        for receiver, response in global_html_page_header.send(None, request=request):
+            _html_page_header.append(response)
+        for receiver, response in global_html_head.send(None, request=request):
+            _html_head.append(response)
+        for receiver, response in global_html_footer.send(None, request=request):
+            _html_foot.append(response)
+        for receiver, response in global_footer_link.send(None, request=request):
+            if isinstance(response, list):
+                _footer += response
+            else:
+                _footer.append(response)
 
-    if hasattr(request, 'event') and get_scope():
+    if request.resolver_match and hasattr(request, 'event') and get_scope():
         for receiver, response in html_head.send(request.event, request=request):
             _html_head.append(response)
         for receiver, response in html_page_header.send(request.event, request=request):
@@ -122,9 +142,6 @@ def _default_context(request):
             {'url': fl.url, 'label': fl.label}
             for fl in request.event.footer_links.all()
         ], timeout=300)
-
-        if request.event.settings.presale_css_file:
-            ctx['css_file'] = default_storage.url(request.event.settings.presale_css_file)
 
         ctx['event_logo'] = request.event.settings.get('logo_image', as_type=str, default='')[7:]
         ctx['event_logo_image_large'] = request.event.settings.logo_image_large
@@ -146,19 +163,16 @@ def _default_context(request):
         ctx['languages'] = [get_language_info(code) for code in request.event.settings.locales]
 
         ctx['cookie_providers'] = get_cookie_providers(request.event, request)
-        if get_or_create_cart_id(request, create=False):
-            c = cart_session(request)
-            if "widget_data" in c and c["widget_data"].get("consent"):
-                ctx['cookie_consent_from_widget'] = c["widget_data"].get("consent").split(",")
+        if 'requested_consent_from_widget' in request.session:
+            # We only need to present this to the frontend once, JavaScript will then save it to localStorage/sessionStorage
+            ctx['cookie_consent_from_widget'] = request.session.pop("requested_consent_from_widget").split(",")
 
         if request.resolver_match:
             ctx['cart_namespace'] = request.resolver_match.kwargs.get('cart_namespace', '')
-    elif hasattr(request, 'organizer'):
+    elif request.resolver_match and hasattr(request, 'organizer'):
         ctx['languages'] = [get_language_info(code) for code in request.organizer.settings.locales]
 
-    if hasattr(request, 'organizer'):
-        if request.organizer.settings.presale_css_file and not hasattr(request, 'event'):
-            ctx['css_file'] = default_storage.url(request.organizer.settings.presale_css_file)
+    if request.resolver_match and hasattr(request, 'organizer'):
         ctx['organizer_logo'] = request.organizer.settings.get('organizer_logo_image', as_type=str, default='')[7:]
         ctx['organizer_homepage_text'] = request.organizer.settings.get('organizer_homepage_text', as_type=LazyI18nString)
         ctx['organizer'] = request.organizer
@@ -172,6 +186,7 @@ def _default_context(request):
     ctx['html_page_header'] = "".join(h for h in _html_page_header if h)
     ctx['footer'] = _footer
     ctx['site_url'] = settings.SITE_URL
+    ctx['request_get_items'] = request.GET.items()
 
     ctx['js_datetime_format'] = get_javascript_format_without_seconds('DATETIME_INPUT_FORMATS')
     ctx['js_date_format'] = get_javascript_format_without_seconds('DATE_INPUT_FORMATS')
@@ -180,5 +195,8 @@ def _default_context(request):
     ctx['html_locale'] = translation.get_language_info(get_language_without_region()).get('public_code', translation.get_language())
     ctx['settings'] = pretix_settings
     ctx['django_settings'] = settings
+    ctx['COUNTRY_STATE_LABEL'] = COUNTRY_STATE_LABEL
+
+    ctx['ie_deprecation_warning'] = 'MSIE' in request.headers.get('User-Agent', '') or 'Trident/' in request.headers.get('User-Agent', '')
 
     return ctx

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -24,7 +24,6 @@ from decimal import Decimal
 
 import pytest
 from django.core import mail as djmail
-from django.db import transaction
 from django.utils.timezone import now
 from django_scopes import scope
 
@@ -50,6 +49,7 @@ def order(event):
         code='FOO', event=event, email='dummy@dummy.test',
         status=Order.STATUS_PENDING, locale='en',
         datetime=now(), expires=now() + timedelta(days=10),
+        sales_channel=event.organizer.sales_channels.get(identifier="web"),
         total=Decimal('46.00'),
     )
     tr19 = event.tax_rules.create(rate=Decimal('19.00'))
@@ -64,7 +64,7 @@ def order(event):
 
 @pytest.fixture
 def team(event):
-    return event.organizer.teams.create(all_events=True, can_view_orders=True)
+    return event.organizer.teams.create(all_events=True, all_event_permissions=True)
 
 
 @pytest.fixture
@@ -74,47 +74,42 @@ def user(team):
     return user
 
 
-@pytest.fixture
-def monkeypatch_on_commit(monkeypatch):
-    monkeypatch.setattr("django.db.transaction.on_commit", lambda t: t())
-
-
 @pytest.mark.django_db
-def test_notification_trigger_event_specific(event, order, user, monkeypatch_on_commit):
+def test_notification_trigger_event_specific(event, order, user, django_capture_on_commit_callbacks):
     djmail.outbox = []
     user.notification_settings.create(
         method='mail', event=event, action_type='pretix.event.order.paid', enabled=True
     )
-    with transaction.atomic():
+    with django_capture_on_commit_callbacks(execute=True):
         order.log_action('pretix.event.order.paid', {})
     assert len(djmail.outbox) == 1
     assert djmail.outbox[0].subject.endswith("DUMMY: Order FOO has been marked as paid.")
 
 
 @pytest.mark.django_db
-def test_notification_trigger_global(event, order, user, monkeypatch_on_commit):
+def test_notification_trigger_global(event, order, user, django_capture_on_commit_callbacks):
     djmail.outbox = []
     user.notification_settings.create(
         method='mail', event=None, action_type='pretix.event.order.paid', enabled=True
     )
-    with transaction.atomic():
+    with django_capture_on_commit_callbacks(execute=True):
         order.log_action('pretix.event.order.paid', {})
     assert len(djmail.outbox) == 1
 
 
 @pytest.mark.django_db
-def test_notification_trigger_global_wildcard(event, order, user, monkeypatch_on_commit):
+def test_notification_trigger_global_wildcard(event, order, user, django_capture_on_commit_callbacks):
     djmail.outbox = []
     user.notification_settings.create(
         method='mail', event=None, action_type='pretix.event.order.changed.*', enabled=True
     )
-    with transaction.atomic():
+    with django_capture_on_commit_callbacks(execute=True):
         order.log_action('pretix.event.order.changed.item', {})
     assert len(djmail.outbox) == 1
 
 
 @pytest.mark.django_db
-def test_notification_enabled_global_ignored_specific(event, order, user, monkeypatch_on_commit):
+def test_notification_enabled_global_ignored_specific(event, order, user, django_capture_on_commit_callbacks):
     djmail.outbox = []
     user.notification_settings.create(
         method='mail', event=None, action_type='pretix.event.order.paid', enabled=True
@@ -122,31 +117,32 @@ def test_notification_enabled_global_ignored_specific(event, order, user, monkey
     user.notification_settings.create(
         method='mail', event=event, action_type='pretix.event.order.paid', enabled=False
     )
-    with transaction.atomic():
+    with django_capture_on_commit_callbacks(execute=True):
         order.log_action('pretix.event.order.paid', {})
     assert len(djmail.outbox) == 0
 
 
 @pytest.mark.django_db
-def test_notification_ignore_same_user(event, order, user, monkeypatch_on_commit):
+def test_notification_ignore_same_user(event, order, user, django_capture_on_commit_callbacks):
     djmail.outbox = []
     user.notification_settings.create(
         method='mail', event=event, action_type='pretix.event.order.paid', enabled=True
     )
-    with transaction.atomic():
+    with django_capture_on_commit_callbacks(execute=True):
         order.log_action('pretix.event.order.paid', {}, user=user)
     assert len(djmail.outbox) == 0
 
 
 @pytest.mark.django_db
-def test_notification_ignore_insufficient_permissions(event, order, user, team, monkeypatch_on_commit):
+def test_notification_ignore_insufficient_permissions(event, order, user, team, django_capture_on_commit_callbacks):
     djmail.outbox = []
-    team.can_view_orders = False
+    team.all_event_permissions = False
+    team.limit_event_permissions = {"event.vouchers:read": True}
     team.save()
     user.notification_settings.create(
         method='mail', event=event, action_type='pretix.event.order.paid', enabled=True
     )
-    with transaction.atomic():
+    with django_capture_on_commit_callbacks(execute=True):
         order.log_action('pretix.event.order.paid', {})
     assert len(djmail.outbox) == 0
 

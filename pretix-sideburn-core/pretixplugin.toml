@@ -1,0 +1,4 @@
+[plugin]
+package = "pretix-sideburn-core"
+modules = [ "pretix_sideburn_core" ]
+marketplace_name = "sideburn-core"

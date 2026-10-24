@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -41,7 +41,7 @@ def env():
         organizer=o, name='Dummy', slug='dummy', plugins='pretix.plugins.stripe',
         date_from=now(), live=True
     )
-    t = Team.objects.create(organizer=event.organizer, can_view_orders=True, can_change_orders=True)
+    t = Team.objects.create(organizer=event.organizer, all_event_permissions=True)
     t.members.add(user)
     t.limit_events.add(event)
     o1 = Order.objects.create(
@@ -49,6 +49,7 @@ def env():
         status=Order.STATUS_PAID,
         datetime=now(), expires=now() + timedelta(days=10),
         total=Decimal('13.37'),
+        sales_channel=o.sales_channels.get(identifier="web"),
     )
     return event, o1
 
@@ -151,12 +152,22 @@ def test_webhook_all_good(env, client, monkeypatch):
 
 
 @pytest.mark.django_db
-def test_webhook_mark_paid_without_reference_and_payment(env, client, monkeypatch):
+def test_webhook_mark_paid(env, client, monkeypatch):
     order = env[1]
     order.status = Order.STATUS_PENDING
     order.save()
-
     charge = get_test_charge(env[1])
+    charge["amount_refunded"] = 0
+    with scopes_disabled():
+        payment = env[1].payments.create(
+            provider='stripe', amount=env[1].total, info='{}', state=OrderPayment.PAYMENT_STATE_CREATED,
+        )
+        ReferencedStripeObject.objects.create(
+            order=order,
+            payment=payment,
+            reference="pi_123456",
+        )
+
     monkeypatch.setattr("stripe.Charge.retrieve", lambda *args, **kwargs: charge)
 
     client.post('/dummy/dummy/stripe/webhook/', json.dumps(
@@ -169,6 +180,10 @@ def test_webhook_mark_paid_without_reference_and_payment(env, client, monkeypatc
                 "object": {
                     "id": "ch_18TY6GGGWE2Ias8TZHanef25",
                     "object": "charge",
+                    "payment_intent": "pi_123456",
+                    "metadata": {
+                        "event": order.event_id,
+                    }
                     # Rest of object is ignored anway
                 }
             },
@@ -253,6 +268,7 @@ def test_webhook_global(env, client, monkeypatch):
     order.save()
 
     charge = get_test_charge(env[1])
+    charge["amount_refunded"] = 0
     monkeypatch.setattr("stripe.Charge.retrieve", lambda *args, **kwargs: charge)
 
     with scopes_disabled():
@@ -260,6 +276,8 @@ def test_webhook_global(env, client, monkeypatch):
             provider='stripe', amount=order.total, info=json.dumps(charge), state=OrderPayment.PAYMENT_STATE_CREATED
         )
     ReferencedStripeObject.objects.create(order=order, reference="ch_18TY6GGGWE2Ias8TZHanef25",
+                                          payment=payment)
+    ReferencedStripeObject.objects.create(order=order, reference="pi_123456",
                                           payment=payment)
 
     client.post('/_stripe/webhook/', json.dumps(
@@ -272,6 +290,10 @@ def test_webhook_global(env, client, monkeypatch):
                 "object": {
                     "id": "ch_18TY6GGGWE2Ias8TZHanef25",
                     "object": "charge",
+                    "payment_intent": "pi_123456",
+                    "metadata": {
+                        "event": order.event_id,
+                    }
                     # Rest of object is ignored anway
                 }
             },
@@ -293,6 +315,7 @@ def test_webhook_global_legacy_reference(env, client, monkeypatch):
     order.save()
 
     charge = get_test_charge(env[1])
+    charge["amount_refunded"] = 0
     monkeypatch.setattr("stripe.Charge.retrieve", lambda *args, **kwargs: charge)
 
     with scopes_disabled():
@@ -300,6 +323,7 @@ def test_webhook_global_legacy_reference(env, client, monkeypatch):
             provider='stripe', amount=order.total, info=json.dumps(charge), state=OrderPayment.PAYMENT_STATE_CREATED
         )
     ReferencedStripeObject.objects.create(order=order, reference="ch_18TY6GGGWE2Ias8TZHanef25")
+    ReferencedStripeObject.objects.create(order=order, reference="pi_123456")
 
     client.post('/_stripe/webhook/', json.dumps(
         {
@@ -311,6 +335,10 @@ def test_webhook_global_legacy_reference(env, client, monkeypatch):
                 "object": {
                     "id": "ch_18TY6GGGWE2Ias8TZHanef25",
                     "object": "charge",
+                    "payment_intent": "pi_123456",
+                    "metadata": {
+                        "event": order.event_id,
+                    }
                     # Rest of object is ignored anway
                 }
             },

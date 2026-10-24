@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -32,11 +32,10 @@ def env():
     o = Organizer.objects.create(name='Dummy', slug='dummy')
     event = Event.objects.create(
         organizer=o, name='Dummy', slug='dummy',
-        date_from=now(), plugins='pretix.plugins.banktransfer,pretix.plugins.paypal'
+        date_from=now(), plugins='pretix.plugins.banktransfer,pretix.plugins.paypal2'
     )
     user = User.objects.create_user('dummy@dummy.dummy', 'dummy')
-    t = Team.objects.create(organizer=event.organizer, can_view_orders=True, can_change_orders=True,
-                            can_change_vouchers=True)
+    t = Team.objects.create(organizer=event.organizer, all_event_permissions=True)
     t.members.add(user)
     t.limit_events.add(event)
     return event, user
@@ -59,9 +58,10 @@ Anke,Müller,anke@example.net
     r = client.post('/control/event/dummy/dummy/orders/import/', {
         'file': file
     }, follow=True)
+    print(r.content)
     doc = BeautifulSoup(r.content, "lxml")
-    assert doc.select("select[name=orders]")
-    assert doc.select("select[name=status]")
+    assert doc.select("input[name=orders]")
+    assert doc.select("input[name=status]")
     assert doc.select("select[name=attendee_email]")
     assert b"Dieter" in r.content
     assert b"daniel@example.org" in r.content

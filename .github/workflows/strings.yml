@@ -23,21 +23,21 @@ jobs:
     runs-on: ubuntu-22.04
     name: Check gettext syntax
     steps:
-      - uses: actions/checkout@v2
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v1
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
         with:
-          python-version: 3.11
-      - uses: actions/cache@v1
+          python-version: 3.13
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
       - name: Install system packages
-        run: sudo apt update && sudo apt install gettext
+        run: sudo apt update && sudo apt -y install gettext
       - name: Install Dependencies
-        run: pip3 install -e ".[dev]"
+        run: pip3 install uv && uv pip install --system -e ".[dev]"
       - name: Compile messages
         run: python manage.py compilemessages
         working-directory: ./src
@@ -48,12 +48,12 @@ jobs:
     runs-on: ubuntu-22.04
     name: Spellcheck
     steps:
-      - uses: actions/checkout@v2
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v1
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
         with:
-          python-version: 3.11
-      - uses: actions/cache@v1
+          python-version: 3.13
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
@@ -62,7 +62,7 @@ jobs:
       - name: Install system packages
         run: sudo apt update && sudo apt install enchant-2 hunspell hunspell-de-de aspell-en aspell-de
       - name: Install Dependencies
-        run: pip3 install -e ".[dev]"
+        run: pip3 install uv && uv pip install --system -e ".[dev]"
       - name: Spellcheck translations
         run: potypo
         working-directory: ./src

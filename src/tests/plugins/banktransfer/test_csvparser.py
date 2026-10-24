@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -165,4 +165,29 @@ class CsvImportTest(TestCase):
             {'payer': 'Lars Lieferant', 'reference': 'Referenz NOTPROVIDED', 'amount': '56,76', 'date': '29.07.2016'}
         ]
         filename = "csvimport_data_de_postbank.csv"
+        self._test_from_sample_file(filename, expected, hint, expected_parsed)
+
+    def test_sample_file_lloyds(self):
+        expected = [
+            # Lloyds Bank includes a trailing comma at the end of the header row, making the header one column longer than the data rows.
+            ['Transaction Date', 'Transaction Type', 'Sort Code', 'Account Number', 'Transaction Description', 'Debit Amount',
+             'Credit Amount', 'Balance', ''],
+            ["27/01/2025", "FPI", "'99-99-99", "11111111", "SMITH J ABCDE 111111111111111111 111111     10 25JAN25 13:34",
+             "", "214", "500"],
+            ["25/01/2025", "FPI", "'99-99-99", "11111111", "JONES A FGHIJ 111111111111111112 111112     10 25JAN25 10:34",
+             "", "213", "286"],
+        ]
+        hint = {
+            'reference': [4],
+            'date': 0,
+            'amount': 6,
+            'cols': 9,
+        }
+        expected_parsed = [
+            {'reference': 'SMITH J ABCDE 111111111111111111 111111     10 25JAN25 13:34', 'amount': '214',
+             'date': '27/01/2025'},
+            {'reference': 'JONES A FGHIJ 111111111111111112 111112     10 25JAN25 10:34', 'amount': '213',
+             'date': '25/01/2025'},
+        ]
+        filename = "csvimport_data_gb_lloyds.csv"
         self._test_from_sample_file(filename, expected, hint, expected_parsed)

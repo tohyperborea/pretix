@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -20,6 +20,7 @@
 # <https://www.gnu.org/licenses/>.
 #
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django_filters.rest_framework import DjangoFilterBackend, FilterSet
 from django_scopes import scopes_disabled
 from rest_framework import viewsets
@@ -113,11 +114,12 @@ class RuleViewSet(viewsets.ModelViewSet):
     filterset_class = RuleFilter
     ordering = ('id',)
     ordering_fields = ('id',)
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
 
     def get_queryset(self):
         return Rule.objects.filter(event=self.request.event)
 
+    @transaction.atomic()
     def perform_create(self, serializer):
         super().perform_create(serializer)
         serializer.instance.log_action(
@@ -128,6 +130,7 @@ class RuleViewSet(viewsets.ModelViewSet):
 
         )
 
+    @transaction.atomic()
     def perform_update(self, serializer):
         super().perform_update(serializer)
         serializer.instance.log_action(
@@ -137,6 +140,7 @@ class RuleViewSet(viewsets.ModelViewSet):
             data=self.request.data
         )
 
+    @transaction.atomic()
     def perform_destroy(self, instance):
         instance.log_action(
             'pretix.plugins.sendmail.rule.deleted',

@@ -9,7 +9,7 @@ from django_scopes import scope, scopes_disabled
 
 from pretix.base.services.tasks import TransactionAwareTask
 from pretix.celery_app import app
-from pretix.multidomain.urlreverse import build_absolute_uri
+from pretix.multidomain.urlreverse import eventreverse_absolute
 
 from pretix_twilio_sms.models import CustomerSmsPreference
 
@@ -36,7 +36,7 @@ def _build_waiting_list_redeem_url(event, voucher):
     url_params = {"voucher": voucher.code}
     if voucher.subevent_id:
         url_params["subevent"] = voucher.subevent_id
-    return build_absolute_uri(event, "presale:event.redeem") + "?" + urlencode(url_params)
+    return eventreverse_absolute(event, "presale:event.redeem") + "?" + urlencode(url_params)
 
 
 def _build_waiting_list_sms_message(event, voucher):
@@ -272,6 +272,25 @@ def queue_waiting_list_sms_for_entry(*, entry):
         return
 
     customer, phone, sms_opt_in = _get_customer_and_phone(entry)
+
+    if not sms_opt_in:
+        logger.info(
+            "pretix_twilio_sms: queue_waiting_list_sms_for_entry skip: not opted in "
+            "entry_id=%s event_id=%s",
+            entry.pk,
+            event_id,
+        )
+        return
+
+    if not _is_valid_phone(phone):
+        logger.info(
+            "pretix_twilio_sms: queue_waiting_list_sms_for_entry skip: no valid phone "
+            "entry_id=%s event_id=%s phone=%s",
+            entry.pk,
+            event_id,
+            phone,
+        )
+        return
 
     logger.info(
         "pretix_twilio_sms: queueing waiting list SMS task entry_id=%s event_id=%s",

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -40,34 +40,34 @@ from urllib.parse import urlencode
 from django import forms
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.files.uploadedfile import UploadedFile
-from django.db.models import Max
+from django.db.models import Max, Q
+from django.forms import ChoiceField, RadioSelect
 from django.forms.formsets import DELETION_FIELD_NAME
+from django.forms.utils import ErrorDict
 from django.urls import reverse
 from django.utils.functional import cached_property
-from django.utils.html import escape
+from django.utils.html import escape, format_html
 from django.utils.safestring import mark_safe
-from django.utils.translation import (
-    gettext as __, gettext_lazy as _, pgettext_lazy,
-)
+from django.utils.translation import gettext as __, gettext_lazy as _
 from django_scopes.forms import (
     SafeModelChoiceField, SafeModelMultipleChoiceField,
 )
 from i18nfield.forms import I18nFormField, I18nTextarea
 
-from pretix.base.channels import get_all_sales_channels
-from pretix.base.forms import I18nFormSet, I18nModelForm
+from pretix.base.forms import I18nFormSet, I18nMarkdownTextarea, I18nModelForm
 from pretix.base.forms.widgets import DatePickerWidget
 from pretix.base.models import (
-    Item, ItemCategory, ItemVariation, Question, QuestionOption, Quota,
+    Item, ItemCategory, ItemProgramTime, ItemVariation, Question,
+    QuestionOption, Quota,
 )
 from pretix.base.models.items import ItemAddOn, ItemBundle, ItemMetaValue
 from pretix.base.signals import item_copy_data
 from pretix.control.forms import (
-    ItemMultipleChoiceField, SizeValidationMixin, SplitDateTimeField,
+    ButtonGroupRadioSelect, ExtFileField, ItemMultipleChoiceField,
+    SalesChannelCheckboxSelectMultiple, SplitDateTimeField,
     SplitDateTimePickerWidget,
 )
-from pretix.control.forms.widgets import Select2
+from pretix.control.forms.widgets import Select2, Select2ItemVarMulti
 from pretix.helpers.models import modelcopy
 from pretix.helpers.money import change_decimal_field
 
@@ -80,8 +80,68 @@ class CategoryForm(I18nModelForm):
             'name',
             'internal_name',
             'description',
-            'is_addon'
+            'cross_selling_condition',
+            'cross_selling_match_products',
         ]
+        widgets = {
+            'description': I18nMarkdownTextarea,
+            'cross_selling_condition': RadioSelect,
+        }
+        field_classes = {
+            'cross_selling_match_products': SafeModelMultipleChoiceField,
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        tpl = '{} &nbsp; <span class="text-muted">{}</span>'
+        self.fields['category_type'] = ChoiceField(widget=RadioSelect, choices=(
+            ('normal', mark_safe(tpl.format(
+                _('Normal category'),
+                _('Products in this category are regular products displayed on the front page.')
+            )),),
+            ('addon', mark_safe(tpl.format(
+                _('Add-on product category'),
+                _('Products in this category are add-on products and can only be bought as add-ons.')
+            )),),
+            ('only', mark_safe(tpl.format(
+                _('Cross-selling category'),
+                _('Products in this category are regular products, but are only shown in the cross-selling step, '
+                  'according to the configuration below.')
+            )),),
+            ('both', mark_safe(tpl.format(
+                _('Normal + cross-selling category'),
+                _('Products in this category are regular products displayed on the front page, but are additionally '
+                  'shown in the cross-selling step, according to the configuration below.')
+            )),),
+        ))
+        self.fields['category_type'].initial = self.instance.category_type
+
+        self.fields['cross_selling_condition'].widget.attrs['data-display-dependency'] = '#id_category_type_2,#id_category_type_3'
+        self.fields['cross_selling_condition'].widget.attrs['data-disable-dependent'] = 'true'
+        self.fields['cross_selling_condition'].widget.choices = self.fields['cross_selling_condition'].widget.choices[1:]
+        self.fields['cross_selling_condition'].required = False
+        self.fields['cross_selling_condition']._required = True  # Do not display "Optional" label
+
+        self.fields['cross_selling_match_products'].widget = forms.CheckboxSelectMultiple(
+            attrs={
+                'class': 'scrolling-multiple-choice',
+                'data-display-dependency': '#id_cross_selling_condition_2'
+            }
+        )
+        self.fields['cross_selling_match_products'].queryset = self.event.items.filter(
+            # don't show products which are only visible in addon/cross-sell step themselves
+            Q(category__isnull=True) | Q(
+                Q(category__is_addon=False) & Q(Q(category__cross_selling_mode='both') | Q(category__cross_selling_mode__isnull=True))
+            )
+        )
+
+    def clean(self):
+        d = super().clean()
+        if d.get('category_type') == 'only' or d.get('category_type') == 'both':
+            if not d.get('cross_selling_condition'):
+                raise ValidationError({'cross_selling_condition': [_('This field is required')]})
+        self.instance.category_type = d.get('category_type')
+        return d
 
 
 class QuestionForm(I18nModelForm):
@@ -93,11 +153,19 @@ class QuestionForm(I18nModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields['items'].queryset = self.instance.event.items.all()
-        self.fields['items'].required = True
+        if self.instance.container_type == Question.ContainerType.ORDERPOSITION:
+            self.fields['items'].queryset = self.instance.event.items.all()
+            self.fields['items'].required = True
+        else:
+            del self.fields['items']
+            del self.fields['ask_during_checkin']
+            del self.fields['show_during_checkin']
+            del self.fields['print_on_invoice']
+        self.fields['dependency_question'].widget.attrs['data-container-type'] = self.instance.container_type
         self.fields['dependency_question'].queryset = self.instance.event.questions.filter(
             type__in=(Question.TYPE_BOOLEAN, Question.TYPE_CHOICE, Question.TYPE_CHOICE_MULTIPLE),
-            ask_during_checkin=False
+            ask_during_checkin=False,
+            container_type=self.instance.container_type,
         )
         if self.instance.pk:
             self.fields['dependency_question'].queryset = self.fields['dependency_question'].queryset.exclude(
@@ -133,6 +201,20 @@ class QuestionForm(I18nModelForm):
 
         return val
 
+    def clean_show_during_checkin(self):
+        val = self.cleaned_data.get('show_during_checkin')
+
+        if val and self.cleaned_data.get('type') in Question.SHOW_DURING_CHECKIN_UNSUPPORTED:
+            raise ValidationError(_('This type of question cannot be shown during check-in.'))
+
+        return val
+
+    def clean_type(self):
+        val = self.cleaned_data.get('type')
+        if self.instance:
+            self.instance.clean_type_change(self.instance.type, val)
+        return val
+
     def clean_identifier(self):
         val = self.cleaned_data.get('identifier')
         Question._clean_identifier(self.instance.event, val, self.instance)
@@ -155,6 +237,7 @@ class QuestionForm(I18nModelForm):
             'type',
             'required',
             'ask_during_checkin',
+            'show_during_checkin',
             'hidden',
             'identifier',
             'items',
@@ -168,17 +251,19 @@ class QuestionForm(I18nModelForm):
             'valid_date_min',
             'valid_date_max',
             'valid_file_portrait',
+            'valid_string_length_min',
             'valid_string_length_max',
         ]
         widgets = {
-            'valid_datetime_min': SplitDateTimePickerWidget(),
-            'valid_datetime_max': SplitDateTimePickerWidget(),
+            'valid_datetime_min': SplitDateTimePickerWidget(without_seconds=True),
+            'valid_datetime_max': SplitDateTimePickerWidget(without_seconds=True),
             'valid_date_min': DatePickerWidget(),
             'valid_date_max': DatePickerWidget(),
             'items': forms.CheckboxSelectMultiple(
                 attrs={'class': 'scrolling-multiple-choice'}
             ),
             'dependency_values': forms.SelectMultiple,
+            'help_text': I18nMarkdownTextarea,
         }
         field_classes = {
             'valid_datetime_min': SplitDateTimeField,
@@ -198,14 +283,20 @@ class QuestionOptionForm(I18nModelForm):
 
 
 class QuotaForm(I18nModelForm):
+    itemvars = forms.MultipleChoiceField(
+        label=_("Products"),
+        required=True,
+    )
+
     def __init__(self, **kwargs):
         self.instance = kwargs.get('instance', None)
         self.event = kwargs.get('event')
         items = kwargs.pop('items', None) or self.event.items.prefetch_related('variations')
+        searchable_selection = kwargs.pop('searchable_selection', None)
         self.original_instance = modelcopy(self.instance) if self.instance else None
         initial = kwargs.get('initial', {})
         if self.instance and self.instance.pk and 'itemvars' not in initial:
-            initial['itemvars'] = [str(i.pk) for i in self.instance.items.all()] + [
+            initial['itemvars'] = [str(i.pk) for i in self.instance.items.all() if (len(i.variations.all()) == 0)] + [
                 '{}-{}'.format(v.item_id, v.pk) for v in self.instance.variations.all()
             ]
         kwargs['initial'] = initial
@@ -222,12 +313,22 @@ class QuotaForm(I18nModelForm):
             else:
                 choices.append(('{}'.format(item.pk), str(item) if item.active else mark_safe(f'<strike class="text-muted">{escape(item)}</strike>')))
 
-        self.fields['itemvars'] = forms.MultipleChoiceField(
-            label=_('Products'),
-            required=True,
-            choices=choices,
-            widget=forms.CheckboxSelectMultiple
-        )
+        if searchable_selection:
+            self.fields['itemvars'].widget = Select2ItemVarMulti(
+                attrs={
+                    'data-model-select2': 'generic',
+                    'data-select2-url': reverse('control:event.items.itemvars.select2', kwargs={
+                        'event': self.event.slug,
+                        'organizer': self.event.organizer.slug,
+                    }),
+                    'data-placeholder': _('No products')
+                },
+                choices=choices,
+            )
+        else:
+            self.fields['itemvars'].widget = forms.CheckboxSelectMultiple()
+
+        self.fields['itemvars'].choices = choices
 
         if self.event.has_subevents:
             self.fields['subevent'].queryset = self.event.subevents.all()
@@ -238,7 +339,6 @@ class QuotaForm(I18nModelForm):
                         'event': self.event.slug,
                         'organizer': self.event.organizer.slug,
                     }),
-                    'data-placeholder': pgettext_lazy('subevent', 'Date')
                 }
             )
             self.fields['subevent'].widget.choices = self.fields['subevent'].choices
@@ -260,6 +360,9 @@ class QuotaForm(I18nModelForm):
         field_classes = {
             'subevent': SafeModelChoiceField,
         }
+        widgets = {
+            'size': forms.NumberInput(attrs={'placeholder': _('Unlimited')})
+        }
 
     def save(self, *args, **kwargs):
         creating = not self.instance.pk
@@ -280,6 +383,60 @@ class QuotaForm(I18nModelForm):
         self.instance.variations.remove(*[i for i in current_variations if i not in selected_variations])
         self.instance.variations.add(*[i for i in selected_variations if i not in current_variations])
         return inst
+
+
+class QuotaBulkEditForm(QuotaForm):
+
+    def __init__(self, *args, **kwargs):
+        self.mixed_values = kwargs.pop('mixed_values')
+        self.queryset = kwargs.pop('queryset')
+        super().__init__(**kwargs)
+        self.fields.pop("subevent", None)  # Would add extra complexity and it's hard to imagine a use case for that
+        self.fields["name"].required = False
+        self.fields["itemvars"].required = False
+
+    def clean(self):
+        d = super().clean()
+        if self.prefix + "name" in self.data.getlist('_bulk') and not d.get("name"):
+            raise ValidationError({"name": _("This field is required.")})
+        if self.prefix + "itemvars" in self.data.getlist('_bulk') and not d.get("itemvars"):
+            raise ValidationError({"itemvars": _("This field is required.")})
+        return d
+
+    def save(self, commit=True):
+        objs = list(self.queryset)
+        fields = set()
+
+        for k in self.fields:
+            cb_val = self.prefix + k
+            if cb_val not in self.data.getlist('_bulk'):
+                continue
+
+            fields.add(k)
+            if k == 'itemvars':
+                selected_items = set(list(self.event.items.filter(id__in=[
+                    i.split('-')[0] for i in self.cleaned_data['itemvars']
+                ])))
+                selected_variations = list(ItemVariation.objects.filter(item__event=self.event, id__in=[
+                    i.split('-')[1] for i in self.cleaned_data['itemvars'] if '-' in i
+                ]))
+                for obj in objs:
+                    obj.items.set(selected_items)
+                    obj.variations.set(selected_variations)
+            else:
+                for obj in objs:
+                    setattr(obj, k, self.cleaned_data[k])
+
+        fields = [f for f in fields if f != 'itemvars']
+        if fields:
+            Quota.objects.bulk_update(objs, fields, 200)
+
+    def full_clean(self):
+        if len(self.data) == 0:
+            # form wasn't submitted
+            self._errors = ErrorDict()
+            return
+        super().full_clean()
 
 
 class ItemCreateForm(I18nModelForm):
@@ -314,7 +471,6 @@ class ItemCreateForm(I18nModelForm):
 
         self.fields['tax_rule'].queryset = self.instance.event.tax_rules.all()
         change_decimal_field(self.fields['default_price'], self.instance.event.currency)
-        self.fields['tax_rule'].empty_label = _('No taxation')
         self.fields['copy_from'] = forms.ModelChoiceField(
             label=_("Copy product information"),
             queryset=self.event.items.all(),
@@ -324,6 +480,8 @@ class ItemCreateForm(I18nModelForm):
         )
         if self.event.tax_rules.exists():
             self.fields['tax_rule'].required = True
+        else:
+            self.fields['tax_rule'].empty_label = _('No taxation')
 
         if not self.event.has_subevents:
             choices = [
@@ -371,7 +529,9 @@ class ItemCreateForm(I18nModelForm):
                 'description',
                 'active',
                 'available_from',
+                'available_from_mode',
                 'available_until',
+                'available_until_mode',
                 'require_voucher',
                 'hide_without_voucher',
                 'allow_cancel',
@@ -379,14 +539,17 @@ class ItemCreateForm(I18nModelForm):
                 'max_per_order',
                 'generate_tickets',
                 'checkin_attention',
+                'checkin_text',
                 'free_price',
                 'original_price',
-                'sales_channels',
+                'all_sales_channels',
                 'issue_giftcard',
                 'require_approval',
                 'allow_waitinglist',
                 'show_quota_left',
                 'hidden_if_available',
+                'hidden_if_item_available',
+                'hidden_if_item_available_mode',
                 'require_bundling',
                 'require_membership',
                 'grant_membership_type',
@@ -410,9 +573,6 @@ class ItemCreateForm(I18nModelForm):
 
             if src.picture:
                 self.instance.picture.save(os.path.basename(src.picture.name), src.picture)
-        else:
-            # Add to all sales channels by default
-            self.instance.sales_channels = list(get_all_sales_channels().keys())
 
         self.instance.position = (self.event.items.aggregate(p=Max('position'))['p'] or 0) + 1
         if not self.instance.admission:
@@ -441,6 +601,8 @@ class ItemCreateForm(I18nModelForm):
                 })
 
         if self.cleaned_data.get('copy_from'):
+            if not self.instance.all_sales_channels:
+                self.instance.limit_sales_channels.set(self.cleaned_data['copy_from'].limit_sales_channels.all())
             self.instance.require_membership_types.set(
                 self.cleaned_data['copy_from'].require_membership_types.all()
             )
@@ -451,6 +613,8 @@ class ItemCreateForm(I18nModelForm):
                     v.pk = None
                     v.item = instance
                     v.save()
+                    if not variation.all_sales_channels:
+                        v.limit_sales_channels.set(variation.limit_sales_channels.all())
                     for mv in variation.meta_values.all():
                         mv.pk = None
                         mv.variation = v
@@ -473,6 +637,8 @@ class ItemCreateForm(I18nModelForm):
             for b in self.cleaned_data['copy_from'].bundles.all():
                 instance.bundles.create(bundled_item=b.bundled_item, bundled_variation=b.bundled_variation,
                                         count=b.count, designated_price=b.designated_price)
+            for pt in self.cleaned_data['copy_from'].program_times.all():
+                instance.program_times.create(start=pt.start, end=pt.end, location=pt.location)
 
             item_copy_data.send(sender=self.event, source=self.cleaned_data['copy_from'], target=instance)
 
@@ -530,6 +696,13 @@ class TicketNullBooleanSelect(forms.NullBooleanSelect):
 
 
 class ItemUpdateForm(I18nModelForm):
+    picture = ExtFileField(
+        label=_('Product picture'),
+        ext_whitelist=settings.FILE_UPLOAD_EXTENSIONS_IMAGE,
+        max_size=settings.FILE_UPLOAD_MAX_SIZE_IMAGE,
+        required=False,
+    )
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['tax_rule'].queryset = self.instance.event.tax_rules.all()
@@ -541,28 +714,75 @@ class ItemUpdateForm(I18nModelForm):
         if self.event.tax_rules.exists():
             self.fields['tax_rule'].required = True
         self.fields['description'].widget.attrs['rows'] = '4'
-        self.fields['sales_channels'] = forms.MultipleChoiceField(
-            label=_('Sales channels'),
-            required=False,
-            choices=(
-                (c.identifier, c.verbose_name) for c in get_all_sales_channels().values()
-            ),
-            widget=forms.CheckboxSelectMultiple
-        )
+        self.fields['limit_sales_channels'].queryset = self.event.organizer.sales_channels.all()
+        self.fields['limit_sales_channels'].widget = SalesChannelCheckboxSelectMultiple(self.event, attrs={
+            'data-inverse-dependency': '<[name$=all_sales_channels]',
+        }, choices=self.fields['limit_sales_channels'].widget.choices)
         change_decimal_field(self.fields['default_price'], self.event.currency)
-        self.fields['hidden_if_available'].queryset = self.event.quotas.all()
-        self.fields['hidden_if_available'].widget = Select2(
+
+        self.fields['available_from_mode'].widget = ButtonGroupRadioSelect(
+            choices=self.fields['available_from_mode'].choices,
+            option_icons=Item.UNAVAIL_MODE_ICONS
+        )
+
+        self.fields['available_until_mode'].widget = ButtonGroupRadioSelect(
+            choices=self.fields['available_until_mode'].choices,
+            option_icons=Item.UNAVAIL_MODE_ICONS
+        )
+
+        self.fields['hide_without_voucher'].widget = ButtonGroupRadioSelect(
+            choices=(
+                (True, _("Hide product if unavailable")),
+                (False, _("Show product with info on why it’s unavailable")),
+            ),
+            option_icons={
+                True: 'eye-slash',
+                False: 'info'
+            },
+            attrs={'data-checkbox-dependency': '#id_require_voucher'}
+        )
+
+        self.fields['hidden_if_item_available_mode'].widget = ButtonGroupRadioSelect(
+            choices=self.fields['hidden_if_item_available_mode'].choices,
+            option_icons=Item.UNAVAIL_MODE_ICONS
+        )
+
+        if self.instance.hidden_if_available_id:
+            self.fields['hidden_if_available'].queryset = self.event.quotas.all()
+            self.fields['hidden_if_available'].help_text = format_html(
+                "<strong>{}</strong> {}",
+                _("This option is deprecated. For new products, use the newer option below that refers to another "
+                  "product instead of a quota."),
+                self.fields['hidden_if_available'].help_text
+            )
+            self.fields['hidden_if_available'].widget = Select2(
+                attrs={
+                    'data-model-select2': 'generic',
+                    'data-select2-url': reverse('control:event.items.quotas.select2', kwargs={
+                        'event': self.event.slug,
+                        'organizer': self.event.organizer.slug,
+                    }),
+                    'data-placeholder': _('Shown independently of other products')
+                }
+            )
+            self.fields['hidden_if_available'].widget.choices = self.fields['hidden_if_available'].choices
+            self.fields['hidden_if_available'].required = False
+        else:
+            del self.fields['hidden_if_available']
+
+        self.fields['hidden_if_item_available'].queryset = self.event.items.exclude(id=self.instance.id)
+        self.fields['hidden_if_item_available'].widget = Select2(
             attrs={
                 'data-model-select2': 'generic',
-                'data-select2-url': reverse('control:event.items.quotas.select2', kwargs={
+                'data-select2-url': reverse('control:event.items.select2', kwargs={
                     'event': self.event.slug,
                     'organizer': self.event.organizer.slug,
                 }),
                 'data-placeholder': _('Shown independently of other products')
             }
         )
-        self.fields['hidden_if_available'].widget.choices = self.fields['hidden_if_available'].choices
-        self.fields['hidden_if_available'].required = False
+        self.fields['hidden_if_item_available'].widget.choices = self.fields['hidden_if_item_available'].choices
+        self.fields['hidden_if_item_available'].required = False
 
         self.fields['category'].queryset = self.instance.event.categories.all()
         self.fields['category'].widget = Select2(
@@ -576,6 +796,17 @@ class ItemUpdateForm(I18nModelForm):
             }
         )
         self.fields['category'].widget.choices = self.fields['category'].choices
+
+        self.fields['free_price_suggestion'].widget.attrs['data-display-dependency'] = '#id_free_price'
+
+        self.fields['validity_dynamic_start_choice'] = forms.TypedChoiceField(
+            label=_("Start of validity"),
+            choices=(
+                ("False", _("Purchase date")),
+                ("True", _("Date chosen by customer")),
+            ),
+            coerce=lambda x: x == 'True',
+        )
 
         qs = self.event.organizer.membership_types.all()
         if qs:
@@ -602,6 +833,14 @@ class ItemUpdateForm(I18nModelForm):
                     'tax_rule',
                     _("Gift card products should use a tax rule with a rate of 0 percent since sales tax will be applied when the gift card is redeemed.")
                 )
+            if d.get('validity_mode'):
+                self.add_error(
+                    'validity_mode',
+                    _(
+                        "Do not set a specific validity for gift card products as it will not restrict the validity "
+                        "of the gift card. A validity of gift cards can be set in your organizer settings."
+                    )
+                )
             if d.get('admission'):
                 self.add_error(
                     'admission',
@@ -609,6 +848,9 @@ class ItemUpdateForm(I18nModelForm):
                         "Gift card products should not be admission products at the same time."
                     )
                 )
+
+        if not d.get('require_voucher'):
+            d['hide_without_voucher'] = False
 
         if d.get('require_membership') and not d.get('require_membership_types'):
             self.add_error(
@@ -624,7 +866,7 @@ class ItemUpdateForm(I18nModelForm):
         if d.get('grant_membership_type'):
             if not d['grant_membership_type'].transferable and not d['personalized']:
                 self.add_error(
-                    'personalized' if d['admission'] else 'admission',
+                    'personalized' if d.get('admission') else 'admission',
                     _("Your product grants a non-transferable membership and should therefore be a personalized "
                       "admission ticket. Otherwise customers might not be able to use the membership later. If you "
                       "want the membership to be non-personalized, set the membership type to be transferable.")
@@ -637,17 +879,17 @@ class ItemUpdateForm(I18nModelForm):
                     _("The start of validity must be before the end of validity.")
                 )
 
+        if d.get('validity_mode') == Item.VALIDITY_MODE_DYNAMIC:
+            if not any(d.get(f'validity_dynamic_duration_{k}') for k in ('months', 'days', 'hours', 'minutes')):
+                self.add_error(
+                    'validity_dynamic_duration_months',
+                    _("You have selected dynamic validity but have not entered a time period. This would render "
+                      "the tickets unusable.")
+                )
+
         Item.clean_media_settings(self.event, d.get('media_policy'), d.get('media_type'), d.get('issue_giftcard'))
 
         return d
-
-    def clean_picture(self):
-        value = self.cleaned_data.get('picture')
-        if isinstance(value, UploadedFile) and value.size > settings.FILE_UPLOAD_MAX_SIZE_IMAGE:
-            raise forms.ValidationError(_("Please do not upload files larger than {size}!").format(
-                size=SizeValidationMixin._sizeof_fmt(settings.FILE_UPLOAD_MAX_SIZE_IMAGE)
-            ))
-        return value
 
     class Meta:
         model = Item
@@ -657,16 +899,20 @@ class ItemUpdateForm(I18nModelForm):
             'name',
             'internal_name',
             'active',
-            'sales_channels',
+            'all_sales_channels',
+            'limit_sales_channels',
             'admission',
             'personalized',
             'description',
             'picture',
             'default_price',
             'free_price',
+            'free_price_suggestion',
             'tax_rule',
             'available_from',
+            'available_from_mode',
             'available_until',
+            'available_until_mode',
             'require_voucher',
             'require_approval',
             'hide_without_voucher',
@@ -675,11 +921,14 @@ class ItemUpdateForm(I18nModelForm):
             'max_per_order',
             'min_per_order',
             'checkin_attention',
+            'checkin_text',
             'generate_tickets',
             'original_price',
             'require_bundling',
             'show_quota_left',
             'hidden_if_available',
+            'hidden_if_item_available',
+            'hidden_if_item_available_mode',
             'issue_giftcard',
             'require_membership',
             'require_membership_types',
@@ -706,8 +955,10 @@ class ItemUpdateForm(I18nModelForm):
             'validity_fixed_from': SplitDateTimeField,
             'validity_fixed_until': SplitDateTimeField,
             'hidden_if_available': SafeModelChoiceField,
+            'hidden_if_item_available': SafeModelChoiceField,
             'grant_membership_type': SafeModelChoiceField,
             'require_membership_types': SafeModelMultipleChoiceField,
+            'limit_sales_channels': SafeModelMultipleChoiceField,
         }
         widgets = {
             'available_from': SplitDateTimePickerWidget(),
@@ -721,6 +972,8 @@ class ItemUpdateForm(I18nModelForm):
             'show_quota_left': ShowQuotaNullBooleanSelect(),
             'max_per_order': forms.widgets.NumberInput(attrs={'min': 0}),
             'min_per_order': forms.widgets.NumberInput(attrs={'min': 0}),
+            'checkin_text': forms.TextInput(),
+            'description': I18nMarkdownTextarea,
         }
 
 
@@ -777,18 +1030,10 @@ class ItemVariationForm(I18nModelForm):
         qs = kwargs.pop('membership_types')
         super().__init__(*args, **kwargs)
         change_decimal_field(self.fields['default_price'], self.event.currency)
-        self.fields['sales_channels'] = forms.MultipleChoiceField(
-            label=_('Sales channels'),
-            required=False,
-            choices=(
-                (c.identifier, c.verbose_name) for c in get_all_sales_channels().values()
-            ),
-            help_text=_('The sales channel selection for the product as a whole takes precedence, so if a sales channel is '
-                        'selected here but not on product level, the variation will not be available.'),
-            widget=forms.CheckboxSelectMultiple
-        )
-        if not self.instance.pk:
-            self.initial.setdefault('sales_channels', list(get_all_sales_channels().keys()))
+        self.fields['limit_sales_channels'].queryset = self.event.organizer.sales_channels.all()
+        self.fields['limit_sales_channels'].widget = SalesChannelCheckboxSelectMultiple(self.event, attrs={
+            'data-inverse-dependency': '<[name$=all_sales_channels]',
+        }, choices=self.fields['limit_sales_channels'].widget.choices)
 
         self.fields['description'].widget.attrs['rows'] = 3
         if qs:
@@ -796,6 +1041,18 @@ class ItemVariationForm(I18nModelForm):
         else:
             del self.fields['require_membership']
             del self.fields['require_membership_types']
+
+        self.fields['free_price_suggestion'].widget.attrs['data-display-dependency'] = '#id_free_price'
+
+        self.fields['available_from_mode'].widget = ButtonGroupRadioSelect(
+            choices=self.fields['available_from_mode'].choices,
+            option_icons=Item.UNAVAIL_MODE_ICONS
+        )
+
+        self.fields['available_until_mode'].widget = ButtonGroupRadioSelect(
+            choices=self.fields['available_until_mode'].choices,
+            option_icons=Item.UNAVAIL_MODE_ICONS
+        )
 
         self.meta_fields = []
         meta_defaults = {}
@@ -829,6 +1086,7 @@ class ItemVariationForm(I18nModelForm):
             'value',
             'active',
             'default_price',
+            'free_price_suggestion',
             'original_price',
             'description',
             'require_approval',
@@ -836,14 +1094,19 @@ class ItemVariationForm(I18nModelForm):
             'require_membership_hidden',
             'require_membership_types',
             'checkin_attention',
+            'checkin_text',
             'available_from',
+            'available_from_mode',
             'available_until',
-            'sales_channels',
+            'available_until_mode',
+            'all_sales_channels',
+            'limit_sales_channels',
             'hide_without_voucher',
         ]
         field_classes = {
             'available_from': SplitDateTimeField,
             'available_until': SplitDateTimeField,
+            'limit_sales_channels': SafeModelMultipleChoiceField,
         }
         widgets = {
             'available_from': SplitDateTimePickerWidget(),
@@ -851,6 +1114,7 @@ class ItemVariationForm(I18nModelForm):
             'require_membership_types': forms.CheckboxSelectMultiple(attrs={
                 'class': 'scrolling-multiple-choice'
             }),
+            'checkin_text': forms.TextInput(),
         }
 
     def clean(self):
@@ -1123,4 +1387,55 @@ class ItemMetaValueForm(forms.ModelForm):
         fields = ['value']
         widgets = {
             'value': forms.TextInput()
+        }
+
+
+class ItemProgramTimeFormSet(I18nFormSet):
+    template = "pretixcontrol/item/include_program_times.html"
+    title = _('Program times')
+
+    def _construct_form(self, i, **kwargs):
+        kwargs['event'] = self.event
+        return super()._construct_form(i, **kwargs)
+
+    @property
+    def empty_form(self):
+        self.is_valid()
+        form = self.form(
+            auto_id=self.auto_id,
+            prefix=self.add_prefix('__prefix__'),
+            empty_permitted=True,
+            use_required_attribute=False,
+            locales=self.locales,
+            event=self.event
+        )
+        self.add_fields(form, None)
+        return form
+
+
+class ItemProgramTimeForm(I18nModelForm):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['end'].widget.attrs['data-date-after'] = '#id_{prefix}-start_0'.format(prefix=self.prefix)
+        self.fields['location'].widget.attrs['rows'] = '3'
+        self.fields['location'].widget.attrs['placeholder'] = _(
+            'Sample Conference Center, Heidelberg, Germany'
+        )
+
+    class Meta:
+        model = ItemProgramTime
+        localized_fields = '__all__'
+        fields = [
+            'start',
+            'end',
+            'location'
+        ]
+        field_classes = {
+            'start': forms.SplitDateTimeField,
+            'end': forms.SplitDateTimeField,
+        }
+        widgets = {
+            'start': SplitDateTimePickerWidget(without_seconds=True),
+            'end': SplitDateTimePickerWidget(without_seconds=True),
         }

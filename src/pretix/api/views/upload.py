@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -33,6 +33,7 @@ from rest_framework.views import APIView
 from pretix.api.auth.device import DeviceTokenAuthentication
 from pretix.api.auth.permission import AnyAuthenticatedClientPermission
 from pretix.api.auth.token import TeamTokenAuthentication
+from pretix.api.auth.utils import get_session_key_for_api_request
 from pretix.base.models import CachedFile
 from pretix.helpers.images import (
     IMAGE_TYPES, validate_uploaded_file_for_valid_image,
@@ -78,7 +79,7 @@ class UploadView(APIView):
             web_download=False,
             filename=file_obj.name,
             type=content_type,
-            session_key=f'api-upload-{str(type(request.user or request.auth))}-{(request.user or request.auth).pk}'
+            session_key=get_session_key_for_api_request(request)
         )
         cf.file.save(file_obj.name, file_obj)
         cf.save()

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -95,7 +95,7 @@ class EditorView(BaseEditorView):
 
 class LayoutListView(EventPermissionRequiredMixin, ListView):
     model = TicketLayout
-    permission = ('can_change_event_settings')
+    permission = 'event.settings.general:write'
     template_name = 'pretixplugins/ticketoutputpdf/index.html'
     context_object_name = 'layouts'
 
@@ -107,7 +107,7 @@ class LayoutCreate(EventPermissionRequiredMixin, CreateView):
     model = TicketLayout
     form_class = TicketLayoutForm
     template_name = 'pretixplugins/ticketoutputpdf/edit.html'
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
     context_object_name = 'layout'
     success_url = '/ignored'
 
@@ -157,7 +157,7 @@ class LayoutCreate(EventPermissionRequiredMixin, CreateView):
 
 class LayoutSetDefault(EventPermissionRequiredMixin, DetailView):
     model = TicketLayout
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
 
     def get_object(self, queryset=None) -> TicketLayout:
         try:
@@ -186,7 +186,7 @@ class LayoutSetDefault(EventPermissionRequiredMixin, DetailView):
 class LayoutDelete(EventPermissionRequiredMixin, CompatDeleteView):
     model = TicketLayout
     template_name = 'pretixplugins/ticketoutputpdf/delete.html'
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
     context_object_name = 'layout'
 
     def get_object(self, queryset=None) -> TicketLayout:
@@ -218,7 +218,7 @@ class LayoutDelete(EventPermissionRequiredMixin, CompatDeleteView):
 
 
 class LayoutGetDefault(EventPermissionRequiredMixin, View):
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
 
     def get(self, request, *args, **kwargs):
         layout = self.request.event.ticket_layouts.get_or_create(
@@ -264,7 +264,7 @@ class LayoutEditorView(BaseEditorView):
         return static('pretixpresale/pdf/ticket_default_a4.pdf')
 
     def generate(self, op: OrderPosition, override_layout=None, override_background=None):
-        Renderer._register_fonts()
+        Renderer._register_fonts(self.request.event)
 
         buffer = BytesIO()
         if override_background:
@@ -304,7 +304,7 @@ class LayoutEditorView(BaseEditorView):
 
 class OrderPrintDo(EventPermissionRequiredMixin, AsyncAction, View):
     task = tickets_create_pdf
-    permission = 'can_view_orders'
+    permission = 'event.orders:read'
     known_errortypes = ['OrderError', 'ExportError']
 
     def get_success_message(self, value):

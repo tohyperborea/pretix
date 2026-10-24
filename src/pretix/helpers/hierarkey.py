@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -32,9 +32,14 @@ def clean_filename(fname):
 
     "Terms.pdf" → "Terms.pdf.OybgvyAH.22c0583727d5bc.pdf"
 
-    This function reverses this operation:
+    This function reverses this operation (leaving names without doubled extension as-is):
 
     "Terms.pdf.OybgvyAH.22c0583727d5bc.pdf" → "Terms.pdf"
+    "Terms.pdf" → "Terms.pdf"
     """
     ext = '.' + fname.split('.')[-1]
-    return fname.rsplit(ext + ".", 1)[0] + ext
+    parts = fname.rsplit(ext + ".", 1)
+    if len(parts) == 1:
+        return parts[0]
+    else:
+        return parts[0] + ext

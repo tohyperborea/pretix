@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -31,12 +31,9 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the Apache License 2.0 is
 # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations under the License.
+from pretix.base.signals import EventPluginSignal, GlobalSignal
 
-from django.dispatch import Signal
-
-from pretix.base.signals import EventPluginSignal
-
-global_html_head = Signal()
+global_html_head = GlobalSignal()
 """
 Arguments: ``request``
 
@@ -47,7 +44,7 @@ of every page in the frontend. You will get the request as the keyword argument
 This signal is called regardless of whether your plugin is active for all pages of the system.
 """
 
-global_html_page_header = Signal()
+global_html_page_header = GlobalSignal()
 """
 Arguments: ``request``
 
@@ -58,7 +55,7 @@ of every page in the frontend. You will get the request as the keyword argument
 This signal is called regardless of whether your plugin is active for all pages of the system.
 """
 
-global_html_footer = Signal()
+global_html_footer = GlobalSignal()
 """
 Arguments: ``request``
 
@@ -77,7 +74,24 @@ This signal allows you to put code inside the HTML ``<head>`` tag
 of every page in the frontend. You will get the request as the keyword argument
 ``request`` and are expected to return plain HTML.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event.
+As with all event plugin signals, the ``sender`` keyword argument will contain the event.
+
+**Note:** If PCI DSS compliance is important to you and you keep an inventory according to
+rule 6.4.3 of PCI DSS, all plugins that are not required to load on a payment page should
+not return additional JavaScripts if ``getattr(request, 'pci_dss_payment_page', False)``
+is ``True``.
+"""
+
+seatingframe_html_head = EventPluginSignal()
+"""
+Arguments: ``request``
+
+**Temporary workaround, might be removed again later.**
+This signal allows you to put code inside the HTML ``<head>`` tag
+of the seatingframe page in the frontend. You will get the request as the keyword argument
+``request`` and are expected to return plain HTML.
+
+As with all event plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
 html_page_header = EventPluginSignal()
@@ -88,7 +102,7 @@ This signal allows you to put code right in the beginning of the HTML ``<body>``
 of every page in the frontend. You will get the request as the keyword argument
 ``request`` and are expected to return plain HTML.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event.
+As with all event plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
 html_footer = EventPluginSignal()
@@ -99,34 +113,12 @@ This signal allows you to put code before the end of the HTML ``<body>`` tag
 of every page in the frontend. You will get the request as the keyword argument
 ``request`` and are expected to return plain HTML.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event.
-"""
+As with all event plugin signals, the ``sender`` keyword argument will contain the event.
 
-sass_preamble = EventPluginSignal()
-"""
-Arguments: ``filename``
-
-This signal allows you to put SASS code at the beginning of the event-specific
-stylesheet. Keep in mind that this will only be called/rebuilt when the user changes
-display settings or pretix gets updated. You will get the filename that is being
-generated (usually "main.scss" or "widget.scss"). This SASS code will be loaded *after*
-setting of user-defined variables like colors and fonts but *before* pretix' SASS
-code.
-
-As with all plugin signals, the ``sender`` keyword argument will contain the event.
-"""
-
-sass_postamble = EventPluginSignal()
-"""
-Arguments: ``filename``
-
-This signal allows you to put SASS code at the end of the event-specific
-stylesheet. Keep in mind that this will only be called/rebuilt when the user changes
-display settings or pretix gets updated. You will get the filename that is being
-generated (usually "main.scss" or "widget.scss"). This SASS code will be loaded *after*
-all of pretix' SASS code.
-
-As with all plugin signals, the ``sender`` keyword argument will contain the event.
+**Note:** If PCI DSS compliance is important to you and you keep an inventory according to
+rule 6.4.3 of PCI DSS, all plugins that are not required to load on a payment page should
+not return additional JavaScripts if ``getattr(request, 'pci_dss_payment_page', False)``
+is ``True``.
 """
 
 footer_link = EventPluginSignal()
@@ -134,12 +126,12 @@ footer_link = EventPluginSignal()
 Arguments: ``request``
 
 The signal ``pretix.presale.signals.footer_link`` allows you to add links to the footer of an event page. You
-are expected to return a dictionary containing the keys ``label`` and ``url``.
+are expected to return a dictionary containing the keys ``label``, ``url`` and optionally ``cssclass``.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event.
+As with all event plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
-global_footer_link = Signal()
+global_footer_link = GlobalSignal()
 """
 Arguments: ``request``
 
@@ -152,9 +144,9 @@ checkout_confirm_messages = EventPluginSignal()
 This signal is sent out to retrieve short messages that need to be acknowledged by the user before the
 order can be completed. This is typically used for something like "accept the terms and conditions".
 Receivers are expected to return a dictionary where the keys are globally unique identifiers for the
-message and the values can be arbitrary HTML.
+message and the values can be a SafeString containing arbitrary HTML, or a string that will be HTML-escaped.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event.
+As with all event plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
 checkout_flow_steps = EventPluginSignal()
@@ -162,16 +154,17 @@ checkout_flow_steps = EventPluginSignal()
 This signal is sent out to retrieve pages for the checkout flow. Receivers are expected to return
 a subclass of ``pretix.presale.checkoutflow.BaseCheckoutFlowStep``.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event.
+As with all event plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
 voucher_redeem_info = EventPluginSignal()
 """
 Arguments: ``voucher``
 
-This signal is sent out to display additional information on the "redeem a voucher" page
+This signal is sent out to display additional information on the "redeem a voucher" page.
+You are expected to return a SafeString containing HTML, or a string that will be HTML-escaped.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event.
+As with all event plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
 order_meta_from_request = EventPluginSignal()
@@ -185,14 +178,26 @@ You will receive the request triggering the order creation as the ``request`` ke
 As with all event-plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
+order_api_meta_from_request = EventPluginSignal()
+"""
+Arguments: ``request``
+
+This signal is sent before an order is created through the pretixpresale frontend. It allows you
+to return a dictionary that will be merged in the api_meta attribute of the order.
+You will receive the request triggering the order creation as the ``request`` keyword argument.
+
+As with all event-plugin signals, the ``sender`` keyword argument will contain the event.
+"""
+
 checkout_confirm_page_content = EventPluginSignal()
 """
 Arguments: ``request``
 
 This signals allows you to add HTML content to the confirmation page that is presented at the
 end of the checkout process, just before the order is being created.
+You are expected to return a SafeString containing HTML, or a string that will be HTML-escaped.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event. A ``request``
+As with all event plugin signals, the ``sender`` keyword argument will contain the event. A ``request``
 argument will contain the request object.
 """
 
@@ -203,7 +208,7 @@ Arguments: ``request``, ``invoice_address``, ``total``, ``positions``, ``payment
 This signals allows you to add fees to a cart. You are expected to return a list of ``OrderFee``
 objects that are not yet saved to the database (because there is no order yet).
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event. A ``request``
+As with all event plugin signals, the ``sender`` keyword argument will contain the event. A ``request``
 argument will contain the request object and ``invoice_address`` the invoice address (useful for
 tax calculation). The ``total`` keyword argument will contain the total cart sum without any fees.
 You should not rely on this ``total`` value for fee calculations as other fees might interfere.
@@ -217,7 +222,7 @@ and by default only asks for the email address. You are supposed to return a dic
 form fields with globally unique keys. The validated form results will be saved into the
 ``contact_form_data`` entry of the order's meta_info dictionary.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event. A ``request``
+As with all event plugin signals, the ``sender`` keyword argument will contain the event. A ``request``
 argument will contain the request object.
 """
 
@@ -228,10 +233,10 @@ Arguments: ``request``, ``order``
 This signal allows you to override fields of the contact form that is presented during checkout
 and by default only asks for the email address. It is also being used for the invoice address
 form. You are supposed to return a dictionary of dictionaries with globally unique keys. The
-value-dictionary should contain one or more of the following keys: ``initial``, ``disabled``,
+value-dictionary should contain one or more of the following keys: ``label``, ``initial``, ``disabled``,
 ``validators``. The key of the dictionary should be the name of the form field.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event. A ``request``
+As with all event plugin signals, the ``sender`` keyword argument will contain the event. A ``request``
 argument will contain the request object. The ``order`` argument is ``None`` during the checkout
 process and contains an order if the customer is trying to change an existing order.
 """
@@ -249,7 +254,7 @@ The ``position`` keyword argument will contain either a ``CartPosition`` object 
 object, depending on whether the form is called as part of the order checkout or for changing an order
 later.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event.
+As with all event plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
 question_form_fields_overrides = EventPluginSignal()
@@ -259,13 +264,13 @@ Arguments: ``position``, ``request``
 This signal allows you to override fields of the questions form that is presented during checkout
 and by default only asks for the questions configured in the backend. You are supposed to return a
 dictionary of dictionaries with globally unique keys. The value-dictionary should contain one or
-more of the following keys: ``initial``, ``disabled``, ``validators``. The key of the dictionary
-should be the form field name for system fields (e.g. ``company``), or the question's ``identifier``
-for user-defined questions.
+more of the following keys: ``label``, ``initial``, ``disabled``, ``validators``. The key of the
+dictionary should be the form field name for system fields (e.g. ``company``), or the question's
+``identifier`` for user-defined questions.
 
 The ``position`` keyword argument will contain a ``CartPosition`` or ``OrderPosition`` object.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event. A ``request``
+As with all event plugin signals, the ``sender`` keyword argument will contain the event. A ``request``
 argument will contain the request object.
 """
 
@@ -273,36 +278,40 @@ order_info = EventPluginSignal()
 """
 Arguments: ``order``, ``request``
 
-This signal is sent out to display additional information on the order detail page
+This signal is sent out to display additional information on the order detail page.
+Return a SafeString containing HTML, or a string that will be HTML-escaped.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event.
+As with all event plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
 position_info = EventPluginSignal()
 """
 Arguments: ``order``, ``position``, ``request``
 
-This signal is sent out to display additional information on the position detail page
+This signal is sent out to display additional information on the position detail page.
+Return a SafeString containing HTML, or a string that will be HTML-escaped.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event.
+As with all event plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
 order_info_top = EventPluginSignal()
 """
 Arguments: ``order``, ``request``
 
-This signal is sent out to display additional information on top of the order detail page
+This signal is sent out to display additional information on top of the order detail page.
+Return a SafeString containing HTML, or a string that will be HTML-escaped.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event.
+As with all event plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
 position_info_top = EventPluginSignal()
 """
 Arguments: ``order``, ``position``, ``request``
 
-This signal is sent out to display additional information on top of the position detail page
+This signal is sent out to display additional information on top of the position detail page.
+Return a SafeString containing HTML, or a string that will be HTML-escaped.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event.
+As with all event plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
 process_request = EventPluginSignal()
@@ -318,7 +327,7 @@ won't be processed any further down the stack.
 WARNING: Be very careful about using this signal as listening to it makes it really
 easy to cause serious performance problems.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event.
+As with all event plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
 process_response = EventPluginSignal()
@@ -335,7 +344,7 @@ return the ``response`` parameter.
 WARNING: Be very careful about using this signal as listening to it makes it really
 easy to cause serious performance problems.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event.
+As with all event plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
 front_page_top = EventPluginSignal()
@@ -345,8 +354,8 @@ Arguments: ``request``, ``subevent``
 This signal is sent out to display additional information on the frontpage above the list
 of products and but below a custom frontpage text.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event. The
-receivers are expected to return HTML.
+As with all event plugin signals, the ``sender`` keyword argument will contain the event. The
+receivers are expected to return a SafeString containing HTML, or a string that will be HTML-escaped.
 """
 
 render_seating_plan = EventPluginSignal()
@@ -357,8 +366,8 @@ This signal is sent out to render a seating plan, if one is configured for the s
 You will be passed the ``request`` as a keyword argument. If applicable, a ``subevent`` or
 ``voucher`` argument might be given.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event. The
-receivers are expected to return HTML.
+As with all event plugin signals, the ``sender`` keyword argument will contain the event. The
+receivers are expected to return a SafeString containing HTML, or a string that will be HTML-escaped.
 """
 
 front_page_bottom = EventPluginSignal()
@@ -368,8 +377,8 @@ Arguments: ``request``, ``subevent``
 This signal is sent out to display additional information on the frontpage below the list
 of products.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event. The
-receivers are expected to return HTML.
+As with all event plugin signals, the ``sender`` keyword argument will contain the event. The
+receivers are expected to return a SafeString containing HTML, or a string that will be HTML-escaped.
 """
 
 front_page_bottom_widget = EventPluginSignal()
@@ -379,8 +388,8 @@ Arguments: ``request``, ``subevent``
 This signal is sent out to display additional information on the frontpage below the list
 of products if the front page is shown in the widget.
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event. The
-receivers are expected to return HTML.
+As with all event plugin signals, the ``sender`` keyword argument will contain the event. The
+receivers are expected to return a SafeString containing HTML, or a string that will be HTML-escaped.
 """
 
 checkout_all_optional = EventPluginSignal()
@@ -390,7 +399,7 @@ Arguments: 'request'
 If any receiver of this signal returns ``True``, all input fields during checkout (contact data,
 invoice address, confirmations) will be optional, except for questions. Use with care!
 
-As with all plugin signals, the ``sender`` keyword argument will contain the event. A ``request``
+As with all event plugin signals, the ``sender`` keyword argument will contain the event. A ``request``
 argument will contain the request object.
 """
 
@@ -400,7 +409,30 @@ Arguments: ``item``, ``variation``, ``subevent``
 
 This signal is sent out when the description of an item or variation is rendered and allows you to append
 additional text to the description. You are passed the ``item``, ``variation`` and ``subevent``. You are
-expected to return HTML.
+expected to return markdown.
+"""
+
+# Sideburn: not in upstream pretix (used by pretix-sideburn-lottery).
+sold_out_availability = EventPluginSignal()
+"""
+Arguments: ``item``, ``variation``, ``allow_waitinglist``, ``cart_namespace``, ``subevent``, ``compact``
+
+This signal is sent when rendering the sold-out availability label for a product. Receivers may return
+a SafeString containing HTML (or a string that will be HTML-escaped) to replace the default "SOLD OUT"
+label and optional waiting-list link text.
+
+As with all plugin signals, the ``sender`` keyword argument will contain the event.
+"""
+
+# Sideburn: not in upstream pretix (used by pretix-sideburn-lottery).
+checkout_questions_top = EventPluginSignal()
+"""
+Arguments: ``request``
+
+This signal is sent at the top of the checkout questions page, before the question panels.
+Receivers are expected to return a SafeString containing HTML, or a string that will be HTML-escaped.
+
+As with all plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
 register_cookie_providers = EventPluginSignal()
@@ -413,13 +445,81 @@ consent state. Receivers should return a list of ``pretix.presale.cookies.Cookie
 As with all event-plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
+filter_subevents = GlobalSignal()
+"""
+Arguments: ``subevents``, ``sales_channel``
+
+This signal allows you to filter which subevents are publicly available. Receivers are passed a
+list of subevents that are about to be shown to the user and are expected to return a list of the
+same format, with all subevents removed that should not be available for sale.
+
+``sales_channels`` is a ``str`` with the sales channel identifier.
+
+This is not an event-plugin signal as this will also be called on other levels when showing
+a list of subevents across events. Expect that the subevents in the input are mixed from different
+events **or even different organizers**. However, receivers will only receive subevents of events
+that the plugin is active for and can only filter out these. It is recommended that receivers
+return a subset of the same subevent instances that are passed in, not new instances, to ensure
+`prefetch_related` calls on the caller side are not pointless.
+"""
+
+# Sideburn: not in upstream pretix (used by pretix-sideburn-core and pretix-sideburn-twilio).
 waitinglist_form_class = EventPluginSignal()
+"""
+Arguments: ``cls``
+
+This signal allows you to replace the form class that is used for signing up to the waiting list.
+You will receive the default form class (or the class returned by a previous plugin) in the
+``cls`` argument so that you can inherit from it. You must return a form class; return ``cls``
+unchanged if you do not want to modify it.
+
+As with all plugin signals, the ``sender`` keyword argument will contain the event.
+"""
+
+# Sideburn: not in upstream pretix (used by pretix-sideburn-lottery).
+waitinglist_template_name = EventPluginSignal()
 """
 Arguments: (none)
 
-This signal is sent when the waiting list form class is resolved. Receivers may return a form class
-(subclass of ``pretix.presale.forms.waitinglist.WaitingListForm``) to use instead of the default.
+This signal is sent when the waiting list page template is resolved. Receivers may return a template name.
 The first non-None response is used.
 
 As with all plugin signals, the ``sender`` keyword argument will contain the event.
+"""
+
+# Sideburn: not in upstream pretix (used by pretix-sideburn-twilio).
+change_information_form_class = GlobalSignal()
+"""
+Arguments: ``cls``, ``request``
+
+This signal is sent when the customer change-information form class is resolved on the
+organizer account page. It is sent with ``send_chained``: each receiver gets the class returned
+by the previous one as ``cls`` (starting with ``pretix.presale.forms.customer.ChangeInfoForm``)
+and must return a form class, usually a subclass of ``cls``.
+
+The ``sender`` keyword argument is the organizer.
+"""
+
+# Sideburn: not in upstream pretix (used by pretix-sideburn-twilio).
+customer_profile_extra = GlobalSignal()
+"""
+Arguments: ``request``, ``customer``
+
+This signal is sent when rendering the header shown on every customer account page. Receivers
+may return a SafeString containing HTML (or a string that will be HTML-escaped) to append to the
+account information block (e.g. after the phone field).
+
+The ``sender`` keyword argument is the HTTP request.
+"""
+
+# Sideburn: not in upstream pretix (used by pretix-sideburn-core).
+customer_order_actions = EventPluginSignal()
+"""
+Arguments: ``order``, ``request``
+
+This signal is sent for every order in the order list on the customer account page. Receivers
+may return a SafeString containing HTML (or a string that will be HTML-escaped) to show below
+the order's "Details" link (e.g. a cancel button).
+
+As with all event plugin signals, the ``sender`` keyword argument will contain the order's event.
 """

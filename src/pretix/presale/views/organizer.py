@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -34,6 +34,7 @@
 import calendar
 import hashlib
 import math
+import operator
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 from functools import reduce
@@ -44,13 +45,16 @@ import dateutil
 import isoweek
 from django.conf import settings
 from django.core.cache import caches
-from django.db.models import Exists, Max, Min, OuterRef, Prefetch, Q
+from django.db.models import (
+    Case, Exists, F, Max, Min, OuterRef, Prefetch, Q, Value, When,
+)
 from django.db.models.functions import Coalesce, Greatest
-from django.http import Http404, HttpResponse
-from django.shortcuts import redirect
+from django.dispatch.dispatcher import NO_RECEIVERS
+from django.http import Http404, HttpResponse, QueryDict
 from django.templatetags.static import static
 from django.utils.decorators import method_decorator
 from django.utils.formats import date_format, get_format
+from django.utils.functional import cached_property
 from django.utils.timezone import get_current_timezone, now
 from django.views import View
 from django.views.decorators.cache import cache_page
@@ -61,26 +65,36 @@ from pretix.base.models import (
     Event, EventMetaValue, Organizer, Quota, SubEvent, SubEventMetaValue,
 )
 from pretix.base.services.quotas import QuotaAvailability
+from pretix.base.timemachine import time_machine_now
 from pretix.helpers.compat import date_fromisocalendar
 from pretix.helpers.daterange import daterange
 from pretix.helpers.formats.en.formats import (
     SHORT_MONTH_DAY_FORMAT, WEEK_FORMAT,
 )
+from pretix.helpers.http import redirect_to_url
+from pretix.helpers.i18n import parse_date_localized
 from pretix.helpers.thumb import get_thumbnail
-from pretix.multidomain.urlreverse import eventreverse
+from pretix.multidomain.urlreverse import eventreverse, eventreverse_absolute
+from pretix.presale.forms.organizer import EventListFilterForm
 from pretix.presale.ical import get_public_ical
+from pretix.presale.signals import filter_subevents
 from pretix.presale.views import OrganizerViewMixin
 
 
-def filter_qs_by_attr(qs, request):
+def filter_qs_by_attr(qs, request, match_subevents_with_conditions: Q=None):
     """
     We'll allow to filter the event list using attributes defined in the event meta data
     models in the format ?attr[meta_name]=meta_value
+
+    :param qs: The base queryset over events or subevents
+    :param request: The request
+    :param match_subevents_with_conditions: If not None, an Event will also match if it has at least one subevent
+                                            fulfilling the conditions given and matching the search
     """
     attrs = {}
     for i, item in enumerate(request.GET.items()):
         k, v = item
-        if k.startswith("attr[") and k.endswith("]"):
+        if k.startswith("attr[") and k.endswith("]") and v.strip():
             attrs[k[5:-1]] = v
 
     skey = 'filter_qs_by_attr_{}_{}'.format(request.organizer.pk, request.event.pk if hasattr(request, 'event') else '')
@@ -91,10 +105,11 @@ def filter_qs_by_attr(qs, request):
 
     props = {
         p.name: p for p in request.organizer.meta_properties.filter(
+            Q(filter_allowed=True) | Q(filter_public=True),
             name__in=attrs.keys(),
-            filter_allowed=True,
         )
     }
+    conditions = []
 
     for i, item in enumerate(attrs.items()):
         attr, v = item
@@ -136,85 +151,140 @@ def filter_qs_by_attr(qs, request):
                 annotations['attr_{}_any'.format(i)] = Exists(emv_with_any_value)
                 filters |= Q(**{'attr_{}_any'.format(i): False})
 
-        qs = qs.annotate(**annotations).filter(filters)
+        qs = qs.annotate(**annotations)
+        conditions.append(filters)
+
+    if conditions:
+        if match_subevents_with_conditions:
+            qs = qs.annotate(
+                match_by_subevents=Exists(
+                    filter_qs_by_attr(
+                        SubEvent.objects.filter(
+                            match_subevents_with_conditions,
+                            event=OuterRef('pk'),
+                        ),
+                        request,
+                    )
+                )
+            ).filter(reduce(operator.and_, conditions) | Q(match_by_subevents=True))
+        else:
+            qs = qs.filter(reduce(operator.and_, conditions))
     return qs
 
 
 class EventListMixin:
+    @cached_property
+    def filter_form(self):
+        return EventListFilterForm(
+            data=self.request.GET,
+            organizer=self.request.organizer,
+            event=getattr(self.request, 'event', None),
+        )
 
-    def _get_event_queryset(self):
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx['filter_form'] = self.filter_form
+        return ctx
+
+    def _get_event_list_queryset(self):
         query = Q(is_public=True) & Q(live=True)
         qs = self.request.organizer.events.using(settings.DATABASE_REPLICA).filter(query)
-        qs = qs.filter(sales_channels__contains=self.request.sales_channel.identifier)
+        qs = qs.filter(Q(all_sales_channels=True) | Q(limit_sales_channels=self.request.sales_channel))
+
+        show_old = "old" in self.request.GET
+
+        subevent_filter = Q(subevents__active=True, subevents__is_public=True)
+        if not show_old:
+            subevent_filter &= Q(
+                Q(subevents__date_to__gte=now()) | Q(subevents__date_from__gte=now())
+            )
+
         qs = qs.annotate(
-            min_from=Min('subevents__date_from'),
-            min_to=Min('subevents__date_to'),
-            max_from=Max('subevents__date_from'),
-            max_to=Max('subevents__date_to'),
-            max_fromto=Greatest(Max('subevents__date_to'), Max('subevents__date_from')),
+            min_from=Min('subevents__date_from', filter=subevent_filter),
+            min_to=Min('subevents__date_to', filter=subevent_filter),
+            max_from=Max('subevents__date_from', filter=subevent_filter),
+            max_to=Max('subevents__date_to', filter=subevent_filter),
+            max_fromto=Greatest(Max('subevents__date_to', filter=subevent_filter), Max('subevents__date_from', filter=subevent_filter)),
         )
-        if "old" in self.request.GET:
+        if show_old:
+            date_q = Q(date_to__lt=now()) | (Q(date_to__isnull=True) & Q(date_from__lt=now()))
             qs = qs.filter(
-                Q(Q(has_subevents=False) & Q(
-                    Q(date_to__lt=now()) | Q(Q(date_to__isnull=True) & Q(date_from__lt=now()))
-                )) | Q(Q(has_subevents=True) & Q(
-                    Q(min_to__lt=now()) | Q(min_from__lt=now()))
+                Q(Q(has_subevents=False) & date_q) | Q(
+                    Q(has_subevents=True) & Q(Q(min_to__lt=now()) | Q(min_from__lt=now()))
                 )
             ).annotate(
                 order_to=Coalesce('max_fromto', 'max_to', 'max_from', 'date_to', 'date_from'),
-            ).order_by('-order_to')
+            ).order_by('-order_to', 'name', 'slug')
         else:
+            date_q = Q(date_to__gte=now()) | (Q(date_to__isnull=True) & Q(date_from__gte=now()))
             qs = qs.filter(
-                Q(Q(has_subevents=False) & Q(
-                    Q(date_to__gte=now()) | Q(Q(date_to__isnull=True) & Q(date_from__gte=now()))
-                )) | Q(Q(has_subevents=True) & Q(
+                Q(Q(has_subevents=False) & date_q) | Q(Q(has_subevents=True) & Q(
                     Q(max_to__gte=now()) | Q(max_from__gte=now()))
                 )
             ).annotate(
                 order_from=Coalesce('min_from', 'date_from'),
-            ).order_by('order_from')
-        qs = Event.annotated(filter_qs_by_attr(qs, self.request))
+            ).order_by('order_from', 'name', 'slug')
+        qs = Event.annotated(filter_qs_by_attr(
+            qs, self.request, match_subevents_with_conditions=Q(active=True) & Q(is_public=True) & date_q
+        ), self.request.sales_channel)
         return qs
 
     def _set_month_to_next_subevent(self):
         tz = self.request.event.timezone
-        next_sev = self.request.event.subevents.using(settings.DATABASE_REPLICA).filter(
-            Q(date_from__gte=now()) | Q(date_to__isnull=False, date_to__gte=now()),
+        now_dt = time_machine_now()
+        next_sev = self.request.event.subevents.using(settings.DATABASE_REPLICA).annotate(
+            effective_date=Case(
+                When(date_from__lt=now_dt, date_to__isnull=False, date_to__gte=now_dt, then=Value(now_dt)),
+                default=F('date_from'),
+            )
+        ).filter(
+            effective_date__gte=now_dt,
             active=True,
             is_public=True,
-        ).select_related('event').order_by('date_from').first()
+        ).select_related('event').order_by('effective_date').first()
 
         if next_sev:
-            datetime_from = next_sev.date_from
+            datetime_from = next_sev.effective_date
             self.year = datetime_from.astimezone(tz).year
             self.month = datetime_from.astimezone(tz).month
         else:
-            self.year = now().year
-            self.month = now().month
+            self.year = now_dt.year
+            self.month = now_dt.month
 
     def _set_month_to_next_event(self):
-        next_ev = filter_qs_by_attr(Event.objects.using(settings.DATABASE_REPLICA).filter(
-            Q(date_from__gte=now()) | Q(date_to__isnull=False, date_to__gte=now()),
+        now_dt = now()
+        next_ev = filter_qs_by_attr(Event.objects.using(settings.DATABASE_REPLICA).annotate(
+            effective_date=Case(
+                When(date_from__lt=now_dt, date_to__isnull=False, date_to__gte=now_dt, then=Value(now())),
+                default=F('date_from'),
+            )
+        ).filter(
+            effective_date__gte=now_dt,
             organizer=self.request.organizer,
             live=True,
             is_public=True,
             has_subevents=False
-        ), self.request).order_by('date_from').first()
-        next_sev = filter_qs_by_attr(SubEvent.objects.using(settings.DATABASE_REPLICA).filter(
-            Q(date_from__gte=now()) | Q(date_to__isnull=False, date_to__gte=now()),
+        ), self.request).order_by('effective_date').first()
+        next_sev = filter_qs_by_attr(SubEvent.objects.using(settings.DATABASE_REPLICA).annotate(
+            effective_date=Case(
+                When(date_from__lt=now_dt, date_to__isnull=False, date_to__gte=now_dt, then=Value(now_dt)),
+                default=F('date_from'),
+            )
+        ).filter(
+            effective_date__gte=now_dt,
             event__organizer=self.request.organizer,
             event__is_public=True,
             event__live=True,
             active=True,
             is_public=True,
-        ), self.request).select_related('event').order_by('date_from').first()
+        ), self.request).select_related('event').order_by('effective_date').first()
 
         datetime_from = None
-        if (next_ev and next_sev and next_sev.date_from < next_ev.date_from) or (next_sev and not next_ev):
-            datetime_from = next_sev.date_from
+        if (next_ev and next_sev and next_sev.effective_date < next_ev.effective_date) or (next_sev and not next_ev):
+            datetime_from = next_sev.effective_date
             next_ev = next_sev.event
         elif next_ev:
-            datetime_from = next_ev.date_from
+            datetime_from = next_ev.effective_date
 
         if datetime_from:
             tz = next_ev.timezone
@@ -229,7 +299,7 @@ class EventListMixin:
             try:
                 date = dateutil.parser.isoparse(self.request.GET.get('date')).date()
             except ValueError:
-                date = now().date()
+                date = time_machine_now().date()
             self.year = date.year
             self.month = date.month
         else:
@@ -239,44 +309,61 @@ class EventListMixin:
                 self._set_month_to_next_event()
 
     def _set_week_to_next_subevent(self):
+        now_dt = time_machine_now()
         tz = self.request.event.timezone
-        next_sev = self.request.event.subevents.using(settings.DATABASE_REPLICA).filter(
-            Q(date_from__gte=now()) | Q(date_to__isnull=False, date_to__gte=now()),
+        next_sev = self.request.event.subevents.using(settings.DATABASE_REPLICA).annotate(
+            effective_date=Case(
+                When(date_from__lt=now_dt, date_to__isnull=False, date_to__gte=now_dt, then=Value(now_dt)),
+                default=F('date_from'),
+            )
+        ).filter(
+            effective_date__gte=now_dt,
             active=True,
             is_public=True,
-        ).select_related('event').order_by('date_from').first()
+        ).select_related('event').order_by('effective_date').first()
 
         if next_sev:
-            datetime_from = next_sev.date_from
+            datetime_from = next_sev.effective_date
             self.year = datetime_from.astimezone(tz).isocalendar()[0]
             self.week = datetime_from.astimezone(tz).isocalendar()[1]
         else:
-            self.year = now().isocalendar()[0]
-            self.week = now().isocalendar()[1]
+            self.year = now_dt.isocalendar()[0]
+            self.week = now_dt.isocalendar()[1]
 
     def _set_week_to_next_event(self):
-        next_ev = filter_qs_by_attr(Event.objects.using(settings.DATABASE_REPLICA).filter(
-            Q(date_from__gte=now()) | Q(date_to__isnull=False, date_to__gte=now()),
+        now_dt = now()
+        next_ev = filter_qs_by_attr(Event.objects.using(settings.DATABASE_REPLICA).annotate(
+            effective_date=Case(
+                When(date_from__lt=now_dt, date_to__isnull=False, date_to__gte=now_dt, then=Value(now_dt)),
+                default=F('date_from'),
+            )
+        ).filter(
+            effective_date__gte=now_dt,
             organizer=self.request.organizer,
             live=True,
             is_public=True,
             has_subevents=False
-        ), self.request).order_by('date_from').first()
-        next_sev = filter_qs_by_attr(SubEvent.objects.using(settings.DATABASE_REPLICA).filter(
-            Q(date_from__gte=now()) | Q(date_to__isnull=False, date_to__gte=now()),
+        ), self.request).order_by('effective_date').first()
+        next_sev = filter_qs_by_attr(SubEvent.objects.using(settings.DATABASE_REPLICA).annotate(
+            effective_date=Case(
+                When(date_from__lt=now_dt, date_to__isnull=False, date_to__gte=now_dt, then=Value(now_dt)),
+                default=F('date_from'),
+            )
+        ).filter(
+            effective_date__gte=now_dt,
             event__organizer=self.request.organizer,
             event__is_public=True,
             event__live=True,
             active=True,
             is_public=True,
-        ), self.request).select_related('event').order_by('date_from').first()
+        ), self.request).select_related('event').order_by('effective_date').first()
 
         datetime_from = None
-        if (next_ev and next_sev and next_sev.date_from < next_ev.date_from) or (next_sev and not next_ev):
-            datetime_from = next_sev.date_from
+        if (next_ev and next_sev and next_sev.effective_date < next_ev.effective_date) or (next_sev and not next_ev):
+            datetime_from = next_sev.effective_date
             next_ev = next_sev.event
         elif next_ev:
-            datetime_from = next_ev.date_from
+            datetime_from = next_ev.effective_date
 
         if datetime_from:
             tz = next_ev.timezone
@@ -291,7 +378,7 @@ class EventListMixin:
             try:
                 iso = dateutil.parser.isoparse(self.request.GET.get('date')).isocalendar()
             except ValueError:
-                iso = now().isocalendar()
+                iso = time_machine_now().isocalendar()
             self.year = iso[0]
             self.week = iso[1]
         else:
@@ -387,7 +474,7 @@ class OrganizerIndex(OrganizerViewMixin, EventListMixin, ListView):
             return super().get(request, *args, **kwargs)
 
     def get_queryset(self):
-        return self._get_event_queryset()
+        return self._get_event_list_queryset()
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -396,8 +483,17 @@ class OrganizerIndex(OrganizerViewMixin, EventListMixin, ListView):
             if event.has_subevents:
                 event.daterange = daterange(
                     event.min_from.astimezone(event.tzname),
-                    (event.max_fromto or event.max_to or event.max_from).astimezone(event.tzname)
+                    (event.max_fromto or event.max_to or event.max_from).astimezone(event.tzname),
+                    as_html=True,
                 )
+
+        query_data = self.request.GET.copy()
+        filter_query_data = QueryDict(mutable=True)
+        for k, v in query_data.items():
+            if k.startswith("attr[") and v:
+                filter_query_data[k] = v
+        ctx["filterquery"] = f"?{filter_query_data.urlencode()}" if filter_query_data else ""
+
         return ctx
 
 
@@ -467,18 +563,91 @@ def add_events_for_days(request, baseqs, before, after, ebd, timezones):
             })
 
 
-def add_subevents_for_days(qs, before, after, ebd, timezones, event=None, cart_namespace=None, voucher=None):
+def filter_subevents_with_plugins(subevents, sales_channel=None):
+    # Special-case of GlobalSignal.send_chained() that only sends subevents that have the plugin enabled
+    # and then mixes the results back together.
+    from pretix.base.signals import (
+        _populate_app_cache, app_cache, get_defining_app, is_app_active,
+    )
+
+    if not filter_subevents.receivers or filter_subevents.sender_receivers_cache.get(None) is NO_RECEIVERS:
+        return subevents
+
+    if not app_cache:
+        _populate_app_cache()
+
+    for receiver in filter_subevents._live_receivers(None)[0]:
+        app = get_defining_app(receiver)
+        event_state = {}
+
+        def app_active(event):
+            if event.pk not in event_state:
+                event_state[event.pk] = is_app_active(event, app, allow_legacy_plugins=True)
+            return event_state[event.pk]
+
+        subevents_passed_to_receiver = [
+            s for s in subevents if app_active(s.event)
+        ]
+        response = receiver(
+            signal=filter_subevents,
+            sender=None,
+            subevents=subevents_passed_to_receiver,
+            sales_channel=sales_channel,
+        )
+        subevents = [
+            s for s in subevents if s in response or s not in subevents_passed_to_receiver
+        ]
+
+    return subevents
+
+
+def should_hide_subevent(settings, subevent, voucher=None):
+    hide = False
+    if settings.event_list_available_only:
+        hide = (
+            # Presale is over → the subevent is not available → hide
+            subevent.presale_has_ended or
+            # Not a single product is available on this sales channel → hide
+            # Note that means there could be products which are ignored for calendar availability (Quota.ignore_for_event_availability)
+            # or products only visible with a voucher. However, for customers with these scenarios, the event_list_available_only
+            # makes only very little sense as it would never do anything, so the flag can just be removed -- or the products should
+            # be made visible so people know why there are no products. In case a voucher is already entered on the calendar view,
+            # this is already respected and subevents are shown correctly.
+            subevent.best_availability_state is None or
+            (
+                # Sold out → hide, unless we have a voucher active that can bypass all quotas
+                (not voucher or not voucher.allow_ignore_quota) and
+                subevent.best_availability_state < Quota.AVAILABILITY_RESERVED
+            )
+        )
+
+    if settings.event_calendar_future_only:
+        if (subevent.date_to or subevent.date_from) < time_machine_now():
+            hide = True
+    return hide
+
+
+def add_subevents_for_days(qs, before, after, ebd, timezones, sales_channel, event=None, cart_namespace=None,
+                           voucher=None):
     qs = qs.filter(active=True, is_public=True).filter(
         Q(Q(date_to__gte=before) & Q(date_from__lte=after)) |
         Q(Q(date_to__isnull=True) & Q(date_from__gte=before) & Q(date_from__lte=after))
     ).order_by(
         'date_from'
     )
+    subevents = filter_subevents_with_plugins(list(qs), sales_channel)
 
     quotas_to_compute = []
-    for se in qs:
+    for se in subevents:
         if se.presale_is_running:
             quotas_to_compute += se.active_quotas
+            for q in se.active_quotas:
+                # save database lookups later
+                q.subevent = se
+                if event is not None:
+                    q.event = event
+                else:
+                    q.event = se.event
 
     qcache = {}
     if quotas_to_compute:
@@ -487,23 +656,18 @@ def add_subevents_for_days(qs, before, after, ebd, timezones, event=None, cart_n
         qa.compute(allow_cache=True)
         qcache.update(qa.results)
 
-    for se in qs:
+    for se in subevents:
         if qcache:
             se._quota_cache = qcache
+        if event is not None:  # save database lookup later
+            se.event = event
         kwargs = {'subevent': se.pk}
         if cart_namespace:
             kwargs['cart_namespace'] = cart_namespace
 
         s = event.settings if event else se.event.settings
-
-        if s.event_list_available_only:
-            hide = se.presale_has_ended or (
-                (not voucher or not voucher.allow_ignore_quota) and
-                se.best_availability_state is not None and
-                se.best_availability_state < Quota.AVAILABILITY_RESERVED
-            )
-            if hide:
-                continue
+        if should_hide_subevent(s, se, voucher):
+            continue
 
         timezones.add(s.timezone)
         tz = ZoneInfo(s.timezone)
@@ -572,7 +736,7 @@ def days_for_template(ebd, week, future_only=False):
             'events': sorted(ebd.get(day), key=sort_ev) if day in ebd else []
         }
         for day in week.days()
-        if not future_only or day > now().astimezone(get_current_timezone()).date()
+        if not future_only or day >= now().astimezone(get_current_timezone()).date()
     ]
 
 
@@ -595,7 +759,7 @@ def weeks_for_template(ebd, year, month, future_only=False):
         ]
         for week in calendar.monthcalendar(year, month)
         if not future_only or (
-            any(day != 0 and date(year, month, day) > today for day in week)
+            any(day != 0 and date(year, month, day) >= today for day in week)
         )
     ]
 
@@ -609,7 +773,7 @@ class CalendarView(OrganizerViewMixin, EventListMixin, TemplateView):
         if all(k in request.GET for k in keys):
             get_params = {k: v for k, v in request.GET.items() if k not in keys}
             get_params["date"] = "%s-%s" % (request.GET.get("year"), request.GET.get("month"))
-            return redirect(self.request.path + "?" + urlencode(get_params))
+            return redirect_to_url(self.request.path + "?" + urlencode(get_params))
 
         self._set_month_year()
         return super().get(request, *args, **kwargs)
@@ -623,7 +787,7 @@ class CalendarView(OrganizerViewMixin, EventListMixin, TemplateView):
             raise Http404()
 
         tz = get_current_timezone()
-        before = datetime(self.year, self.month, 1, 0, 0, 0, tzinfo=tz) - timedelta(days=1)
+        before = datetime(self.year, self.month, 1, 23, 59, 59, tzinfo=tz) - timedelta(days=1)
         after = datetime(self.year, self.month, ndays, 0, 0, 0, tzinfo=tz) + timedelta(days=1)
 
         ctx['date'] = date(self.year, self.month, 1)
@@ -633,13 +797,13 @@ class CalendarView(OrganizerViewMixin, EventListMixin, TemplateView):
 
         ctx['has_before'], ctx['has_after'] = has_before_after(
             self.request.organizer.events.filter(
-                sales_channels__contains=self.request.sales_channel.identifier
+                Q(all_sales_channels=True) | Q(limit_sales_channels=self.request.sales_channel),
             ),
             SubEvent.objects.filter(
+                Q(event__all_sales_channels=True) | Q(event__limit_sales_channels=self.request.sales_channel),
                 event__organizer=self.request.organizer,
                 event__is_public=True,
                 event__live=True,
-                event__sales_channels__contains=self.request.sales_channel.identifier
             ),
             before,
             after,
@@ -655,28 +819,36 @@ class CalendarView(OrganizerViewMixin, EventListMixin, TemplateView):
     def _events_by_day(self, before, after):
         ebd = defaultdict(list)
         timezones = set()
-        add_events_for_days(self.request, Event.annotated(self.request.organizer.events, 'web').using(
+        add_events_for_days(self.request, Event.annotated(self.request.organizer.events, self.request.sales_channel).using(
             settings.DATABASE_REPLICA
         ).filter(
-            sales_channels__contains=self.request.sales_channel.identifier
+            Q(all_sales_channels=True) | Q(limit_sales_channels=self.request.sales_channel),
         ), before, after, ebd, timezones)
-        add_subevents_for_days(filter_qs_by_attr(SubEvent.annotated(SubEvent.objects.filter(
-            event__organizer=self.request.organizer,
-            event__is_public=True,
-            event__live=True,
-            event__sales_channels__contains=self.request.sales_channel.identifier
-        ).prefetch_related(
-            Prefetch(
-                'event',
-                queryset=Event.objects.prefetch_related(
-                    '_settings_objects',
-                    Prefetch(
-                        'organizer',
-                        queryset=Organizer.objects.prefetch_related('_settings_objects')
+        add_subevents_for_days(
+            filter_qs_by_attr(SubEvent.annotated(SubEvent.objects.filter(
+                Q(event__all_sales_channels=True) |
+                Q(event__limit_sales_channels=self.request.sales_channel),
+                event__organizer=self.request.organizer,
+                event__is_public=True,
+                event__live=True,
+            ).prefetch_related(
+                Prefetch(
+                    'event',
+                    queryset=Event.objects.prefetch_related(
+                        '_settings_objects',
+                        Prefetch(
+                            'organizer',
+                            queryset=Organizer.objects.prefetch_related('_settings_objects')
+                        )
                     )
                 )
-            )
-        )), self.request).using(settings.DATABASE_REPLICA), before, after, ebd, timezones)
+            ), self.request.sales_channel), self.request).using(settings.DATABASE_REPLICA),
+            before=before,
+            after=after,
+            ebd=ebd,
+            timezones=timezones,
+            sales_channel=self.request.sales_channel,
+        )
         self._multiple_timezones = len(timezones) > 1
         return ebd
 
@@ -690,7 +862,7 @@ class WeekCalendarView(OrganizerViewMixin, EventListMixin, TemplateView):
         if all(k in request.GET for k in keys):
             get_params = {k: v for k, v in request.GET.items() if k not in keys}
             get_params["date"] = "%s-W%s" % (request.GET.get("year"), request.GET.get("week"))
-            return redirect(self.request.path + "?" + urlencode(get_params))
+            return redirect_to_url(self.request.path + "?" + urlencode(get_params))
 
         self._set_week_year()
         return super().get(request, *args, **kwargs)
@@ -701,13 +873,14 @@ class WeekCalendarView(OrganizerViewMixin, EventListMixin, TemplateView):
         tz = get_current_timezone()
         week = isoweek.Week(self.year, self.week)
         before = datetime(
-            week.monday().year, week.monday().month, week.monday().day, 0, 0, 0, tzinfo=tz,
+            week.monday().year, week.monday().month, week.monday().day, 23, 59, 59, tzinfo=tz,
         ) - timedelta(days=1)
         after = datetime(
             week.sunday().year, week.sunday().month, week.sunday().day, 0, 0, 0, tzinfo=tz,
         ) + timedelta(days=1)
 
         ctx['date'] = week.monday()
+        ctx['date_to'] = week.sunday()
         ctx['before'] = before
         ctx['after'] = after
 
@@ -715,13 +888,14 @@ class WeekCalendarView(OrganizerViewMixin, EventListMixin, TemplateView):
 
         ctx['has_before'], ctx['has_after'] = has_before_after(
             self.request.organizer.events.filter(
-                sales_channels__contains=self.request.sales_channel.identifier
+                Q(all_sales_channels=True) | Q(limit_sales_channels=self.request.sales_channel),
             ),
             SubEvent.objects.filter(
+                Q(event__all_sales_channels=True) |
+                Q(event__limit_sales_channels=self.request.sales_channel),
                 event__organizer=self.request.organizer,
                 event__is_public=True,
                 event__live=True,
-                event__sales_channels__contains=self.request.sales_channel.identifier
             ),
             before,
             after,
@@ -749,28 +923,36 @@ class WeekCalendarView(OrganizerViewMixin, EventListMixin, TemplateView):
     def _events_by_day(self, before, after):
         ebd = defaultdict(list)
         timezones = set()
-        add_events_for_days(self.request, Event.annotated(self.request.organizer.events, 'web').using(
+        add_events_for_days(self.request, Event.annotated(self.request.organizer.events, self.request.sales_channel).using(
             settings.DATABASE_REPLICA
         ).filter(
-            sales_channels__contains=self.request.sales_channel.identifier
+            Q(all_sales_channels=True) | Q(limit_sales_channels=self.request.sales_channel),
         ), before, after, ebd, timezones)
-        add_subevents_for_days(filter_qs_by_attr(SubEvent.annotated(SubEvent.objects.filter(
-            event__organizer=self.request.organizer,
-            event__is_public=True,
-            event__live=True,
-            event__sales_channels__contains=self.request.sales_channel.identifier
-        ).prefetch_related(
-            Prefetch(
-                'event',
-                queryset=Event.objects.prefetch_related(
-                    '_settings_objects',
-                    Prefetch(
-                        'organizer',
-                        queryset=Organizer.objects.prefetch_related('_settings_objects')
+        add_subevents_for_days(
+            filter_qs_by_attr(SubEvent.annotated(SubEvent.objects.filter(
+                Q(event__all_sales_channels=True) |
+                Q(event__limit_sales_channels=self.request.sales_channel),
+                event__organizer=self.request.organizer,
+                event__is_public=True,
+                event__live=True,
+            ).prefetch_related(
+                Prefetch(
+                    'event',
+                    queryset=Event.objects.prefetch_related(
+                        '_settings_objects',
+                        Prefetch(
+                            'organizer',
+                            queryset=Organizer.objects.prefetch_related('_settings_objects')
+                        )
                     )
                 )
-            )
-        )), self.request).using(settings.DATABASE_REPLICA), before, after, ebd, timezones)
+            ), self.request.sales_channel), self.request).using(settings.DATABASE_REPLICA),
+            before=before,
+            after=after,
+            ebd=ebd,
+            timezones=timezones,
+            sales_channel=self.request.sales_channel,
+        )
         self._multiple_timezones = len(timezones) > 1
         return ebd
 
@@ -779,21 +961,32 @@ class DayCalendarView(OrganizerViewMixin, EventListMixin, TemplateView):
     template_name = 'pretixpresale/organizers/calendar_day.html'
 
     def _set_date_to_next_event(self):
-        next_ev = filter_qs_by_attr(Event.objects.using(settings.DATABASE_REPLICA).filter(
-            Q(date_from__gte=now()) | Q(date_to__isnull=False, date_to__gte=now()),
+        now_dt = now()
+        next_ev = filter_qs_by_attr(Event.objects.using(settings.DATABASE_REPLICA).annotate(
+            effective_date=Case(
+                When(date_from__lt=now_dt, date_to__isnull=False, date_to__gte=now_dt, then=Value(now_dt)),
+                default=F('date_from'),
+            )
+        ).filter(
+            effective_date__gte=now_dt,
             organizer=self.request.organizer,
             live=True,
             is_public=True,
             date_from__gte=now(),
-        ), self.request).order_by('date_from').first()
-        next_sev = filter_qs_by_attr(SubEvent.objects.using(settings.DATABASE_REPLICA).filter(
-            Q(date_from__gte=now()) | Q(date_to__isnull=False, date_to__gte=now()),
+        ), self.request).order_by('effective_date').first()
+        next_sev = filter_qs_by_attr(SubEvent.objects.using(settings.DATABASE_REPLICA).annotate(
+            effective_date=Case(
+                When(date_from__lt=now_dt, date_to__isnull=False, date_to__gte=now_dt, then=Value(now_dt)),
+                default=F('date_from'),
+            )
+        ).filter(
+            effective_date__gte=now_dt,
             event__organizer=self.request.organizer,
             event__is_public=True,
             event__live=True,
             active=True,
             is_public=True,
-        ), self.request).select_related('event').order_by('date_from').first()
+        ), self.request).select_related('event').order_by('effective_date').first()
 
         datetime_from = None
         if (next_ev and next_sev and next_sev.date_from < next_ev.date_from) or (next_sev and not next_ev):
@@ -812,10 +1005,9 @@ class DayCalendarView(OrganizerViewMixin, EventListMixin, TemplateView):
     def _set_date(self):
         if 'date' in self.request.GET:
             self.tz = self.request.organizer.timezone
-            try:
-                self.date = dateutil.parser.parse(self.request.GET.get('date')).date()
-            except ValueError:
-                self.date = now().astimezone(self.tz).date()
+            self.date = (
+                parse_date_localized(self.request.GET.get('date')) or now().astimezone(self.tz)
+            ).date()
         else:
             self._set_date_to_next_event()
 
@@ -828,7 +1020,7 @@ class DayCalendarView(OrganizerViewMixin, EventListMixin, TemplateView):
 
         tz = get_current_timezone()
         before = datetime(
-            self.date.year, self.date.month, self.date.day, 0, 0, 0, tzinfo=tz,
+            self.date.year, self.date.month, self.date.day, 23, 59, 59, tzinfo=tz,
         ) - timedelta(days=1)
         after = datetime(
             self.date.year, self.date.month, self.date.day, 0, 0, 0, tzinfo=tz,
@@ -841,13 +1033,14 @@ class DayCalendarView(OrganizerViewMixin, EventListMixin, TemplateView):
 
         ctx['has_before'], ctx['has_after'] = has_before_after(
             self.request.organizer.events.filter(
-                sales_channels__contains=self.request.sales_channel.identifier
+                Q(all_sales_channels=True) | Q(limit_sales_channels=self.request.sales_channel),
             ),
             SubEvent.objects.filter(
+                Q(event__all_sales_channels=True) |
+                Q(event__limit_sales_channels=self.request.sales_channel),
                 event__organizer=self.request.organizer,
                 event__is_public=True,
                 event__live=True,
-                event__sales_channels__contains=self.request.sales_channel.identifier
             ),
             before,
             after,
@@ -858,7 +1051,7 @@ class DayCalendarView(OrganizerViewMixin, EventListMixin, TemplateView):
             return ctx
 
         events = ebd[self.date]
-        shortest_duration = self._get_shortest_duration(events).total_seconds() // 60
+        shortest_duration = max(self._get_shortest_duration(events).total_seconds() // 60, 1)
         # pick the next biggest tick_duration based on shortest_duration, max. 180 minutes
         tick_duration = next((d for d in [5, 10, 15, 30, 60, 120, 180] if d >= shortest_duration), 180)
 
@@ -1088,28 +1281,36 @@ class DayCalendarView(OrganizerViewMixin, EventListMixin, TemplateView):
     def _events_by_day(self, before, after):
         ebd = defaultdict(list)
         timezones = set()
-        add_events_for_days(self.request, Event.annotated(self.request.organizer.events, 'web').using(
+        add_events_for_days(self.request, Event.annotated(self.request.organizer.events, self.request.sales_channel).using(
             settings.DATABASE_REPLICA
         ).filter(
-            sales_channels__contains=self.request.sales_channel.identifier
+            Q(all_sales_channels=True) | Q(limit_sales_channels=self.request.sales_channel),
         ), before, after, ebd, timezones)
-        add_subevents_for_days(filter_qs_by_attr(SubEvent.annotated(SubEvent.objects.filter(
-            event__organizer=self.request.organizer,
-            event__is_public=True,
-            event__live=True,
-            event__sales_channels__contains=self.request.sales_channel.identifier
-        ).prefetch_related(
-            Prefetch(
-                'event',
-                queryset=Event.objects.prefetch_related(
-                    '_settings_objects',
-                    Prefetch(
-                        'organizer',
-                        queryset=Organizer.objects.prefetch_related('_settings_objects')
+        add_subevents_for_days(
+            filter_qs_by_attr(SubEvent.annotated(SubEvent.objects.filter(
+                Q(event__all_sales_channels=True) |
+                Q(event__limit_sales_channels=self.request.sales_channel),
+                event__organizer=self.request.organizer,
+                event__is_public=True,
+                event__live=True,
+            ).prefetch_related(
+                Prefetch(
+                    'event',
+                    queryset=Event.objects.prefetch_related(
+                        '_settings_objects',
+                        Prefetch(
+                            'organizer',
+                            queryset=Organizer.objects.prefetch_related('_settings_objects')
+                        )
                     )
                 )
-            )
-        )), self.request).using(settings.DATABASE_REPLICA), before, after, ebd, timezones)
+            ), self.request.sales_channel), self.request).using(settings.DATABASE_REPLICA),
+            before=before,
+            after=after,
+            ebd=ebd,
+            timezones=timezones,
+            sales_channel=self.request.sales_channel,
+        )
         self._multiple_timezones = len(timezones) > 1
         return ebd
 
@@ -1118,14 +1319,16 @@ class DayCalendarView(OrganizerViewMixin, EventListMixin, TemplateView):
 class OrganizerIcalDownload(OrganizerViewMixin, View):
     def get(self, request, *args, **kwargs):
         cutoff = now() - timedelta(days=31)
+        # generally limit to 1000 entries as this seems to be a limitation on ics-files for some calendar software
+        limit = 1000
         events = list(
             filter_qs_by_attr(
                 self.request.organizer.events.filter(
                     Q(date_from__gt=cutoff) | Q(date_to__gt=cutoff),
+                    Q(all_sales_channels=True) | Q(limit_sales_channels=self.request.sales_channel),
                     is_public=True,
                     live=True,
                     has_subevents=False,
-                    sales_channels__contains=self.request.sales_channel.identifier,
                 ),
                 request
             ).order_by(
@@ -1136,18 +1339,19 @@ class OrganizerIcalDownload(OrganizerViewMixin, View):
                     'organizer',
                     queryset=Organizer.objects.prefetch_related('_settings_objects')
                 )
-            )
+            )[:limit]
         )
         events += list(
             filter_qs_by_attr(
                 SubEvent.objects.filter(
                     Q(date_from__gt=cutoff) | Q(date_to__gt=cutoff),
+                    Q(event__all_sales_channels=True) |
+                    Q(event__limit_sales_channels=self.request.sales_channel),
                     event__organizer=self.request.organizer,
                     event__is_public=True,
                     event__live=True,
                     is_public=True,
                     active=True,
-                    event__sales_channels__contains=self.request.sales_channel.identifier
                 ),
                 request
             ).prefetch_related(
@@ -1163,8 +1367,11 @@ class OrganizerIcalDownload(OrganizerViewMixin, View):
                 )
             ).order_by(
                 'date_from'
-            )
+            )[:limit]
         )
+        if len(events) > limit:
+            events.sort(key=lambda e: e.date_from)
+            events = events[:limit]
 
         if 'locale' in request.GET and request.GET.get('locale') in dict(settings.LANGUAGES):
             with language(request.GET.get('locale'), self.request.organizer.settings.region):
@@ -1183,7 +1390,24 @@ class OrganizerIcalDownload(OrganizerViewMixin, View):
 
 class OrganizerFavicon(View):
     def get(self, *args, **kwargs):
-        if self.request.organizer.settings.favicon:
-            return redirect(get_thumbnail(self.request.organizer.settings.favicon, '32x32^').thumb.url)
+        icon_file = self.request.organizer.settings.get('favicon', as_type=str, default='')[7:]
+        if icon_file:
+            return redirect_to_url(get_thumbnail(icon_file, '32x32^', formats=settings.PILLOW_FORMATS_QUESTIONS_FAVICON).thumb.url)
         else:
-            return redirect(static("pretixbase/img/favicon.ico"))
+            return redirect_to_url(static("pretixbase/img/favicon.ico"))
+
+
+class RedirectToOrganizerIndex(View):
+    def get(self, *args, **kwargs):
+        return redirect_to_url(eventreverse_absolute(self.request.organizer, "presale:organizer.index"))
+
+
+class AccessibilityView(OrganizerViewMixin, EventListMixin, TemplateView):
+    template_name = 'pretixpresale/organizers/accessibility.html'
+
+    def dispatch(self, request, *args, **kwargs):
+        if self.request.organizer.settings.accessibility_url:
+            raise Http404()
+        if not self.request.organizer.settings.accessibility_text:
+            raise Http404()
+        return super().dispatch(request, *args, **kwargs)

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -41,6 +41,11 @@ class OAuthApplication(AbstractApplication):
         blank=False, validators=[URIValidator],
         verbose_name=_("Redirection URIs"),
         help_text=_("Allowed URIs list, space separated")
+    )
+    post_logout_redirect_uris = models.TextField(
+        blank=True, validators=[URIValidator],
+        help_text=_("Allowed Post Logout URIs list, space separated"),
+        default="",
     )
     client_id = models.CharField(
         verbose_name=_("Client ID"),
@@ -96,6 +101,10 @@ class OAuthAccessToken(AbstractAccessToken):
         self.expires = now() - timedelta(hours=1)
         self.save(update_fields=['expires'])
 
+    def is_valid(self, scopes=None):
+        # Can maybe be removed after upgrading django-oauth-toolkit to 3.4.1
+        return super().is_valid(scopes) and self.application.is_usable(None)
+
 
 class OAuthRefreshToken(AbstractRefreshToken):
     application = models.ForeignKey(
@@ -109,7 +118,7 @@ class OAuthRefreshToken(AbstractRefreshToken):
 class WebHook(models.Model):
     organizer = models.ForeignKey('pretixbase.Organizer', on_delete=models.CASCADE, related_name='webhooks')
     enabled = models.BooleanField(default=True, verbose_name=_("Enable webhook"))
-    target_url = models.URLField(verbose_name=_("Target URL"), max_length=255)
+    target_url = models.URLField(verbose_name=_("Target URL"), max_length=1024)
     all_events = models.BooleanField(default=True, verbose_name=_("All events (including newly created ones)"))
     limit_events = models.ManyToManyField('pretixbase.Event', verbose_name=_("Limit to events"), blank=True)
     comment = models.CharField(verbose_name=_("Comment"), max_length=255, null=True, blank=True)
@@ -135,7 +144,7 @@ class WebHookEventListener(models.Model):
 class WebHookCall(models.Model):
     webhook = models.ForeignKey('WebHook', on_delete=models.CASCADE, related_name='calls')
     datetime = models.DateTimeField(auto_now_add=True)
-    target_url = models.URLField(max_length=255)
+    target_url = models.URLField(max_length=1024)
     action_type = models.CharField(max_length=255)
     is_retry = models.BooleanField(default=False)
     execution_time = models.FloatField(null=True)
@@ -152,7 +161,7 @@ class WebHookCallRetry(models.Model):
     id = models.BigAutoField(primary_key=True)
     webhook = models.ForeignKey('WebHook', on_delete=models.CASCADE, related_name='retries')
     logentry = models.ForeignKey('pretixbase.LogEntry', on_delete=models.CASCADE, related_name='webhook_retries')
-    retry_not_before = models.DateTimeField(auto_now_add=True)
+    retry_not_before = models.DateTimeField()
     retry_count = models.PositiveIntegerField(default=0)
     action_type = models.CharField(max_length=255)
 

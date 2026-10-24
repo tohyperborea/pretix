@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -19,17 +19,20 @@
 # You should have received a copy of the GNU Affero General Public License along with this program.  If not, see
 # <https://www.gnu.org/licenses/>.
 #
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
+from django.conf import settings
 from django.contrib import messages
+from django.core.exceptions import SuspiciousOperation
 from django.http import Http404
-from django.shortcuts import redirect
 from django.utils.decorators import method_decorator
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import View
 
 from pretix.base.services.cart import CartError
 from pretix.base.signals import validate_cart
+from pretix.base.views.tasks import AsyncAction
+from pretix.helpers.http import redirect_to_url
 from pretix.multidomain.urlreverse import eventreverse
 from pretix.presale.checkoutflow import get_checkout_flow
 from pretix.presale.views import (
@@ -51,7 +54,12 @@ class CheckoutView(View):
     def dispatch(self, request, *args, **kwargs):
         self.request = request
 
-        if not cart_exists(request) and "async_id" not in request.GET:
+        is_asyncaction_call = (
+            request.method == "GET" and
+            'async_id' in request.GET and
+            settings.HAS_CELERY
+        )
+        if not cart_exists(request) and not is_asyncaction_call:
             messages.error(request, _("Your cart is empty"))
             return self.redirect(self.get_index_url(self.request))
 
@@ -75,11 +83,16 @@ class CheckoutView(View):
                 return self.redirect(previous_step.get_step_url(request) if previous_step else self.get_index_url(request))
 
             if 'step' not in kwargs:
-                return self.redirect(step.get_step_url(request))
+                utm_params = {k: v for k, v in request.GET.items() if k.startswith("utm_")}
+                return self.redirect(step.get_step_url(request) + '?' + urlencode(utm_params))
             is_selected = (step.identifier == kwargs.get('step', ''))
-            if "async_id" not in request.GET and not is_selected and not step.is_completed(request, warn=not is_selected):
+
+            if not is_asyncaction_call and not is_selected and not step.is_completed(request, warn=not is_selected):
                 return self.redirect(step.get_step_url(request))
             if is_selected:
+                if is_asyncaction_call and not isinstance(step, AsyncAction):
+                    # This could be used to circumvent validation otherwise
+                    raise SuspiciousOperation("Received ?async_id for a step that is not an AsyncAction")
                 if request.method.lower() in self.http_method_names:
                     handler = getattr(step, request.method.lower(), self.http_method_not_allowed)
                 else:
@@ -88,10 +101,10 @@ class CheckoutView(View):
             else:
                 previous_step = step
                 step.c_is_before = True
-                step.c_resolved_url = step.get_step_url(request)
+                step.c_resolved_url = step.get_step_url(request) + '?dir=prev'
         raise Http404()
 
     def redirect(self, url):
         if 'cart_id' in self.request.GET:
             url += ('&' if '?' in url else '?') + 'cart_id=' + quote(self.request.GET.get('cart_id'))
-        return redirect(url)
+        return redirect_to_url(url)

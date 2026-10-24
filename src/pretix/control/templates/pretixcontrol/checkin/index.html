@@ -9,7 +9,7 @@
 {% block content %}
     <h1>
         {% blocktrans with name=checkinlist.name %}Check-in list: {{ name }}{% endblocktrans %}
-        {% if 'can_change_event_settings' in request.eventpermset %}
+        {% if 'event.settings.general:write' in request.eventpermset %}
             <a href="{% url "control:event.orders.checkinlists.edit" event=request.event.slug organizer=request.event.organizer.slug list=checkinlist.pk %}"
                     class="btn btn-default">
                 <span class="fa fa-wrench"></span>
@@ -87,7 +87,7 @@
                     <thead>
                     <tr>
                         <th>
-                            {% if "can_change_orders" in request.eventpermset or "can_checkin_orders" in request.eventpermset %}
+                            {% if "event.orders:write" in request.eventpermset or "event.orders:checkin" in request.eventpermset %}
                                 <label aria-label="{% trans "select all rows for batch-operation" %}"
                                        class="batch-select-label"><input type="checkbox" data-toggle-table/></label>
                             {% endif %}
@@ -132,7 +132,7 @@
                     {% for e in entries %}
                         <tr>
                             <td>
-                                {% if "can_change_orders" in request.eventpermset or "can_checkin_orders" in request.eventpermset %}
+                                {% if "event.orders:write" in request.eventpermset or "event.orders:checkin" in request.eventpermset %}
                                     <input type="checkbox" name="checkin" id="id_checkin" class="" value="{{ e.pk }}"/>
                                 {% endif %}
                             </td>
@@ -148,7 +148,7 @@
                             <td>{{ e.item }}{% if e.variation %} – {{ e.variation }}{% endif %}</td>
                             {% if request.event.has_subevents and not checkinlist.subevent %}
                                 <td>
-                                    {{ e.subevent.name }} – {{ e.subevent.get_date_range_display }} {{ e.subevent.date_from|date:"TIME_FORMAT" }}
+                                    {{ e.subevent.name }} – {{ e.subevent.get_date_range_display_with_times }}
                                 </td>
                             {% endif %}
                             {% if seats %}
@@ -185,6 +185,7 @@
                                             <span class="fa fa-magic text-muted"
                                                   data-toggle="tooltip" title="{% trans "Checked in automatically" %}"></span>
                                         {% endif %}
+                                        {% include "pretixcontrol/checkin/fragment_checkin_source_type.html" with source_type=e.last_entry_source_type %}
                                     {% endif %}
                                 {% endif %}
                             </td>
@@ -205,22 +206,27 @@
                     </tbody>
                 </table>
             </div>
-            {% if "can_change_orders" in request.eventpermset or "can_checkin_orders" in request.eventpermset %}
-                <button type="submit" class="btn btn-primary btn-save">
-                    <span class="fa fa-sign-in" aria-hidden="true"></span>
-                    {% trans "Check-In selected attendees" %}
-                </button>
-                <button type="submit" class="btn btn-default btn-save" name="checkout" value="true">
-                    <span class="fa fa-sign-out" aria-hidden="true"></span>
-                    {% trans "Check-Out selected attendees" %}
-                </button>
-            {% endif %}
-            {% if "can_change_orders" in request.eventpermset %}
-                <button type="submit" class="btn btn-danger btn-save" name="revert" value="true">
-                    <span class="fa fa-trash" aria-hidden="true"></span>
-                    {% trans "Delete all check-ins of selected attendees" %}
-                </button>
-            {% endif %}
+            <div class="batch-select-actions">
+                {% if "event.orders:write" in request.eventpermset or "event.orders:checkin" in request.eventpermset %}
+                    <button type="submit" class="btn btn-primary btn-save">
+                        <span class="fa fa-sign-in" aria-hidden="true"></span>
+                        {% trans "Check-In selected attendees" %}
+                    </button>
+                    <button type="submit" class="btn btn-default btn-save" name="checkout" value="true">
+                        <span class="fa fa-sign-out" aria-hidden="true"></span>
+                        {% trans "Check-Out selected attendees" %}
+                    </button>
+                {% endif %}
+                {% if "event.orders:write" in request.eventpermset %}
+                    <button type="submit" class="btn btn-danger btn-save" name="revert"
+                            formaction="{% url "control:event.orders.checkinlists.bulk_revert" event=request.event.slug organizer=request.event.organizer.slug list=checkinlist.pk %}"
+                            data-no-asynctask
+                            value="true">
+                        <span class="fa fa-trash" aria-hidden="true"></span>
+                        {% trans "Delete all check-ins of selected attendees" %}
+                    </button>
+                {% endif %}
+            </div>
         </form>
         {% include "pretixcontrol/pagination.html" %}
     {% endif %}

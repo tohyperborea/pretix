@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -25,7 +25,6 @@ from rest_framework.exceptions import ValidationError
 
 from pretix.api.serializers.event import SubEventSerializer
 from pretix.api.serializers.i18n import I18nAwareModelSerializer
-from pretix.base.channels import get_all_sales_channels
 from pretix.base.media import MEDIA_TYPES
 from pretix.base.models import Checkin, CheckinList
 
@@ -37,8 +36,8 @@ class CheckinListSerializer(I18nAwareModelSerializer):
     class Meta:
         model = CheckinList
         fields = ('id', 'name', 'all_products', 'limit_products', 'subevent', 'checkin_count', 'position_count',
-                  'include_pending', 'auto_checkin_sales_channels', 'allow_multiple_entries', 'allow_entry_after_exit',
-                  'rules', 'exit_all_at', 'addon_match')
+                  'include_pending', 'allow_multiple_entries', 'allow_entry_after_exit',
+                  'rules', 'exit_all_at', 'addon_match', 'ignore_in_statistics', 'consider_tickets_used')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -72,10 +71,6 @@ class CheckinListSerializer(I18nAwareModelSerializer):
             if full_data.get('subevent'):
                 raise ValidationError(_('The subevent does not belong to this event.'))
 
-        for channel in full_data.get('auto_checkin_sales_channels') or []:
-            if channel not in get_all_sales_channels():
-                raise ValidationError(_('Unknown sales channel.'))
-
         CheckinList.validate_rules(data.get('rules'))
 
         return data
@@ -89,13 +84,23 @@ class CheckinRPCRedeemInputSerializer(serializers.Serializer):
     type = serializers.ChoiceField(choices=Checkin.CHECKIN_TYPES, default=Checkin.TYPE_ENTRY)
     ignore_unpaid = serializers.BooleanField(default=False, required=False)
     questions_supported = serializers.BooleanField(default=True, required=False)
+    use_order_locale = serializers.BooleanField(default=False, required=False)
     nonce = serializers.CharField(required=False, allow_null=True)
     datetime = serializers.DateTimeField(required=False, allow_null=True)
     answers = serializers.JSONField(required=False, allow_null=True)
+    exchange_medium_type = serializers.ChoiceField(required=False, choices=MEDIA_TYPES)
+    exchange_medium_identifier = serializers.CharField(required=False)
+    simulate = serializers.BooleanField(default=False, required=False)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['lists'].child_relation.queryset = CheckinList.objects.filter(event__in=self.context['events']).select_related('event')
+
+    def validate(self, attrs):
+        exchange_fields = ["exchange_medium_type", "exchange_medium_identifier"]
+        if any(attrs.get(k) is None for k in exchange_fields) and not all(attrs.get(k) is None for k in exchange_fields):
+            raise ValidationError("If you set any of exchange_medium_type or exchange_medium_identifier, you need to set both of them.")
+        return attrs
 
 
 class MiniCheckinListSerializer(I18nAwareModelSerializer):
@@ -108,3 +113,14 @@ class MiniCheckinListSerializer(I18nAwareModelSerializer):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+
+class CheckinRPCAnnulInputSerializer(serializers.Serializer):
+    lists = serializers.PrimaryKeyRelatedField(required=True, many=True, queryset=CheckinList.objects.none())
+    nonce = serializers.CharField(required=True, allow_null=False)
+    datetime = serializers.DateTimeField(required=False, allow_null=True)
+    error_explanation = serializers.CharField(required=False, allow_null=True)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['lists'].child_relation.queryset = CheckinList.objects.filter(event__in=self.context['events']).select_related('event')

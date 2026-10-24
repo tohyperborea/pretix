@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -22,7 +22,6 @@
 from datetime import timedelta
 
 from django.core import mail as djmail
-from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils.timezone import now
 from django_scopes import scope
@@ -31,6 +30,7 @@ from pretix.base.models import (
     Event, Item, ItemVariation, Organizer, Quota, Voucher, WaitingListEntry,
 )
 from pretix.base.models.waitinglist import WaitingListException
+from pretix.base.reldate import RelativeDate, RelativeDateWrapper
 from pretix.base.services.waitinglist import (
     assign_automatically, process_waitinglist,
 )
@@ -132,47 +132,6 @@ class WaitingListTestCase(TestCase):
         assert 'foo@bar.com' in wle.voucher.comment
         assert 'Max' in wle.voucher.comment
 
-    @classscope(attr='o')
-    def test_duplicate_allows_expired_unredeemed_voucher(self):
-        v = Voucher.objects.create(
-            event=self.event, valid_until=now() - timedelta(days=1), redeemed=0
-        )
-        WaitingListEntry.objects.create(
-            event=self.event, item=self.item1, email='foo@bar.com', voucher=v
-        )
-        wle = WaitingListEntry(
-            event=self.event, item=self.item1, email='foo@bar.com'
-        )
-        wle.full_clean()
-
-    @classscope(attr='o')
-    def test_duplicate_blocks_redeemed_voucher(self):
-        v = Voucher.objects.create(
-            event=self.event, valid_until=now() - timedelta(days=1), redeemed=1
-        )
-        WaitingListEntry.objects.create(
-            event=self.event, item=self.item1, email='foo@bar.com', voucher=v
-        )
-        wle = WaitingListEntry(
-            event=self.event, item=self.item1, email='foo@bar.com'
-        )
-        with self.assertRaises(ValidationError):
-            wle.full_clean()
-
-    @classscope(attr='o')
-    def test_duplicate_blocks_valid_unredeemed_voucher(self):
-        v = Voucher.objects.create(
-            event=self.event, valid_until=now() + timedelta(days=1), redeemed=0
-        )
-        WaitingListEntry.objects.create(
-            event=self.event, item=self.item1, email='foo@bar.com', voucher=v
-        )
-        wle = WaitingListEntry(
-            event=self.event, item=self.item1, email='foo@bar.com'
-        )
-        with self.assertRaises(ValidationError):
-            wle.full_clean()
-
     def test_send_auto(self):
         with scope(organizer=self.o):
             self.quota.variations.add(self.var1)
@@ -235,10 +194,49 @@ class WaitingListTestCase(TestCase):
             assert WaitingListEntry.objects.filter(voucher__isnull=True).count() == 10
             assert Voucher.objects.count() == 10
 
+    def test_send_auto_no_seat(self):
+        with scope(organizer=self.o):
+            self.quota.items.add(self.item1)
+            self.quota.size = 10
+            self.quota.save()
+            self.event.seat_category_mappings.create(
+                layout_category='Stalls', product=self.item1
+            )
+            self.event.seats.create(seat_number="Foo", product=self.item1, seat_guid="Foo", blocked=True)
+            self.event.seats.create(seat_number="Bar", product=self.item1, seat_guid="Bar", blocked=True)
+            self.event.seats.create(seat_number="Baz", product=self.item1, seat_guid="Baz", blocked=True)
+            WaitingListEntry.objects.create(
+                event=self.event, item=self.item1, email='foo@bar.com'
+            )
+            assign_automatically.apply(args=(self.event.pk,))
+            assert Voucher.objects.count() == 0
+            self.event.seats.create(seat_number="Baz", product=self.item1, seat_guid="Baz", blocked=False)
+            assign_automatically.apply(args=(self.event.pk,))
+            assert Voucher.objects.count() == 1
+
     def test_send_periodic_event_over(self):
         self.event.settings.set('waiting_list_enabled', True)
         self.event.settings.set('waiting_list_auto', True)
         self.event.presale_end = now() - timedelta(days=1)
+        self.event.save()
+        with scope(organizer=self.o):
+            for i in range(5):
+                WaitingListEntry.objects.create(
+                    event=self.event, item=self.item2, variation=self.var1, email='foo{}@bar.com'.format(i)
+                )
+        process_waitinglist(None)
+        with scope(organizer=self.o):
+            assert WaitingListEntry.objects.filter(voucher__isnull=True).count() == 5
+            assert Voucher.objects.count() == 0
+            self.event.presale_end = now() + timedelta(days=1)
+            self.event.save()
+
+    def test_send_periodic_auto_disable(self):
+        self.event.settings.set('waiting_list_enabled', True)
+        self.event.settings.set('waiting_list_auto', True)
+        self.event.settings.waiting_list_auto_disable = RelativeDateWrapper(
+            RelativeDate(days=0, time=None, base_date_name='event__date_from', minutes=20, is_after=False)
+        )
         self.event.save()
         with scope(organizer=self.o):
             for i in range(5):
@@ -288,201 +286,3 @@ class WaitingListTestCase(TestCase):
         process_waitinglist(None)
         with scope(organizer=self.o):
             assert Voucher.objects.count() == 5
-
-    @classscope(attr='o')
-    def test_get_rank_basic(self):
-        """Test rank calculation for basic waiting list entries (no voucher)"""
-        # Create 5 entries
-        entries = []
-        for i in range(5):
-            entry = WaitingListEntry.objects.create(
-                event=self.event, item=self.item1, email='user{}@bar.com'.format(i)
-            )
-            entries.append(entry)
-        
-        # First entry should have rank 1
-        assert entries[0].get_rank() == 1
-        # Second entry should have rank 2
-        assert entries[1].get_rank() == 2
-        # Last entry should have rank 5
-        assert entries[4].get_rank() == 5
-
-    @classscope(attr='o')
-    def test_get_rank_returns_zero_for_valid_voucher(self):
-        """Test that entries with valid, unredeemed vouchers return 0"""
-        wle = WaitingListEntry.objects.create(
-            event=self.event, item=self.item1, email='user@bar.com'
-        )
-        wle.save()
-        assert wle.get_rank() != 0
-
-        v = Voucher.objects.create(
-            event=self.event, item=self.item1, max_usages=1, redeemed=0,
-            valid_until=now() + timedelta(days=1)
-        )
-        wle.voucher = v
-        wle.save()
-        
-        assert wle.get_rank() == 0
-
-    @classscope(attr='o')
-    def test_get_rank_returns_none_for_redeemed_voucher(self):
-        """Test that fully redeemed vouchers return None"""
-        wle = WaitingListEntry.objects.create(
-            event=self.event, item=self.item1, email='user@bar.com'
-        )
-        wle.save()
-        assert wle.get_rank() == 1
-
-        v = Voucher.objects.create(
-            event=self.event, item=self.item1, max_usages=1, redeemed=1
-        )
-        wle.voucher = v
-        wle.save()
-        
-        assert wle.get_rank() is None
-
-    @classscope(attr='o')
-    def test_get_rank_returns_none_for_expired_voucher(self):
-        """Test that expired vouchers return None"""
-        wle = WaitingListEntry.objects.create(
-            event=self.event, item=self.item1, email='user@bar.com'
-        )
-        v = Voucher.objects.create(
-            event=self.event, item=self.item1, max_usages=1, redeemed=0,
-            valid_until=now() - timedelta(days=1)
-        )
-        wle.voucher = v
-        wle.save()
-        
-        assert wle.get_rank() is None
-
-    @classscope(attr='o')
-    def test_get_rank_includes_unredeemed_voucher_holders_in_count(self):
-        """Test that entries with valid vouchers are included when counting ranks for entries without vouchers"""
-        # Create entry with valid voucher
-        wle1 = WaitingListEntry.objects.create(
-            event=self.event, item=self.item1, email='user1@bar.com'
-        )
-        v = Voucher.objects.create(
-            event=self.event, item=self.item1, max_usages=1, redeemed=0,
-            valid_until=now() + timedelta(days=1)
-        )
-        wle1.voucher = v
-        wle1.save()
-        
-        # Create entry without voucher
-        wle2 = WaitingListEntry.objects.create(
-            event=self.event, item=self.item1, email='user2@bar.com'
-        )
-        
-        # Entry with voucher should return 0
-        assert wle1.get_rank() == 0
-        # Entry without voucher should have rank 2 (1 for voucher holder + 1 for itself)
-        assert wle2.get_rank() == 2
-
-    @classscope(attr='o')
-    def test_get_rank_excludes_redeemed_expired_from_count(self):
-        """Test that redeemed and expired vouchers are excluded when counting ranks"""
-        # Create entry with expired voucher
-        wle1 = WaitingListEntry.objects.create(
-            event=self.event, item=self.item1, email='user1@bar.com'
-        )
-        v_expired = Voucher.objects.create(
-            event=self.event, item=self.item1, max_usages=1, redeemed=0,
-            valid_until=now() - timedelta(days=1)
-        )
-        wle1.voucher = v_expired
-        wle1.save()
-        
-        # Create entry with redeemed voucher
-        wle2 = WaitingListEntry.objects.create(
-            event=self.event, item=self.item1, email='user2@bar.com'
-        )
-        v_redeemed = Voucher.objects.create(
-            event=self.event, item=self.item1, max_usages=1, redeemed=1
-        )
-        wle2.voucher = v_redeemed
-        wle2.save()
-        
-        # Create entry without voucher
-        wle3 = WaitingListEntry.objects.create(
-            event=self.event, item=self.item1, email='user3@bar.com'
-        )
-        
-        # Expired and redeemed should return None
-        assert wle1.get_rank() is None
-        assert wle2.get_rank() is None
-        # Entry without voucher should have rank 1 (expired/redeemed are excluded)
-        assert wle3.get_rank() == 1
-
-    @classscope(attr='o')
-    def test_get_rank_ordering(self):
-        """Verify rank respects priority and created date ordering"""
-        # Create entries with different priorities and timestamps
-        wle1 = WaitingListEntry.objects.create(
-            event=self.event, item=self.item1, email='user1@bar.com',
-            priority=10
-        )
-        wle2 = WaitingListEntry.objects.create(
-            event=self.event, item=self.item1, email='user2@bar.com',
-            priority=5
-        )
-        wle3 = WaitingListEntry.objects.create(
-            event=self.event, item=self.item1, email='user3@bar.com',
-            priority=10  # Same priority as wle1, but created later
-        )
-        
-        # Higher priority should have lower rank (rank 1)
-        assert wle1.get_rank() == 1
-        # Lower priority should have higher rank (rank 3)
-        assert wle2.get_rank() == 3
-        # Same priority, created earlier should have lower rank (rank 2)
-        assert wle3.get_rank() == 2
-
-    @classscope(attr='o')
-    def test_get_rank_subevent(self):
-        """Test rank calculation with subevents"""
-        from pretix.base.models import SubEvent
-        
-        subevent1 = SubEvent.objects.create(event=self.event, name='Day 1', date_from=now())
-        subevent2 = SubEvent.objects.create(event=self.event, name='Day 2', date_from=now())
-        
-        # Create entries for different subevents
-        wle1 = WaitingListEntry.objects.create(
-            event=self.event, item=self.item1, email='user1@bar.com',
-            subevent=subevent1
-        )
-        wle2 = WaitingListEntry.objects.create(
-            event=self.event, item=self.item1, email='user2@bar.com',
-            subevent=subevent1
-        )
-        wle3 = WaitingListEntry.objects.create(
-            event=self.event, item=self.item1, email='user3@bar.com',
-            subevent=subevent2
-        )
-        
-        # Ranks should be separate per subevent
-        assert wle1.get_rank() == 1
-        assert wle2.get_rank() == 2
-        # Entry for different subevent should have rank 1 (separate list)
-        assert wle3.get_rank() == 1
-
-    @classscope(attr='o')
-    def test_get_rank_item_variation(self):
-        """Test rank is per item/variation combination"""
-        # Create entries for different items
-        wle1 = WaitingListEntry.objects.create(
-            event=self.event, item=self.item1, email='user1@bar.com'
-        )
-        wle2 = WaitingListEntry.objects.create(
-            event=self.event, item=self.item2, variation=self.var1, email='user2@bar.com'
-        )
-        wle3 = WaitingListEntry.objects.create(
-            event=self.event, item=self.item2, variation=self.var1, email='user3@bar.com'
-        )
-        
-        # Ranks should be separate per item/variation
-        assert wle1.get_rank() == 1
-        assert wle2.get_rank() == 1
-        assert wle3.get_rank() == 2

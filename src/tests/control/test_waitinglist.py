@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -19,19 +19,6 @@
 # You should have received a copy of the GNU Affero General Public License along with this program.  If not, see
 # <https://www.gnu.org/licenses/>.
 #
-
-# This file is based on an earlier version of pretix which was released under the Apache License 2.0. The full text of
-# the Apache License 2.0 can be obtained at <http://www.apache.org/licenses/LICENSE-2.0>.
-#
-# This file may have since been changed and any changes are released under the terms of AGPLv3 as described above. A
-# full history of changes and contributors is available at <https://github.com/pretix/pretix>.
-#
-# This file contains Apache-licensed contributions copyrighted by: Daniel
-#
-# Unless required by applicable law or agreed to in writing, software distributed under the Apache License 2.0 is
-# distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
-# License for the specific language governing permissions and limitations under the License.
-
 from datetime import timedelta
 
 import pytest
@@ -39,8 +26,11 @@ from django.utils.timezone import now
 from django_scopes import scopes_disabled
 
 from pretix.base.models import (
-    Event, Item, Organizer, Quota, Team, User, Voucher, WaitingListEntry,
+    Event, Item, ItemVariation, Organizer, Quota, Team, User, Voucher,
+    WaitingListEntry,
 )
+from pretix.base.models.seating import Seat, SeatingPlan
+from pretix.base.models.waitinglist import WaitingListException
 from pretix.control.views.dashboards import waitinglist_widgets
 
 
@@ -52,11 +42,12 @@ def env():
         date_from=now(), plugins='pretix.plugins.banktransfer,tests.testdummy'
     )
     event.settings.set('ticketoutput_testdummy__enabled', True)
+    event.settings.set('waiting_list_names_asked', False)
+    event.settings.set('waiting_list_names_required', False)
+    event.settings.set('waiting_list_phones_asked', False)
     user = User.objects.create_user('dummy@dummy.dummy', 'dummy')
-    item1 = Item.objects.create(event=event, name="Ticket", default_price=23,
-                                admission=True)
-    item2 = Item.objects.create(event=event, name="Ticket", default_price=23,
-                                admission=True)
+    item1 = Item.objects.create(event=event, name="Ticket", default_price=23, admission=True, allow_waitinglist=True)
+    item2 = Item.objects.create(event=event, name="Ticket", default_price=23, admission=True)
 
     for i in range(5):
         WaitingListEntry.objects.create(
@@ -66,25 +57,28 @@ def env():
     WaitingListEntry.objects.create(
         event=event, item=item1, email='success@example.org', voucher=v
     )
-    v = Voucher.objects.create(item=item1, event=event, block_quota=True, redeemed=0, valid_until=now() - timedelta(days=5))
+    v = Voucher.objects.create(item=item2, event=event, block_quota=True, redeemed=0, valid_until=now() - timedelta(days=5))
     WaitingListEntry.objects.create(
         event=event, item=item2, email='expired@example.org', voucher=v
     )
-    v = Voucher.objects.create(item=item1, event=event, block_quota=True, redeemed=0, valid_until=now() + timedelta(days=5))
+    v = Voucher.objects.create(item=item2, event=event, block_quota=True, redeemed=0, valid_until=now() + timedelta(days=5))
     WaitingListEntry.objects.create(
         event=event, item=item2, email='valid@example.org', voucher=v
     )
 
-    t = Team.objects.create(organizer=o, can_view_orders=True, can_change_orders=True)
+    t = Team.objects.create(organizer=o, all_event_permissions=True)
     t.members.add(user)
     t.limit_events.add(event)
-    return event, user, o, item1, item2
 
-def get_priorities(event, item):
-    priorities = list(WaitingListEntry.objects.filter(
-        event=event, item=item, voucher__isnull=True
-    ).values_list('id', 'priority'))
-    return {entry_id: priority for entry_id, priority in priorities}
+    wle = WaitingListEntry.objects.filter(item=item1).first()
+    variation = ItemVariation.objects.create(item=item1)
+
+    return {
+        "event": event,
+        "item1": item1,
+        "wle": wle,
+        "variation": variation,
+    }
 
 
 @pytest.mark.django_db
@@ -128,7 +122,7 @@ def test_list(client, env):
     assert 'foo0@bar.com' not in response.content.decode()
     assert 'valid@example.org' not in response.content.decode()
 
-    response = client.get('/control/event/dummy/dummy/waitinglist/?item=%d' % env[3].pk)
+    response = client.get('/control/event/dummy/dummy/waitinglist/?item=%d' % env['item1'].pk)
     assert 'item2@example.org' not in response.content.decode()
     assert 'foo0@bar.com' in response.content.decode()
 
@@ -197,84 +191,291 @@ def test_delete_bulk(client, env):
             WaitingListEntry.objects.get(id=wle.id)
 
 
+# Sideburn: the name sorting must not bypass the "nothing selected" filter.
+@pytest.mark.django_db
+def test_delete_bulk_without_selection_deletes_nothing(client, env):
+    client.login(email='dummy@dummy.dummy', password='dummy')
+    with scopes_disabled():
+        count = WaitingListEntry.objects.count()
+    assert count >= 1
+
+    client.post('/control/event/dummy/dummy/waitinglist/action', data={
+        'action': 'delete_confirm',
+    })
+    with scopes_disabled():
+        assert WaitingListEntry.objects.count() == count
+
+
+# Sideburn: sort by name from the column header links.
+@pytest.mark.django_db
+def test_list_ordering_by_name(client, env):
+    client.login(email='dummy@dummy.dummy', password='dummy')
+    with scopes_disabled():
+        for name, email in (('Carol', 'foo0@bar.com'), ('Alice', 'foo1@bar.com'), ('Bob', 'foo2@bar.com')):
+            WaitingListEntry.objects.filter(email=email).update(name_cached=name)
+
+    response = client.get('/control/event/dummy/dummy/waitinglist/?ordering=name')
+    names = [e.name_cached for e in response.context['entries'] if e.name_cached]
+    assert names == ['Alice', 'Bob', 'Carol']
+
+    response = client.get('/control/event/dummy/dummy/waitinglist/?ordering=-name')
+    names = [e.name_cached for e in response.context['entries'] if e.name_cached]
+    assert names == ['Carol', 'Bob', 'Alice']
+
+
+# Sideburn: bulk delete still works while the list is sorted by name.
+@pytest.mark.django_db
+def test_delete_bulk_confirmation_with_name_ordering(client, env):
+    client.login(email='dummy@dummy.dummy', password='dummy')
+    with scopes_disabled():
+        wle = WaitingListEntry.objects.filter(voucher__isnull=True).first()
+
+    response = client.post('/control/event/dummy/dummy/waitinglist/action', data={
+        'entry': wle.pk,
+        'action': 'delete',
+        'ordering': 'name',
+    })
+    assert response.status_code == 200
+    assert wle.email in response.content.decode()
+
+
+# Sideburn: "Send a voucher" is offered for every entry without a voucher, even when the product is sold out.
+@pytest.mark.django_db
+def test_send_voucher_offered_when_sold_out(client, env):
+    client.login(email='dummy@dummy.dummy', password='dummy')
+    with scopes_disabled():
+        Quota.objects.create(name="Sold out", size=0, event=env["event"]).items.add(env["item1"])
+        wle = WaitingListEntry.objects.filter(item=env["item1"], voucher__isnull=True).first()
+
+    response = client.get('/control/event/dummy/dummy/waitinglist/')
+    assert 'name="assign" value="%d"' % wle.pk in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_edit_settings(client, env):
+    event = env['event']
+    wle = env['wle']
+    client.login(email='dummy@dummy.dummy', password='dummy')
+
+    response = client.get('/control/event/dummy/dummy/waitinglist/%s/edit' % wle.id)
+    assert ['email', 'itemvar'] == list(response.context_data['form'].fields.keys())
+
+    event.settings.set('waiting_list_names_asked', True)
+    response = client.get('/control/event/dummy/dummy/waitinglist/%s/edit' % wle.id)
+    assert 'name_parts' in list(response.context_data['form'].fields.keys())
+
+    event.settings.set('waiting_list_names_required', True)
+    response = client.get('/control/event/dummy/dummy/waitinglist/%s/edit' % wle.id)
+    assert response.context_data['form'].fields['name_parts'].required is True
+
+    event.settings.set('waiting_list_phones_asked', True)
+    response = client.get('/control/event/dummy/dummy/waitinglist/%s/edit' % wle.id)
+    assert 'phone' in list(response.context_data['form'].fields.keys())
+
+
+@pytest.mark.django_db
+def test_edit_itemvariation(client, env):
+    item = env['item1']
+    variation = env['variation']
+    wle = env['wle']
+
+    client.login(email='dummy@dummy.dummy', password='dummy')
+
+    itemvar = f"{item.pk}-{variation.pk}"
+
+    client.post(
+        '/control/event/dummy/dummy/waitinglist/%s/edit' % wle.id,
+        data={
+            "email": f"1_{wle.email}",
+            "itemvar": itemvar
+        }
+    )
+
+    wle.refresh_from_db()
+    assert wle.variation == variation
+
+
+@pytest.mark.django_db
+def test_edit_validations_only_valid_item(client, env):
+    item = env['item1']
+    wle = env['wle']
+
+    client.login(email='dummy@dummy.dummy', password='dummy')
+
+    itemvar = f"{item.pk + 10000}"
+
+    response = client.post(
+        '/control/event/dummy/dummy/waitinglist/%s/edit' % wle.id,
+        data={
+            "email": f"1_{wle.email}",
+            "itemvar": itemvar
+        }
+    )
+    assert response.context_data['form'].errors['itemvar'] == ["Select a valid choice."]
+
+
+@pytest.mark.django_db
+def test_edit_validations_only_valid_variation(client, env):
+    item = env['item1']
+    wle = env['wle']
+    variation = env['variation']
+
+    client.login(email='dummy@dummy.dummy', password='dummy')
+
+    itemvar = f"{item.pk}-{variation.pk + 1}"
+
+    response = client.post(
+        '/control/event/dummy/dummy/waitinglist/%s/edit' % wle.id,
+        data={
+            "email": f"1_{wle.email}",
+            "itemvar": itemvar
+        }
+    )
+    assert response.context_data['form'].errors['itemvar'] == ["Select a valid choice."]
+
+
+@pytest.mark.django_db
+def test_edit_validations_inactive_item(client, env):
+    item = env['item1']
+    wle = env['wle']
+    item.active = False
+    item.save()
+
+    client.login(email='dummy@dummy.dummy', password='dummy')
+
+    response = client.post(
+        '/control/event/dummy/dummy/waitinglist/%s/edit' % wle.id,
+        data={
+            "email": f"1_{wle.email}",
+            "itemvar": f"{item.pk}"
+        }
+    )
+    assert response.context_data['form'].errors['itemvar'] == ["The selected product is not active."]
+
+
+@pytest.mark.django_db
+def test_edit_validations_inactive_variation(client, env):
+    item = env['item1']
+    wle = env['wle']
+    variation = env['variation']
+    wle.variation = variation
+    wle.save()
+
+    variation.active = False
+    variation.save()
+
+    client.login(email='dummy@dummy.dummy', password='dummy')
+    response = client.post(
+        '/control/event/dummy/dummy/waitinglist/%s/edit' % wle.id,
+        data={
+            "email": f"1_{wle.email}",
+            "itemvar": f"{item.pk}-{variation.pk}"
+        }
+    )
+    assert response.context_data['form'].errors['itemvar'] == ["The selected product is not active."]
+
+
+@pytest.mark.django_db
+def test_edit_voucher_send_out(client, env):
+    event = env['event']
+    item = env['item1']
+    wle = env['wle']
+
+    quota = Quota.objects.create(event=event, size=100)
+    quota.items.add(item)
+
+    client.login(email='dummy@dummy.dummy', password='dummy')
+
+    with scopes_disabled():
+        wle.send_voucher()
+
+    response = client.post(
+        '/control/event/dummy/dummy/waitinglist/%s/edit' % wle.id,
+        data={
+            "email": f"1_{wle.email}",
+            "itemvar": item.pk
+        },
+        follow=True
+    )
+    assert response.status_code == 404
+
+
 @pytest.mark.django_db
 def test_dashboard(client, env):
     with scopes_disabled():
-        quota = Quota.objects.create(name="Test", size=2, event=env[0])
-        quota.items.add(env[3])
-        w = waitinglist_widgets(env[0])
-    assert '1' in w[0]['content']
+        quota = Quota.objects.create(name="Test", size=2, event=env['event'])
+        quota.items.add(env['item1'])
+        w = waitinglist_widgets(env['event'])
+
+    assert '2' in w[0]['content']
     assert '5' in w[1]['content']
 
 
 @pytest.mark.django_db
-def test_lottery_requires_product(client, env):
-    """Test that lottery cannot be run without selecting a product"""
+def test_waitinglist_seat_calc(client, env):
+    item = env['item1']
+    event = env['event']
+    wle = env['wle']
+
+    SeatingPlan.objects.create(
+        name="Plan", organizer=event.organizer, layout="{}"
+    )
+    event.seat_category_mappings.create(
+        layout_category='Stalls', product=item
+    )
+    for i in range(2):
+        event.seats.create(seat_number=f"A{i}", product=item, seat_guid=f"A{i}")
+
+    quota = Quota.objects.create(event=event, size=10)
+    quota.items.add(item)
+
     client.login(email='dummy@dummy.dummy', password='dummy')
-    
-    response = client.get('/control/event/dummy/dummy/waitinglist/?lottery=run')
-    
-    assert response.status_code == 302
-    assert '/control/event/dummy/dummy/waitinglist/' in response.url
-    
-    response = client.get(response.url)
-    assert 'You must select a product' in response.content.decode()
 
+    # Calculated availability should not be more than number of available seats
+    response = client.get('/control/event/dummy/dummy/waitinglist/')
+    assert len(response.context['entries']) == 5
+    for entry in response.context['entries']:
+        assert entry.availability == (Quota.AVAILABILITY_OK, 2)
 
-@pytest.mark.django_db
-def test_lottery_with_single_product(client, env):
-    """Test that lottery runs successfully with a single product selected"""
-    client.login(email='dummy@dummy.dummy', password='dummy')
-    event, user, o, item1, _ = env
-    
+    # Sending out a voucher reduces availability by 1
     with scopes_disabled():
-        initial_priorities = get_priorities(event, item1)
-    
-    response = client.get('/control/event/dummy/dummy/waitinglist/?lottery=run&item=%d' % item1.pk)
-    assert response.status_code == 200
-    assert response['Content-Type'] == 'text/csv'
-    
-    with scopes_disabled():
-        after_priorities = get_priorities(event, item1)
-    
-    item1_changed = initial_priorities != after_priorities
-    assert item1_changed, "Priorities should have been shuffled"
+        wle.send_voucher()
 
+    voucher = wle.voucher
+    assert voucher
 
-@pytest.mark.django_db
-def test_lottery_isolation(client, env):
-    """Test that running lottery for one product doesn't affect another product"""
-    client.login(email='dummy@dummy.dummy', password='dummy')
-    event, user, o, item1, item2 = env
-    
+    response = client.get('/control/event/dummy/dummy/waitinglist/')
+    assert len(response.context['entries']) == 4
+    for entry in response.context['entries']:
+        assert entry.availability == (Quota.AVAILABILITY_OK, 1)
+
+    # Assigning a seat to a voucher does not decrease availability further
     with scopes_disabled():
-        
-        for i in range(3):
-            WaitingListEntry.objects.create(
-                event=event, item=item2, email='item2foo{}@bar.com'.format(i)
-            )
-        
-        initial_priorities_item1 = get_priorities(event, item1)
-        initial_priorities_item2 = get_priorities(event, item2)
-    
-    response = client.get('/control/event/dummy/dummy/waitinglist/?lottery=run&item=%d' % item1.pk)
-    assert response.status_code == 200
-    
+        voucher.seat = Seat.objects.get(seat_guid="A0")
+        voucher.save()
+
+    response = client.get('/control/event/dummy/dummy/waitinglist/')
+    assert len(response.context['entries']) == 4
+    for entry in response.context['entries']:
+        assert entry.availability == (Quota.AVAILABILITY_OK, 1)
+
     with scopes_disabled():
-        after_priorities_item1 = get_priorities(event, item1)
-        after_priorities_item2 = get_priorities(event, item2)
-    
-    assert initial_priorities_item1 != after_priorities_item1, "Item1 priorities should have been shuffled"
-    assert initial_priorities_item2 == after_priorities_item2, "Item2 priorities should not have changed"
-    
-    item1_after_first_lottery = after_priorities_item1.copy()
-    
-    response = client.get('/control/event/dummy/dummy/waitinglist/?lottery=run&item=%d' % item2.pk)
-    assert response.status_code == 200
-    
+        wle2 = WaitingListEntry.objects.filter(item=item, voucher__isnull=True).first()
+        wle2.send_voucher()
+
+    # Overbooking is handled correctly
+    # Regression test for calculation that used `not free_seats` instead of `free_seats < 1`
     with scopes_disabled():
-        final_priorities_item1 = get_priorities(event, item1)
-        final_priorities_item2 = get_priorities(event, item2)
-    
-    assert final_priorities_item1 == item1_after_first_lottery, "Item1 priorities should not have changed after second lottery"
-    assert initial_priorities_item2 != final_priorities_item2, "Item2 priorities should have been shuffled"
+        # Block seat
+        seat = Seat.objects.get(seat_guid="A1")
+        seat.blocked = True
+        seat.save()
+
+    response = client.get('/control/event/dummy/dummy/waitinglist/')
+    assert len(response.context['entries']) == 3
+    for entry in response.context['entries']:
+        assert entry.availability == (Quota.AVAILABILITY_GONE, -1)
+
+    with scopes_disabled(), pytest.raises(WaitingListException):
+        wle3 = WaitingListEntry.objects.filter(item=item, voucher__isnull=True).first()
+        wle3.send_voucher()

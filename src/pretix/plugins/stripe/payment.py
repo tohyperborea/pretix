@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -32,19 +32,20 @@
 # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations under the License.
 
-import hashlib
 import json
 import logging
 import re
 import urllib.parse
+import zoneinfo
 from collections import OrderedDict
+from datetime import datetime
 from decimal import Decimal
+from json import JSONDecodeError
 
 import stripe
 from django import forms
 from django.conf import settings
 from django.contrib import messages
-from django.core import signing
 from django.db import transaction
 from django.http import HttpRequest
 from django.template.loader import get_template
@@ -54,11 +55,14 @@ from django.utils.safestring import mark_safe
 from django.utils.timezone import now
 from django.utils.translation import gettext, gettext_lazy as _, pgettext
 from django_countries import countries
+from text_unidecode import unidecode
 
 from pretix import __version__
 from pretix.base.decimal import round_decimal
 from pretix.base.forms import SecretKeySettingsField
-from pretix.base.forms.questions import guess_country
+from pretix.base.forms.questions import (
+    guess_country, guess_country_from_request,
+)
 from pretix.base.models import (
     Event, InvoiceAddress, Order, OrderPayment, OrderRefund, Quota,
 )
@@ -66,13 +70,13 @@ from pretix.base.payment import (
     BasePaymentProvider, PaymentException, WalletQueries,
 )
 from pretix.base.plugins import get_all_plugins
-from pretix.base.services.mail import SendMailException
 from pretix.base.settings import SettingsSandbox
+from pretix.base.views.redirect import safelink
 from pretix.helpers import OF_SELF
 from pretix.helpers.countries import CachedCountries
 from pretix.helpers.http import get_client_ip
-from pretix.helpers.urls import build_absolute_uri as build_global_uri
-from pretix.multidomain.urlreverse import build_absolute_uri, eventreverse
+from pretix.helpers.urls import mainreverse_absolute
+from pretix.multidomain.urlreverse import eventreverse_absolute
 from pretix.plugins.stripe.forms import StripeKeyValidator
 from pretix.plugins.stripe.models import (
     ReferencedStripeObject, RegisteredApplePayDomain,
@@ -84,68 +88,93 @@ from pretix.presale.views.cart import cart_session
 
 logger = logging.getLogger('pretix.plugins.stripe')
 
+
 # State of the payment methods
 #
 # Source: https://stripe.com/docs/payments/payment-methods/overview
-# Last Update: 2023-04-24
+# Last Update: 2026-06-12
 #
+# pretix Staff: Do not forget to enable/"On by default" newly added payment methods in
+# Stripe's managed payment methods configuration for the Stripe/pretix.eu connect platform.
+#
+# The categorization and order of payment methods is based on the list of the managed payment method configration
+# in the Stripe Dashboard.
+
 # Cards
 # - Credit and Debit Cards: ✓
-# - Apple, Google Pay: ✓
+#   * Cartes Bancaires: ✓
+#   * Korean cards: ✓
+#   * Japan installments: ✗
+#   * JCB: ✓
+#   * Meses sin intereses: ✗
 #
-# Bank debits
-# - ACH Debit: ✗
-# - Canadian PADs: ✗
-# - BACS Direct Debit: ✗
-# - SEPA Direct Debit: ✓
-# - BECS Direct Debit: ✗
+# Wallets
+# - Apple: ✓ (Cards)
+# - Google Pay: ✓ (Cards)
+# - Link: ✓ (PaymentRequestButton/Cards)
+# - Alipay: ✓
+# - Stablecoins and Crypto: ✗
+# - Kakao Pay: ✗
+# - Naver Pay: ✗
+# - MB Way: ✗
+# - Satis Pay: ✗
+# - WeChat Pay: ✓
+# - PAYCO: ✗
+# - PayPal: ✓ (No settings UI yet; incompatible with Connect+Direct Charges)
+# - Samsung pay: ✗
+# - MobilePay: ✓
+# - Revolut Pay: ✓
+# - Amazon Pay: ✗
+# - PayPay: ✗
+# - GrabPay: ✗
+# - Cash App Pay: ✗
+# - Secure Remote Commerce: ✗
 #
 # Bank redirects
 # - Bancontact: ✓
-# - BLIK: ✗
 # - EPS: ✓
-# - giropay: ✓
 # - iDEAL: ✓
-# - P24: ✓
-# - Sofort: ✓
-# - FPX: ✗
-# - PayNow: ✗
-# - UPI: ✗
-# - Netbanking: ✗
-#
-# Bank transfers
-# - ACH Bank Transfer: ✗
-# - SEPA Bank Transfer: ✗
-# - UK Bank Transfer: ✗
-# - Multibanco: ✗
-# - Furikomi (Japan): ✗
-# - Mexico Bank Transfer: ✗
+# - Przelewy24: ✓
+# - BLIK: ✗
+# - Pay By Bank: ✓
+# - TWINT: ✓
+# - Wero: ✓ (No settings UI yet)
+# - giropay: ✗ (deprecated)
+# - Sofort: ✗ (deprecated)
 #
 # Buy now, pay later
-# - Affirm: ✗
+# - Billie: ✗
+# - Klarna: ✓
 # - Afterpay/Clearpay: ✗
-# - Klarna: ✗
+# - Zip: ✗
+# - Alma: ✗
+# - Affirm: ✓
 #
-# Real-time payments
-# - PayNow: ✗
-# - PromptPay: ✗
-# - Pix: ✗
+# Bank debits
+# - SEPA Direct Debit: ✓
+# - ACH Direct Debit: ✗
+# - Australian BECS Direct Debit: ✗
+# - Canadian pre-authorized debits: ✗
+# - BACS Direct Debit: ✗
+# - FPX: ✗
+# - NZ BECS Direct Debit: ✗
+#
+# Bank transfers
+# - Bank Transfer: ✗
 #
 # Vouchers
+# - Multibanco: ✓
+# - Boleto: ✗
 # - Konbini: ✗
 # - OXXO: ✗
-# - Boleto: ✗
 #
-# Wallets
-# - Apple Pay: ✓ (Cards)
-# - Google Pay: ✓ (Cards)
-# - Secure Remote Commerce: ✗
-# - Link: ✓ (PaymentRequestButton)
-# - Cash App Pay: ✗
-# - MobilePay: ✗
-# - Alipay: ✓
-# - WeChat Pay: ✓
-# - GrabPay: ✓
+# Real-time payments
+# - Swish: ✓
+# - UPI: ✗
+# - Pix: ✗
+# - PayTo: ✗
+# - PayNow: ✗
+# - PromptPay: ✓
 
 
 class StripeSettingsHolder(BasePaymentProvider):
@@ -168,7 +197,7 @@ class StripeSettingsHolder(BasePaymentProvider):
         ).format(
             self.settings.connect_client_id,
             request.session['payment_stripe_oauth_token'],
-            urllib.parse.quote(build_global_uri('plugins:stripe:oauth.return')),
+            urllib.parse.quote(mainreverse_absolute('plugins:stripe:oauth.return')),
         )
 
     def settings_content_render(self, request):
@@ -200,7 +229,7 @@ class StripeSettingsHolder(BasePaymentProvider):
                 _('Please configure a <a href="https://dashboard.stripe.com/account/webhooks">Stripe Webhook</a> to '
                   'the following endpoint in order to automatically cancel orders when charges are refunded externally '
                   'and to process asynchronous payment methods like SOFORT.'),
-                build_global_uri('plugins:stripe:webhook')
+                mainreverse_absolute('plugins:stripe:webhook')
             )
 
     @property
@@ -265,9 +294,12 @@ class StripeSettingsHolder(BasePaymentProvider):
                 ('publishable_key',
                  forms.CharField(
                      label=_('Publishable key'),
-                     help_text=_('<a target="_blank" rel="noopener" href="{docs_url}">{text}</a>').format(
-                         text=_('Click here for a tutorial on how to obtain the required keys'),
-                         docs_url='https://docs.pretix.eu/en/latest/user/payments/stripe.html'
+                     help_text='<a target="_blank" rel="noopener" href="{docs_url}" class="btn btn-primary">{text}</a><br>'
+                               '<p class="help-block">{help}</p>'.format(
+                         text=_('Generate API keys'),
+                         docs_url='https://marketplace.stripe.com/apps/install/link/eu.pretix.plugins.stripe.rak',
+                         help=_('The button above will install our Stripe app to your account and will generate you '
+                                'API keys with the recommended permission level for optimal usage with pretix.')
                      ),
                      validators=(
                          StripeKeyValidator('pk_'),
@@ -324,32 +356,28 @@ class StripeSettingsHolder(BasePaymentProvider):
                      label=_('Credit card payments'),
                      required=False,
                  )),
-                ('method_giropay',
-                 forms.BooleanField(
-                     label=_('giropay'),
-                     disabled=self.event.currency != 'EUR',
-                     help_text=_('Needs to be enabled in your Stripe account first.'),
-                     required=False,
-                 )),
                 ('method_ideal',
                  forms.BooleanField(
                      label=_('iDEAL'),
                      disabled=self.event.currency != 'EUR',
-                     help_text=_('Needs to be enabled in your Stripe account first.'),
+                     help_text=_('Some payment methods might need to be enabled in the settings of your Stripe account '
+                                 'before they work properly.'),
                      required=False,
                  )),
                 ('method_alipay',
                  forms.BooleanField(
                      label=_('Alipay'),
                      disabled=self.event.currency not in ('EUR', 'AUD', 'CAD', 'GBP', 'HKD', 'JPY', 'NZD', 'SGD', 'USD'),
-                     help_text=_('Needs to be enabled in your Stripe account first.'),
+                     help_text=_('Some payment methods might need to be enabled in the settings of your Stripe account '
+                                 'before they work properly.'),
                      required=False,
                  )),
                 ('method_bancontact',
                  forms.BooleanField(
                      label=_('Bancontact'),
                      disabled=self.event.currency != 'EUR',
-                     help_text=_('Needs to be enabled in your Stripe account first.'),
+                     help_text=_('Some payment methods might need to be enabled in the settings of your Stripe account '
+                                 'before they work properly.'),
                      required=False,
                  )),
                 ('method_sepa_debit',
@@ -357,7 +385,8 @@ class StripeSettingsHolder(BasePaymentProvider):
                      label=_('SEPA Direct Debit'),
                      disabled=self.event.currency != 'EUR',
                      help_text=(
-                         _('Needs to be enabled in your Stripe account first.') +
+                         _('Some payment methods might need to be enabled in the settings of your Stripe account '
+                           'before they work properly.') +
                          '<div class="alert alert-warning">%s</div>' % _(
                              'SEPA Direct Debit payments via Stripe are <strong>not</strong> processed '
                              'instantly but might take up to <strong>14 days</strong> to be confirmed in some cases. '
@@ -378,48 +407,137 @@ class StripeSettingsHolder(BasePaymentProvider):
                          }
                      ),
                  )),
-                ('method_sofort',
-                 forms.BooleanField(
-                     label=_('SOFORT'),
-                     disabled=self.event.currency != 'EUR',
-                     help_text=(
-                         _('Needs to be enabled in your Stripe account first.') +
-                         '<div class="alert alert-warning">%s</div>' % _(
-                             'Despite the name, Sofort payments via Stripe are <strong>not</strong> processed '
-                             'instantly but might take up to <strong>14 days</strong> to be confirmed in some cases. '
-                             'Please only activate this payment method if your payment term allows for this lag.'
-                         )
-                     ),
-                     required=False,
-                 )),
                 ('method_eps',
                  forms.BooleanField(
                      label=_('EPS'),
                      disabled=self.event.currency != 'EUR',
-                     help_text=_('Needs to be enabled in your Stripe account first.'),
+                     help_text=_('Some payment methods might need to be enabled in the settings of your Stripe account '
+                                 'before they work properly.'),
                      required=False,
                  )),
                 ('method_multibanco',
                  forms.BooleanField(
                      label=_('Multibanco'),
                      disabled=self.event.currency != 'EUR',
-                     help_text=_('Needs to be enabled in your Stripe account first.'),
+                     help_text=_('Some payment methods might need to be enabled in the settings of your Stripe account '
+                                 'before they work properly.'),
                      required=False,
                  )),
                 ('method_przelewy24',
                  forms.BooleanField(
                      label=_('Przelewy24'),
                      disabled=self.event.currency not in ['EUR', 'PLN'],
-                     help_text=_('Needs to be enabled in your Stripe account first.'),
+                     help_text=_('Some payment methods might need to be enabled in the settings of your Stripe account '
+                                 'before they work properly.'),
+                     required=False,
+                 )),
+                ('method_pay_by_bank',
+                 forms.BooleanField(
+                     label=_('Pay by bank'),
+                     disabled=self.event.currency not in ['EUR', 'GBP'],
+                     help_text=' '.join([
+                         str(_('Some payment methods might need to be enabled in the settings of your Stripe account '
+                               'before they work properly.')),
+                         str(_('Currently only available for charges in GBP and customers with UK bank accounts, and '
+                               'in private preview for France and Germany.'))
+                     ]),
                      required=False,
                  )),
                 ('method_wechatpay',
                  forms.BooleanField(
                      label=_('WeChat Pay'),
                      disabled=self.event.currency not in ['AUD', 'CAD', 'EUR', 'GBP', 'HKD', 'JPY', 'SGD', 'USD'],
-                     help_text=_('Needs to be enabled in your Stripe account first.'),
+                     help_text=_('Some payment methods might need to be enabled in the settings of your Stripe account '
+                                 'before they work properly.'),
                      required=False,
                  )),
+                ('method_revolut_pay',
+                 forms.BooleanField(
+                     label='Revolut Pay',
+                     disabled=self.event.currency not in ['EUR', 'GBP', 'RON', 'HUF', 'PLN', 'DKK'],
+                     help_text=_('Some payment methods might need to be enabled in the settings of your Stripe account '
+                                 'before they work properly.'),
+                     required=False,
+                 )),
+                ('method_promptpay',
+                 forms.BooleanField(
+                     label='PromptPay',
+                     disabled=self.event.currency != 'THB',
+                     help_text=_('Some payment methods might need to be enabled in the settings of your Stripe account '
+                                 'before they work properly.'),
+                     required=False,
+                 )),
+                ('method_swish',
+                 forms.BooleanField(
+                     label=_('Swish'),
+                     disabled=self.event.currency != 'SEK',
+                     help_text=_('Some payment methods might need to be enabled in the settings of your Stripe account '
+                                 'before they work properly.'),
+                     required=False,
+                 )),
+                ('method_twint',
+                 forms.BooleanField(
+                     label='TWINT',
+                     disabled=self.event.currency != 'CHF',
+                     help_text=_('Some payment methods might need to be enabled in the settings of your Stripe account '
+                                 'before they work properly.'),
+                     required=False,
+                 )),
+                ('method_affirm',
+                 forms.BooleanField(
+                     label=_('Affirm'),
+                     disabled=self.event.currency not in ['USD', 'CAD'],
+                     help_text=' '.join([
+                         str(_('Some payment methods might need to be enabled in the settings of your Stripe account '
+                               'before they work properly.')),
+                         str(_('Only available for payments between $50 and $30,000.'))
+                     ]),
+                     required=False,
+                 )),
+                ('method_klarna',
+                 forms.BooleanField(
+                     label=_('Klarna'),
+                     disabled=self.event.currency not in [
+                         'AUD', 'CAD', 'CHF', 'CZK', 'DKK', 'EUR', 'GBP', 'NOK', 'NZD', 'PLN', 'SEK', 'USD'
+                     ],
+                     help_text=' '.join([
+                         str(_('Some payment methods might need to be enabled in the settings of your Stripe account '
+                               'before they work properly.')),
+                         str(_('Klarna and Stripe will decide which of the payment methods offered by Klarna are '
+                               'available to the user.')),
+                         str(_('Klarna\'s terms of services do not allow it to be used by charities or political '
+                               'organizations.')),
+                     ]),
+                     required=False,
+                 )),
+                # Disabled for now, since we still need to figure out how to make this work on our connect platform
+                # ('method_paypal',
+                #  forms.BooleanField(
+                #      label=_('PayPal'),
+                #      disabled=self.event.currency not in [
+                #          'EUR', 'GBP', 'USD', 'CHF', 'CZK', 'DKK', 'NOK', 'PLN', 'SEK', 'AUD', 'CAD', 'HKD', 'NZD', 'SGD'
+                #      ],
+                #      help_text=_('Some payment methods might need to be enabled in the settings of your Stripe account '
+                #                  'before they work properly.'),
+                #      required=False,
+                #  )),
+                ('method_mobilepay',
+                 forms.BooleanField(
+                     label=_('MobilePay'),
+                     disabled=self.event.currency not in ['DKK', 'EUR', 'NOK', 'SEK'],
+                     help_text=_('Some payment methods might need to be enabled in the settings of your Stripe account '
+                                 'before they work properly.'),
+                     required=False,
+                 )),
+                # Disabled for now, since still in closed Beta and only available to dedicated boarded accounts.
+                # ('method_wero',
+                #  forms.BooleanField(
+                #     label=_('Wero'),
+                #      disabled=self.event.currency not in 'EUR',
+                #      help_text=_('Some payment methods might need to be enabled in the settings of your Stripe account '
+                #                  'before they work properly.'),
+                #      required=False,
+                #  )),
             ] + extra_fields + list(super().settings_form_fields.items()) + moto_settings
         )
         if not self.settings.connect_client_id or self.settings.secret_key:
@@ -437,6 +555,10 @@ class StripeSettingsHolder(BasePaymentProvider):
 class StripeMethod(BasePaymentProvider):
     identifier = ''
     method = ''
+    redirect_action_handling = 'iframe'  # or redirect
+    redirect_in_widget_allowed = True
+    confirmation_method = 'manual'
+    explanation = ''
 
     def __init__(self, event: Event):
         super().__init__(event)
@@ -510,7 +632,7 @@ class StripeMethod(BasePaymentProvider):
             # the postfix.
             return '{code} {postfix}'.format(
                 code=payment.order.code,
-                postfix=self.settings.postfix,
+                postfix=re.sub("[^a-zA-Z0-9-_. ]", "", unidecode(str(self.settings.postfix))),
             )[:length]
         else:
             # If no custom postfix is set, we transmit the event slug and event name for backwards compatibility
@@ -518,7 +640,7 @@ class StripeMethod(BasePaymentProvider):
             return '{event}-{code} {eventname}'.format(
                 event=self.event.slug.upper(),
                 code=payment.order.code,
-                eventname=re.sub('[^a-zA-Z0-9 ]', '', str(self.event.name))
+                eventname=re.sub("[^a-zA-Z0-9-_. ]", "", unidecode(str(self.event.name))),
             )[:length]
 
     @property
@@ -541,7 +663,7 @@ class StripeMethod(BasePaymentProvider):
         return kwargs
 
     def _init_api(self):
-        stripe.api_version = '2022-08-01'
+        stripe.api_version = '2023-10-16'
         stripe.set_app_info(
             "pretix",
             partner_id="pp_partner_FSaz4PpKIur7Ox",
@@ -549,100 +671,10 @@ class StripeMethod(BasePaymentProvider):
             url="https://pretix.eu"
         )
 
-    def checkout_confirm_render(self, request) -> str:
+    def checkout_confirm_render(self, request, **kwargs) -> str:
         template = get_template('pretixplugins/stripe/checkout_payment_confirm.html')
         ctx = {'request': request, 'event': self.event, 'settings': self.settings, 'provider': self}
         return template.render(ctx)
-
-    def _charge_source(self, request, source, payment):
-        try:
-            params = {}
-            if not source.startswith('src_'):
-                params['statement_descriptor'] = self.statement_descriptor(payment)
-            params.update(self.api_kwargs)
-            params.update(self._connect_kwargs(payment))
-            charge = stripe.Charge.create(
-                amount=self._get_amount(payment),
-                currency=self.event.currency.lower(),
-                source=source,
-                description='{event}-{code}'.format(
-                    event=self.event.slug.upper(),
-                    code=payment.order.code
-                ),
-                metadata={
-                    'order': str(payment.order.id),
-                    'event': self.event.id,
-                    'code': payment.order.code
-                },
-                # TODO: Is this sufficient?
-                idempotency_key=str(self.event.id) + payment.order.code + source,
-                **params
-            )
-        except stripe.error.CardError as e:
-            if e.json_body:
-                err = e.json_body['error']
-                logger.exception('Stripe error: %s' % str(err))
-            else:
-                err = {'message': str(e)}
-                logger.exception('Stripe error: %s' % str(e))
-            logger.info('Stripe card error: %s' % str(err))
-            payment.fail(info={
-                'error': True,
-                'message': err['message'],
-            })
-            raise PaymentException(_('Stripe reported an error with your card: %s') % err['message'])
-
-        except stripe.error.StripeError as e:
-            if e.json_body and 'error' in e.json_body:
-                err = e.json_body['error']
-                logger.exception('Stripe error: %s' % str(err))
-
-                if err.get('code') == 'idempotency_key_in_use':
-                    # This is not an error we normally expect, however some payment methods like iDEAL will redirect
-                    # the user back to our confirmation page at the same time from two devices: the web browser the
-                    # purchase is executed from and the online banking app the payment is authorized from.
-                    # In this case we will just log the idempotency error but not expose it to the user and just
-                    # forward them back to their order page. There is a good chance that by the time the user hits
-                    # the order page, the other request has gone through and the payment is confirmed.
-                    # Usually however this should be prevented by SELECT FOR UPDATE calls!
-                    return
-
-            else:
-                err = {'message': str(e)}
-                logger.exception('Stripe error: %s' % str(e))
-
-            payment.fail(info={
-                'error': True,
-                'message': err['message'],
-            })
-            raise PaymentException(_('We had trouble communicating with Stripe. Please try again and get in touch '
-                                     'with us if this problem persists.'))
-        else:
-            ReferencedStripeObject.objects.get_or_create(
-                reference=charge.id,
-                defaults={'order': payment.order, 'payment': payment}
-            )
-            if charge.status == 'succeeded' and charge.paid:
-                try:
-                    payment.info = str(charge)
-                    payment.confirm()
-                except Quota.QuotaExceededException as e:
-                    raise PaymentException(str(e))
-
-                except SendMailException:
-                    raise PaymentException(_('There was an error sending the confirmation mail.'))
-            elif charge.status == 'pending':
-                if request:
-                    messages.warning(request, _('Your payment is pending completion. We will inform you as soon as the '
-                                                'payment completed.'))
-                payment.info = str(charge)
-                payment.state = OrderPayment.PAYMENT_STATE_PENDING
-                payment.save()
-                return
-            else:
-                logger.info('Charge failed: %s' % str(charge))
-                payment.fail(info=str(charge))
-                raise PaymentException(_('Stripe reported an error: %s') % charge.failure_message)
 
     def payment_pending_render(self, request, payment) -> str:
         if payment.info:
@@ -658,7 +690,7 @@ class StripeMethod(BasePaymentProvider):
             'order': payment.order,
             'payment': payment,
             'payment_info': payment_info,
-            'payment_hash': hashlib.sha1(payment.order.secret.lower().encode()).hexdigest()
+            'payment_hash': payment.order.tagged_secret('plugins:stripe')
         }
         return template.render(ctx)
 
@@ -675,17 +707,29 @@ class StripeMethod(BasePaymentProvider):
         }
 
     def api_refund_details(self, refund: OrderRefund):
-        return {
-            "id": refund.info_data.get("id", None),
-        }
+        try:
+            return {
+                "id": refund.info_data.get("id", None),
+            }
+        except JSONDecodeError:
+            return {}
 
     def payment_control_render(self, request, payment) -> str:
+        details = {}
         if payment.info:
             payment_info = json.loads(payment.info)
             if 'amount' in payment_info:
                 payment_info['amount'] /= 10 ** settings.CURRENCY_PLACES.get(self.event.currency, 2)
+            if isinstance(payment_info.get("latest_charge"), dict):
+                details = payment_info["latest_charge"].get("payment_method_details", {})
+            elif payment_info.get("charges") and payment_info["charges"]["data"]:
+                details = payment_info["charges"]["data"][0].get("payment_method_details", {})
+            elif payment_info.get("source"):
+                details = payment_info["source"]
         else:
             payment_info = None
+        details.setdefault('owner', {})
+
         template = get_template('pretixplugins/stripe/control.html')
         ctx = {
             'request': request,
@@ -694,9 +738,16 @@ class StripeMethod(BasePaymentProvider):
             'payment_info': payment_info,
             'payment': payment,
             'method': self.method,
+            'details': details,
             'provider': self,
         }
         return template.render(ctx)
+
+    def redirect(self, request, url):
+        if request.session.get('iframe_session', False):
+            return safelink(url, framebreak=True)
+        else:
+            return str(url)
 
     @transaction.atomic()
     def execute_refund(self, refund: OrderRefund):
@@ -710,19 +761,22 @@ class StripeMethod(BasePaymentProvider):
 
         try:
             if payment_info['id'].startswith('pi_'):
-                chargeid = payment_info['charges']['data'][0]['id']
+                if 'latest_charge' in payment_info and isinstance(payment_info.get("latest_charge"), dict):
+                    chargeid = payment_info['latest_charge']['id']
+                else:
+                    chargeid = payment_info['charges']['data'][0]['id']
             else:
                 chargeid = payment_info['id']
 
-            ch = stripe.Charge.retrieve(chargeid, **self.api_kwargs)
             kwargs = {}
             if self.settings.connect_destination:
                 kwargs['reverse_transfer'] = True
-            r = ch.refunds.create(
+            r = stripe.Refund.create(
+                charge=chargeid,
                 amount=self._get_amount(refund),
+                **self.api_kwargs,
                 **kwargs,
             )
-            ch.refresh()
         except (stripe.error.InvalidRequestError, stripe.error.AuthenticationError, stripe.error.APIConnectionError) \
                 as e:
             if e.json_body and 'error' in e.json_body:
@@ -755,59 +809,28 @@ class StripeMethod(BasePaymentProvider):
                 refund.execution_date = now()
                 refund.save()
 
-    def execute_payment(self, request: HttpRequest, payment: OrderPayment):
-        self._init_api()
-        try:
-            source = self._create_source(request, payment)
-
-        except stripe.error.StripeError as e:
-            if e.json_body and 'err' in e.json_body:
-                err = e.json_body['error']
-                logger.exception('Stripe error: %s' % str(err))
-
-                if err.get('code') == 'idempotency_key_in_use':
-                    # Same thing happening twice – we don't want to record a failure, as that might prevent the
-                    # other thread from succeeding.
-                    return
-            else:
-                err = {'message': str(e)}
-                logger.exception('Stripe error: %s' % str(e))
-            payment.fail(info={
-                'error': True,
-                'message': err['message'],
-            })
-            raise PaymentException(_('We had trouble communicating with Stripe. Please try again and get in touch '
-                                     'with us if this problem persists.'))
-
-        ReferencedStripeObject.objects.get_or_create(
-            reference=source.id,
-            defaults={'order': payment.order, 'payment': payment}
-        )
-        payment.info = str(source)
-        payment.state = OrderPayment.PAYMENT_STATE_PENDING
-        payment.save()
-        request.session['payment_stripe_order_secret'] = payment.order.secret
-        return self.redirect(request, source.redirect.url)
-
-    def redirect(self, request, url):
-        if request.session.get('iframe_session', False):
-            return (
-                build_absolute_uri(request.event, 'plugins:stripe:redirect') +
-                '?data=' + signing.dumps({
-                    'url': url,
-                    'session': {
-                        'payment_stripe_order_secret': request.session['payment_stripe_order_secret'],
-                    },
-                }, salt='safe-redirect')
-            )
-        else:
-            return str(url)
-
     def shred_payment_info(self, obj: OrderPayment):
         if not obj.info:
             return
         d = json.loads(obj.info)
-        new = {}
+
+        keys = (
+            'amount', 'currency', 'status', 'id', 'amount_capturable', 'amount_details', 'amount_received',
+            'application', 'application_fee_amount', 'canceled_at', 'confirmation_method', 'created', 'description',
+            'last_payment_error', 'payment_method', 'statement_descriptor', 'livemode'
+        )
+        new = {k: v for k, v in d.items() if k in keys}
+
+        if d.get("latest_charge") and not isinstance(d["latest_charge"], str):
+            keys = (
+                'amount', 'amount_captured', 'amount_refunded', 'application', 'application_fee_amount',
+                'balance_transaction', 'captured', 'created', 'currency', 'description', 'destination',
+                'disputed', 'failure_balance_transaction', 'failure_code', 'failure_message', 'id',
+                'livemode', 'metadata', 'object', 'on_behalf_of', 'outcome', 'paid', 'payment_intent',
+                'payment_method', 'receipt_url', 'refunded', 'status', 'transfer_data', 'transfer_group',
+            )
+            new["latest_charge"] = {k: v for k, v in d["latest_charge"].items() if k in keys}
+
         if d.get('source'):
             new['source'] = {
                 'id': d['source'].get('id'),
@@ -819,25 +842,17 @@ class StripeMethod(BasePaymentProvider):
                 'bic': d['source'].get('bic'),
                 'card': {
                     'brand': d['source'].get('card', {}).get('brand'),
-                    'country': d['source'].get('card', {}).get('cuntry'),
+                    'country': d['source'].get('card', {}).get('country'),
                     'last4': d['source'].get('card', {}).get('last4'),
                 }
             }
-        if 'amount' in d:
-            new['amount'] = d['amount']
-        if 'currency' in d:
-            new['currency'] = d['currency']
-        if 'status' in d:
-            new['status'] = d['status']
-        if 'id' in d:
-            new['id'] = d['id']
 
         new['_shredded'] = True
         obj.info = json.dumps(new)
         obj.save(update_fields=['info'])
 
         for le in obj.order.all_logentries().filter(
-                action_type="pretix.plugins.stripe.event"
+            action_type="pretix.plugins.stripe.event"
         ).exclude(data="", shredded=True):
             d = le.parsed_data
             if 'data' in d:
@@ -847,11 +862,6 @@ class StripeMethod(BasePaymentProvider):
                 le.data = json.dumps(d)
                 le.shredded = True
                 le.save(update_fields=['data', 'shredded'])
-
-
-class StripePaymentIntentMethod(StripeMethod):
-    identifier = ''
-    method = ''
 
     def payment_is_valid_session(self, request):
         return request.session.get('payment_stripe_{}_payment_method_id'.format(self.method), '') != ''
@@ -869,7 +879,8 @@ class StripePaymentIntentMethod(StripeMethod):
         try:
             return self._handle_payment_intent(request, payment)
         finally:
-            del request.session['payment_stripe_{}_payment_method_id'.format(self.method)]
+            if 'payment_stripe_{}_payment_method_id'.format(self.method) in request.session:
+                del request.session['payment_stripe_{}_payment_method_id'.format(self.method)]
 
     def is_moto(self, request, payment=None) -> bool:
         return False
@@ -882,6 +893,9 @@ class StripePaymentIntentMethod(StripeMethod):
 
         try:
             if self.payment_is_valid_session(request):
+                payment_method_id = request.session.get('payment_stripe_{}_payment_method_id'.format(self.method), None)
+                idempotency_key_seed = payment_method_id if payment_method_id is not None else payment.full_id
+
                 params = {}
                 params.update(self._connect_kwargs(payment))
                 params.update(self.api_kwargs)
@@ -896,19 +910,25 @@ class StripePaymentIntentMethod(StripeMethod):
                         }
                     })
 
+                if self.method == "card":
+                    params['statement_descriptor_suffix'] = self.statement_descriptor(payment)
+                else:
+                    params['statement_descriptor'] = self.statement_descriptor(payment)
+
                 intent = stripe.PaymentIntent.create(
                     amount=self._get_amount(payment),
                     currency=self.event.currency.lower(),
-                    payment_method=request.session['payment_stripe_{}_payment_method_id'.format(self.method)],
+                    payment_method=payment_method_id,
                     payment_method_types=[self.method],
-                    confirmation_method='manual',
+                    confirmation_method=self.confirmation_method,
                     confirm=True,
+                    # Sideburn: buyer's email in description and metadata so staff can search the
+                    # Stripe dashboard by email.
                     description='{user}-{event}-{code}'.format(
                         user=payment.order.email,
                         event=self.event.slug.upper(),
                         code=payment.order.code
                     ),
-                    statement_descriptor=self.statement_descriptor(payment),
                     metadata={
                         'customer': payment.order.email,
                         'order': str(payment.order.id),
@@ -916,12 +936,13 @@ class StripePaymentIntentMethod(StripeMethod):
                         'code': payment.order.code
                     },
                     # TODO: Is this sufficient?
-                    idempotency_key=str(self.event.id) + payment.order.code + request.session['payment_stripe_{}_payment_method_id'.format(self.method)],
-                    return_url=build_absolute_uri(self.event, 'plugins:stripe:sca.return', kwargs={
+                    idempotency_key=str(self.event.id) + payment.order.code + idempotency_key_seed,
+                    return_url=eventreverse_absolute(self.event, 'plugins:stripe:sca.return', kwargs={
                         'order': payment.order.code,
                         'payment': payment.pk,
-                        'hash': hashlib.sha1(payment.order.secret.lower().encode()).hexdigest(),
+                        'hash': payment.order.tagged_secret('plugins:stripe'),
                     }),
+                    expand=['latest_charge'],
                     **params
                 )
             else:
@@ -931,6 +952,7 @@ class StripePaymentIntentMethod(StripeMethod):
                     if not intent:
                         intent = stripe.PaymentIntent.retrieve(
                             payment_info['id'],
+                            expand=["latest_charge"],
                             **self.api_kwargs
                         )
                 else:
@@ -975,13 +997,20 @@ class StripePaymentIntentMethod(StripeMethod):
             )
             if intent.status == 'requires_action':
                 payment.info = str(intent)
+                if intent.next_action.type == 'multibanco_display_details':
+                    payment.state = OrderPayment.PAYMENT_STATE_PENDING
+                    payment.save()
+                    return
+
                 payment.state = OrderPayment.PAYMENT_STATE_CREATED
                 payment.save()
-                return build_absolute_uri(self.event, 'plugins:stripe:sca', kwargs={
-                    'order': payment.order.code,
-                    'payment': payment.pk,
-                    'hash': hashlib.sha1(payment.order.secret.lower().encode()).hexdigest(),
-                })
+                return self._redirect_to_sca(request, payment)
+
+            if intent.status == 'requires_action':
+                payment.info = str(intent)
+                payment.state = OrderPayment.PAYMENT_STATE_CREATED
+                payment.save()
+                return self._redirect_to_sca(request, payment)
 
             if intent.status == 'requires_confirmation':
                 payment.info = str(intent)
@@ -989,15 +1018,12 @@ class StripePaymentIntentMethod(StripeMethod):
                 payment.save()
                 self._confirm_payment_intent(request, payment)
 
-            elif intent.status == 'succeeded' and intent.charges.data[-1].paid:
+            elif intent.status == 'succeeded' and intent.latest_charge.paid:
                 try:
                     payment.info = str(intent)
                     payment.confirm()
                 except Quota.QuotaExceededException as e:
                     raise PaymentException(str(e))
-
-                except SendMailException:
-                    raise PaymentException(_('There was an error sending the confirmation mail.'))
             elif intent.status == 'processing':
                 if request:
                     messages.warning(request, _('Your payment is pending completion. We will inform you as soon as the '
@@ -1016,6 +1042,16 @@ class StripePaymentIntentMethod(StripeMethod):
                 payment.fail(info=str(intent))
                 raise PaymentException(_('Stripe reported an error: %s') % intent.last_payment_error.message)
 
+    def _redirect_to_sca(self, request, payment):
+        url = eventreverse_absolute(self.event, 'plugins:stripe:sca', kwargs={
+            'order': payment.order.code,
+            'payment': payment.pk,
+            'hash': payment.order.tagged_secret('plugins:stripe'),
+        })
+        if not self.redirect_in_widget_allowed and request.session.get('iframe_session', False):
+            return safelink(url, framebreak=True)
+        return url
+
     def _confirm_payment_intent(self, request, payment):
         self._init_api()
 
@@ -1024,11 +1060,12 @@ class StripePaymentIntentMethod(StripeMethod):
 
             intent = stripe.PaymentIntent.confirm(
                 payment_info['id'],
-                return_url=build_absolute_uri(self.event, 'plugins:stripe:sca.return', kwargs={
+                return_url=eventreverse_absolute(self.event, 'plugins:stripe:sca.return', kwargs={
                     'order': payment.order.code,
                     'payment': payment.pk,
-                    'hash': hashlib.sha1(payment.order.secret.lower().encode()).hexdigest(),
+                    'hash': payment.order.tagged_secret('plugins:stripe'),
                 }),
+                expand=["latest_charge"],
                 **self.api_kwargs
             )
 
@@ -1064,7 +1101,41 @@ class StripePaymentIntentMethod(StripeMethod):
                                      'with us if this problem persists.'))
 
 
-class StripeCC(StripePaymentIntentMethod):
+class StripeRedirectMethod(StripeMethod):
+    redirect_action_handling = "redirect"
+
+    def payment_is_valid_session(self, request):
+        # This does not have a payment_method_id, so we set it manually to None during checkout.
+        # But we still need to check for its presence here.
+        if "payment_stripe_{}_payment_method_id".format(self.method) in request.session:
+            return True
+        return False
+
+    def checkout_prepare(self, request, cart):
+        # This does not have a payment_method_id, so we set it manually to None during checkout, so that we can
+        # verify later on if we are in or outside the checkout process.
+        request.session["payment_stripe_{}_payment_method_id".format(self.method)] = None
+        return True
+
+    def _payment_intent_kwargs(self, request, payment):
+        return {
+            "payment_method_data": {
+                "type": self.method,
+            }
+        }
+
+    def payment_form_render(self, request) -> str:
+        template = get_template('pretixplugins/stripe/checkout_payment_form_simple_noform.html')
+        ctx = {
+            'request': request,
+            'event': self.event,
+            'settings': self.settings,
+            'explanation': self.explanation,
+        }
+        return template.render(ctx)
+
+
+class StripeCC(StripeMethod):
     identifier = 'stripe'
     verbose_name = _('Credit card via Stripe')
     public_name = _('Credit card')
@@ -1090,6 +1161,7 @@ class StripeCC(StripePaymentIntentMethod):
             'event': self.event,
             'total': self._decimal_to_int(total),
             'settings': self.settings,
+            'explanation': self.explanation,
             'is_moto': self.is_moto(request)
         }
         return template.render(ctx)
@@ -1131,15 +1203,15 @@ class StripeCC(StripePaymentIntentMethod):
             request.sales_channel.identifier == 'resellers'
 
         if payment:
-            return moto and payment.order.sales_channel == 'resellers'
+            return moto and payment.order.sales_channel.identifier == 'resellers'
 
         return moto
 
     def payment_presale_render(self, payment: OrderPayment) -> str:
         pi = payment.info_data or {}
         try:
-            if "charges" in pi:
-                card = pi["charges"]["data"][0]["payment_method_details"]["card"]
+            if "latest_charge" in pi and isinstance(pi.get("latest_charge"), dict):
+                card = pi["latest_charge"]["payment_method_details"]["card"]
             else:
                 card = pi["source"]["card"]
         except:
@@ -1151,7 +1223,7 @@ class StripeCC(StripePaymentIntentMethod):
                f'{_("expires {month}/{year}").format(month=card.get("exp_month"), year=card.get("exp_year"))}'
 
 
-class StripeSEPADirectDebit(StripePaymentIntentMethod):
+class StripeSEPADirectDebit(StripeMethod):
     identifier = 'stripe_sepa_debit'
     verbose_name = _('SEPA Debit via Stripe')
     public_name = _('SEPA Debit')
@@ -1183,6 +1255,7 @@ class StripeSEPADirectDebit(StripePaymentIntentMethod):
             'event': self.event,
             'settings': self.settings,
             'form': self.payment_form(request),
+            'explanation': self.explanation,
             'email': order.email if order else cs.get('email', '')
         }
         return template.render(ctx)
@@ -1268,7 +1341,7 @@ class StripeSEPADirectDebit(StripePaymentIntentMethod):
 
     def execute_payment(self, request: HttpRequest, payment: OrderPayment):
         try:
-            super().execute_payment(request, payment)
+            return super().execute_payment(request, payment)
         finally:
             fields = ['accountname', 'line1', 'postal_code', 'city', 'country']
             for field in fields:
@@ -1276,11 +1349,134 @@ class StripeSEPADirectDebit(StripePaymentIntentMethod):
                     del request.session['payment_stripe_sepa_debit_{}'.format(field)]
 
 
-class StripeGiropay(StripeMethod):
-    identifier = 'stripe_giropay'
-    verbose_name = _('giropay via Stripe')
-    public_name = _('giropay')
-    method = 'giropay'
+class StripeAffirm(StripeMethod):
+    identifier = 'stripe_affirm'
+    verbose_name = _('Affirm via Stripe')
+    public_name = _('Affirm')
+    method = 'affirm'
+    redirect_action_handling = 'redirect'
+
+    def payment_is_valid_session(self, request):
+        # Affirm does not have a payment_method_id, so we set it manually to None during checkout.
+        # But we still need to check for its presence here.
+        if 'payment_stripe_{}_payment_method_id'.format(self.method) in request.session:
+            return True
+        return False
+
+    def checkout_prepare(self, request, cart):
+        # Affirm does not have a payment_method_id, so we set it manually to None during checkout, so that we can
+        # verify later on if we are in or outside the checkout process.
+        request.session['payment_stripe_{}_payment_method_id'.format(self.method)] = None
+        return True
+
+    def is_allowed(self, request: HttpRequest, total: Decimal=None) -> bool:
+        return Decimal(50.00) <= total <= Decimal(30000.00) and super().is_allowed(request, total)
+
+    def order_change_allowed(self, order: Order, request: HttpRequest=None) -> bool:
+        return Decimal(50.00) <= order.pending_sum <= Decimal(30000.00) and super().order_change_allowed(order, request)
+
+    def _payment_intent_kwargs(self, request, payment):
+        return {
+            'payment_method_data': {
+                'type': 'affirm',
+            }
+        }
+
+    def payment_form_render(self, request, total, order=None) -> str:
+        template = get_template('pretixplugins/stripe/checkout_payment_form_simple_messaging_noform.html')
+        ctx = {
+            'request': request,
+            'event': self.event,
+            'total': self._decimal_to_int(total),
+            'explanation': self.explanation,
+            'method': self.method,
+        }
+        return template.render(ctx)
+
+
+class StripeKlarna(StripeRedirectMethod):
+    identifier = "stripe_klarna"
+    verbose_name = _("Klarna via Stripe")
+    public_name = _("Klarna")
+    method = "klarna"
+    allowed_countries = {"US", "CA", "AU", "NZ", "GB", "IE", "FR", "ES", "DE", "AT", "BE", "DK", "FI", "IT", "NL", "NO", "SE"}
+    redirect_in_widget_allowed = False
+
+    def _detect_country(self, request, order=None):
+        def get_invoice_address():
+            if order and getattr(order, 'invoice_address', None):
+                request._checkout_flow_invoice_address = order.invoice_address
+            if not hasattr(request, '_checkout_flow_invoice_address'):
+                cs = cart_session(request)
+                iapk = cs.get('invoice_address')
+                if not iapk:
+                    request._checkout_flow_invoice_address = InvoiceAddress()
+                else:
+                    try:
+                        request._checkout_flow_invoice_address = InvoiceAddress.objects.get(pk=iapk, order__isnull=True)
+                    except InvoiceAddress.DoesNotExist:
+                        request._checkout_flow_invoice_address = InvoiceAddress()
+            return request._checkout_flow_invoice_address
+
+        ia = get_invoice_address()
+        country = None
+        if ia.country:
+            country = str(ia.country)
+        if country not in self.allowed_countries:
+            country = guess_country_from_request(request, self.event)
+        if country not in self.allowed_countries:
+            country = self.settings.merchant_country
+        if country not in self.allowed_countries:
+            country = "DE"
+        return country
+
+    def _payment_intent_kwargs(self, request, payment):
+        return {
+            "payment_method_data": {
+                "type": "klarna",
+                "billing_details": {
+                    "email": payment.order.email,
+                    "address": {
+                        "country": self._detect_country(request, payment.order),
+                    },
+                },
+            }
+        }
+
+    def payment_form_render(self, request, total, order=None) -> str:
+        template = get_template(
+            "pretixplugins/stripe/checkout_payment_form_simple_messaging_noform.html"
+        )
+        ctx = {
+            "request": request,
+            "event": self.event,
+            "total": self._decimal_to_int(total),
+            "method": self.method,
+            'explanation': self.explanation,
+            "country": self._detect_country(request, order)
+        }
+        return template.render(ctx)
+
+    def test_mode_message(self):
+        if self.settings.connect_client_id and not self.settings.secret_key:
+            is_testmode = True
+        else:
+            is_testmode = (
+                self.settings.secret_key and "_test_" in self.settings.secret_key
+            )
+        if is_testmode:
+            return mark_safe(
+                _(
+                    "The Stripe plugin is operating in test mode. You can use one of <a {args}>many test "
+                    "cards</a> to perform a transaction. No money will actually be transferred."
+                ).format(
+                    args='href="https://docs.klarna.com/resources/test-environment/sample-customer-data/" target="_blank"'
+                )
+            )
+        return None
+
+
+class StripeRedirectWithAccountNamePaymentIntentMethod(StripeRedirectMethod):
 
     def payment_form_render(self, request) -> str:
         template = get_template('pretixplugins/stripe/checkout_payment_form_simple.html')
@@ -1288,6 +1484,7 @@ class StripeGiropay(StripeMethod):
             'request': request,
             'event': self.event,
             'settings': self.settings,
+            'explanation': self.explanation,
             'form': self.payment_form(request)
         }
         return template.render(ctx)
@@ -1298,228 +1495,154 @@ class StripeGiropay(StripeMethod):
             ('account', forms.CharField(label=_('Account holder'))),
         ])
 
-    def _create_source(self, request, payment):
+    def execute_payment(self, request: HttpRequest, payment: OrderPayment):
         try:
-            source = stripe.Source.create(
-                type='giropay',
-                amount=self._get_amount(payment),
-                currency=self.event.currency.lower(),
-                metadata={
-                    'order': str(payment.order.id),
-                    'event': self.event.id,
-                    'code': payment.order.code
-                },
-                owner={
-                    'name': request.session.get('payment_stripe_giropay_account') or gettext('unknown name')
-                },
-                statement_descriptor=self.statement_descriptor(payment, 35),
-                redirect={
-                    'return_url': build_absolute_uri(self.event, 'plugins:stripe:return', kwargs={
-                        'order': payment.order.code,
-                        'payment': payment.pk,
-                        'hash': hashlib.sha1(payment.order.secret.lower().encode()).hexdigest(),
-                    })
-                },
-                **self.api_kwargs
-            )
-            return source
+            return super().execute_payment(request, payment)
         finally:
-            if 'payment_stripe_giropay_account' in request.session:
-                del request.session['payment_stripe_giropay_account']
-
-    def payment_is_valid_session(self, request):
-        return (
-            request.session.get('payment_stripe_giropay_account', '') != ''
-        )
+            if f'payment_stripe_{self.method}_account' in request.session:
+                del request.session[f'payment_stripe_{self.method}_account']
 
     def checkout_prepare(self, request, cart):
         form = self.payment_form(request)
         if form.is_valid():
-            request.session['payment_stripe_giropay_account'] = form.cleaned_data['account']
+            request.session[f"payment_stripe_{self.method}_payment_method_id"] = None
+            request.session[f'payment_stripe_{self.method}_account'] = form.cleaned_data['account']
             return True
         return False
 
+
+class StripeGiropay(StripeRedirectWithAccountNamePaymentIntentMethod):
+    identifier = 'stripe_giropay'
+    verbose_name = _('giropay via Stripe')
+    public_name = _('giropay')
+    method = 'giropay'
+    explanation = _(
+        'giropay is an online payment method available to all customers of most German banks, usually after one-time '
+        'activation. Please keep your online banking account and login information available.'
+    )
+    redirect_in_widget_allowed = False
+
+    def is_allowed(self, request: HttpRequest, total: Decimal=None) -> bool:
+        # Stripe<>giropay is shut down July 1st
+        return super().is_allowed(request, total) and now() < datetime(
+            2024, 7, 1, 0, 0, 0, tzinfo=zoneinfo.ZoneInfo("Europe/Berlin")
+        )
+
+    def order_change_allowed(self, order: Order, request: HttpRequest=None) -> bool:
+        return super().order_change_allowed(order, request) and now() < datetime(
+            2024, 7, 1, 0, 0, 0, tzinfo=zoneinfo.ZoneInfo("Europe/Berlin")
+        )
+
+    def _payment_intent_kwargs(self, request, payment):
+        return {
+            "payment_method_data": {
+                "type": "giropay",
+                "giropay": {},
+                "billing_details": {
+                    "name": request.session.get(f"payment_stripe_{self.method}_account") or gettext("unknown name")
+                },
+            }
+        }
+
     def payment_presale_render(self, payment: OrderPayment) -> str:
         pi = payment.info_data or {}
         try:
-            return gettext('Bank account at {bank}').format(bank=pi["source"]["giropay"]["bank_name"])
+            return gettext('Bank account at {bank}').format(
+                bank=(
+                    pi.get("latest_charge", {}).get("payment_method_details", {}).get("giropay", {}).get("bank_name") or
+                    pi.get("source", {}).get("giropay", {}).get("bank_name", "?")
+                )
+            )
         except:
             logger.exception('Could not parse payment data')
             return super().payment_presale_render(payment)
 
 
-class StripeIdeal(StripeMethod):
+class StripeIdeal(StripeRedirectMethod):
     identifier = 'stripe_ideal'
     verbose_name = _('iDEAL via Stripe')
-    public_name = _('iDEAL')
+    public_name = _('iDEAL | Wero')
     method = 'ideal'
-
-    def payment_form_render(self, request) -> str:
-        template = get_template('pretixplugins/stripe/checkout_payment_form_simple_noform.html')
-        ctx = {
-            'request': request,
-            'event': self.event,
-            'settings': self.settings,
-        }
-        return template.render(ctx)
-
-    def _create_source(self, request, payment):
-        source = stripe.Source.create(
-            type='ideal',
-            amount=self._get_amount(payment),
-            currency=self.event.currency.lower(),
-            metadata={
-                'order': str(payment.order.id),
-                'event': self.event.id,
-                'code': payment.order.code
-            },
-            statement_descriptor=self.statement_descriptor(payment),
-            redirect={
-                'return_url': build_absolute_uri(self.event, 'plugins:stripe:return', kwargs={
-                    'order': payment.order.code,
-                    'payment': payment.pk,
-                    'hash': hashlib.sha1(payment.order.secret.lower().encode()).hexdigest(),
-                })
-            },
-            **self.api_kwargs
-        )
-        return source
-
-    def payment_is_valid_session(self, request):
-        return True
-
-    def checkout_prepare(self, request, cart):
-        return True
+    explanation = _(
+        'iDEAL is an online payment method available to customers of Dutch banks. Please keep your online '
+        'banking account and login information available.'
+    )
+    redirect_in_widget_allowed = False
 
     def payment_presale_render(self, payment: OrderPayment) -> str:
         pi = payment.info_data or {}
         try:
-            return gettext('Bank account at {bank}').format(bank=pi["source"]["ideal"]["bank"])
+            return gettext('Bank account at {bank}').format(
+                bank=(
+                    pi.get("latest_charge", {}).get("payment_method_details", {}).get("ideal", {}).get("bank") or
+                    pi.get("source", {}).get("ideal", {}).get("bank", "?")
+                ).replace("_", " ").title()
+            )
         except:
             logger.exception('Could not parse payment data')
             return super().payment_presale_render(payment)
 
 
-class StripeAlipay(StripeMethod):
+class StripeAlipay(StripeRedirectMethod):
     identifier = 'stripe_alipay'
     verbose_name = _('Alipay via Stripe')
     public_name = _('Alipay')
     method = 'alipay'
-
-    def payment_form_render(self, request) -> str:
-        template = get_template('pretixplugins/stripe/checkout_payment_form_simple_noform.html')
-        ctx = {
-            'request': request,
-            'event': self.event,
-            'settings': self.settings,
-        }
-        return template.render(ctx)
-
-    def _create_source(self, request, payment):
-        source = stripe.Source.create(
-            type='alipay',
-            amount=self._get_amount(payment),
-            currency=self.event.currency.lower(),
-            metadata={
-                'order': str(payment.order.id),
-                'event': self.event.id,
-                'code': payment.order.code
-            },
-            redirect={
-                'return_url': build_absolute_uri(self.event, 'plugins:stripe:return', kwargs={
-                    'order': payment.order.code,
-                    'payment': payment.pk,
-                    'hash': hashlib.sha1(payment.order.secret.lower().encode()).hexdigest(),
-                })
-            },
-            **self.api_kwargs
-        )
-        return source
-
-    def payment_is_valid_session(self, request):
-        return True
-
-    def checkout_prepare(self, request, cart):
-        return True
+    confirmation_method = 'automatic'
+    explanation = _(
+        'This payment method is available to customers of the Chinese payment system Alipay. Please keep '
+        'your login information available.'
+    )
 
 
-class StripeBancontact(StripeMethod):
+class StripeBancontact(StripeRedirectWithAccountNamePaymentIntentMethod):
     identifier = 'stripe_bancontact'
     verbose_name = _('Bancontact via Stripe')
     public_name = _('Bancontact')
     method = 'bancontact'
+    redirect_in_widget_allowed = False
 
-    def payment_form_render(self, request) -> str:
-        template = get_template('pretixplugins/stripe/checkout_payment_form_simple.html')
-        ctx = {
-            'request': request,
-            'event': self.event,
-            'settings': self.settings,
-            'form': self.payment_form(request)
+    def _payment_intent_kwargs(self, request, payment):
+        return {
+            "payment_method_data": {
+                "type": "bancontact",
+                "billing_details": {
+                    "name": request.session.get(f"payment_stripe_{self.method}_account") or gettext("unknown name")
+                },
+            }
         }
-        return template.render(ctx)
-
-    @property
-    def payment_form_fields(self):
-        return OrderedDict([
-            ('account', forms.CharField(label=_('Account holder'), min_length=3)),
-        ])
-
-    def _create_source(self, request, payment):
-        try:
-            source = stripe.Source.create(
-                type='bancontact',
-                amount=self._get_amount(payment),
-                currency=self.event.currency.lower(),
-                metadata={
-                    'order': str(payment.order.id),
-                    'event': self.event.id,
-                    'code': payment.order.code
-                },
-                owner={
-                    'name': request.session.get('payment_stripe_bancontact_account') or gettext('unknown name')
-                },
-                statement_descriptor=self.statement_descriptor(payment, 35),
-                redirect={
-                    'return_url': build_absolute_uri(self.event, 'plugins:stripe:return', kwargs={
-                        'order': payment.order.code,
-                        'payment': payment.pk,
-                        'hash': hashlib.sha1(payment.order.secret.lower().encode()).hexdigest(),
-                    })
-                },
-                **self.api_kwargs
-            )
-            return source
-        finally:
-            if 'payment_stripe_bancontact_account' in request.session:
-                del request.session['payment_stripe_bancontact_account']
-
-    def payment_is_valid_session(self, request):
-        return (
-            request.session.get('payment_stripe_bancontact_account', '') != ''
-        )
-
-    def checkout_prepare(self, request, cart):
-        form = self.payment_form(request)
-        if form.is_valid():
-            request.session['payment_stripe_bancontact_account'] = form.cleaned_data['account']
-            return True
-        return False
 
     def payment_presale_render(self, payment: OrderPayment) -> str:
         pi = payment.info_data or {}
         try:
-            return gettext('Bank account at {bank}').format(bank=pi["source"]["bancontact"]["bank_name"])
+            return gettext('Bank account at {bank}').format(
+                bank=(
+                    pi.get("latest_charge", {}).get("payment_method_details", {}).get("bancontact", {}).get("bank_name") or
+                    pi.get("source", {}).get("bancontact", {}).get("bank_name", "?")
+                )
+            )
         except:
             logger.exception('Could not parse payment data')
             return super().payment_presale_render(payment)
 
 
-class StripeSofort(StripeMethod):
+class StripeSofort(StripeRedirectMethod):
     identifier = 'stripe_sofort'
     verbose_name = _('SOFORT via Stripe')
     public_name = _('SOFORT (instant bank transfer)')
     method = 'sofort'
+    redirect_in_widget_allowed = False
+
+    def is_allowed(self, request: HttpRequest, total: Decimal=None) -> bool:
+        # Stripe<>Sofort is shut down November 29th
+        return super().is_allowed(request, total) and now() < datetime(
+            2024, 11, 29, 0, 0, 0, tzinfo=zoneinfo.ZoneInfo("Europe/Berlin")
+        )
+
+    def order_change_allowed(self, order: Order, request: HttpRequest=None) -> bool:
+        return super().order_change_allowed(order, request) and now() < datetime(
+            2024, 11, 29, 0, 0, 0, tzinfo=zoneinfo.ZoneInfo("Europe/Berlin")
+        )
 
     def payment_form_render(self, request) -> str:
         template = get_template('pretixplugins/stripe/checkout_payment_form_simple.html')
@@ -1527,6 +1650,7 @@ class StripeSofort(StripeMethod):
             'request': request,
             'event': self.event,
             'settings': self.settings,
+            'explanation': self.explanation,
             'form': self.payment_form(request)
         }
         return template.render(ctx)
@@ -1543,40 +1667,32 @@ class StripeSofort(StripeMethod):
             ))),
         ])
 
-    def _create_source(self, request, payment):
-        source = stripe.Source.create(
-            type='sofort',
-            amount=self._get_amount(payment),
-            currency=self.event.currency.lower(),
-            metadata={
-                'order': str(payment.order.id),
-                'event': self.event.id,
-                'code': payment.order.code
-            },
-            statement_descriptor=self.statement_descriptor(payment, 35),
-            sofort={
-                'country': request.session.get('payment_stripe_sofort_bank_country'),
-            },
-            redirect={
-                'return_url': build_absolute_uri(self.event, 'plugins:stripe:return', kwargs={
-                    'order': payment.order.code,
-                    'payment': payment.pk,
-                    'hash': hashlib.sha1(payment.order.secret.lower().encode()).hexdigest(),
-                })
-            },
-            **self.api_kwargs
-        )
-        return source
+    def _payment_intent_kwargs(self, request, payment):
+        return {
+            "payment_method_data": {
+                "type": "sofort",
+                "sofort": {
+                    "country": (request.session.get(f"payment_stripe_{self.method}_bank_country") or "DE").upper()
+                },
+            }
+        }
+
+    def execute_payment(self, request: HttpRequest, payment: OrderPayment):
+        try:
+            return super().execute_payment(request, payment)
+        finally:
+            if f'payment_stripe_{self.method}_bank_country' in request.session:
+                del request.session[f'payment_stripe_{self.method}_bank_country']
 
     def payment_is_valid_session(self, request):
         return (
-            request.session.get('payment_stripe_sofort_bank_country', '') != ''
+            request.session.get(f'payment_stripe_{self.method}_bank_country', '') != ''
         )
 
     def checkout_prepare(self, request, cart):
         form = self.payment_form(request)
         if form.is_valid():
-            request.session['payment_stripe_sofort_bank_country'] = form.cleaned_data['bank_country']
+            request.session[f'payment_stripe_{self.method}_bank_country'] = form.cleaned_data['bank_country']
             return True
         return False
 
@@ -1592,257 +1708,274 @@ class StripeSofort(StripeMethod):
             return super().payment_presale_render(payment)
 
 
-class StripeEPS(StripeMethod):
+class StripeEPS(StripeRedirectWithAccountNamePaymentIntentMethod):
     identifier = 'stripe_eps'
     verbose_name = _('EPS via Stripe')
     public_name = _('EPS')
     method = 'eps'
+    redirect_in_widget_allowed = False
 
-    def payment_form_render(self, request) -> str:
-        template = get_template('pretixplugins/stripe/checkout_payment_form_simple.html')
-        ctx = {
-            'request': request,
-            'event': self.event,
-            'settings': self.settings,
-            'form': self.payment_form(request)
+    def _payment_intent_kwargs(self, request, payment):
+        return {
+            "payment_method_data": {
+                "type": "eps",
+                "billing_details": {
+                    "name": request.session.get(f"payment_stripe_{self.method}_account") or gettext("unknown name")
+                },
+            }
         }
-        return template.render(ctx)
-
-    @property
-    def payment_form_fields(self):
-        return OrderedDict([
-            ('account', forms.CharField(label=_('Account holder'))),
-        ])
-
-    def _create_source(self, request, payment):
-        try:
-            source = stripe.Source.create(
-                type='eps',
-                amount=self._get_amount(payment),
-                currency=self.event.currency.lower(),
-                metadata={
-                    'order': str(payment.order.id),
-                    'event': self.event.id,
-                    'code': payment.order.code
-                },
-                owner={
-                    'name': request.session.get('payment_stripe_eps_account') or gettext('unknown name')
-                },
-                statement_descriptor=self.statement_descriptor(payment),
-                redirect={
-                    'return_url': build_absolute_uri(self.event, 'plugins:stripe:return', kwargs={
-                        'order': payment.order.code,
-                        'payment': payment.pk,
-                        'hash': hashlib.sha1(payment.order.secret.lower().encode()).hexdigest(),
-                    })
-                },
-                **self.api_kwargs
-            )
-            return source
-        finally:
-            if 'payment_stripe_eps_account' in request.session:
-                del request.session['payment_stripe_eps_account']
-
-    def payment_is_valid_session(self, request):
-        return (
-            request.session.get('payment_stripe_eps_account', '') != ''
-        )
-
-    def checkout_prepare(self, request, cart):
-        form = self.payment_form(request)
-        if form.is_valid():
-            request.session['payment_stripe_eps_account'] = form.cleaned_data['account']
-            return True
-        return False
 
     def payment_presale_render(self, payment: OrderPayment) -> str:
         pi = payment.info_data or {}
         try:
-            return gettext('Bank account at {bank}').format(bank=pi["source"]["eps"]["bank"].replace('_', '').title())
+            return gettext('Bank account at {bank}').format(
+                bank=(
+                    pi.get("latest_charge", {}).get("payment_method_details", {}).get("eps", {}).get("bank") or
+                    pi.get("source", {}).get("eps", {}).get("bank", "?")
+                ).replace("_", " ").title()
+            )
         except:
             logger.exception('Could not parse payment data')
             return super().payment_presale_render(payment)
 
 
-class StripeMultibanco(StripeMethod):
+class StripeMultibanco(StripeRedirectMethod):
     identifier = 'stripe_multibanco'
     verbose_name = _('Multibanco via Stripe')
     public_name = _('Multibanco')
     method = 'multibanco'
+    explanation = _(
+        'Multibanco is a payment method available to Portuguese bank account holders.'
+    )
+    redirect_in_widget_allowed = False
+    abort_pending_allowed = True
 
-    def payment_form_render(self, request) -> str:
-        template = get_template('pretixplugins/stripe/checkout_payment_form_simple_noform.html')
-        ctx = {
-            'request': request,
-            'event': self.event,
-            'settings': self.settings,
-            'form': self.payment_form(request)
+    def _payment_intent_kwargs(self, request, payment):
+        return {
+            "payment_method_data": {
+                "type": "multibanco",
+                "billing_details": {
+                    "email": payment.order.email,
+                }
+            }
         }
-        return template.render(ctx)
-
-    def _create_source(self, request, payment):
-        source = stripe.Source.create(
-            type='multibanco',
-            amount=self._get_amount(payment),
-            currency=self.event.currency.lower(),
-            metadata={
-                'order': str(payment.order.id),
-                'event': self.event.id,
-                'code': payment.order.code
-            },
-            owner={
-                'email': payment.order.email
-            },
-            redirect={
-                'return_url': build_absolute_uri(self.event, 'plugins:stripe:return', kwargs={
-                    'order': payment.order.code,
-                    'payment': payment.pk,
-                    'hash': hashlib.sha1(payment.order.secret.lower().encode()).hexdigest(),
-                })
-            },
-            **self.api_kwargs
-        )
-        return source
-
-    def payment_is_valid_session(self, request):
-        return True
-
-    def checkout_prepare(self, request, cart):
-        return True
 
 
-class StripePrzelewy24(StripeMethod):
+class StripePrzelewy24(StripeRedirectMethod):
     identifier = 'stripe_przelewy24'
     verbose_name = _('Przelewy24 via Stripe')
     public_name = _('Przelewy24')
-    method = 'przelewy24'
+    method = 'p24'
+    explanation = _(
+        'Przelewy24 is an online payment method available to customers of Polish banks. Please keep your online '
+        'banking account and login information available.'
+    )
+    redirect_in_widget_allowed = False
 
-    def payment_form_render(self, request) -> str:
-        template = get_template('pretixplugins/stripe/checkout_payment_form_simple_noform.html')
-        ctx = {
-            'request': request,
-            'event': self.event,
-            'settings': self.settings,
-            'form': self.payment_form(request)
+    def _payment_intent_kwargs(self, request, payment):
+        return {
+            "payment_method_data": {
+                "type": "p24",
+                "billing_details": {
+                    "email": payment.order.email
+                },
+            }
         }
-        return template.render(ctx)
 
-    def _create_source(self, request, payment):
-        source = stripe.Source.create(
-            type='p24',
-            amount=self._get_amount(payment),
-            currency=self.event.currency.lower(),
-            metadata={
-                'order': str(payment.order.id),
-                'event': self.event.id,
-                'code': payment.order.code
-            },
-            owner={
-                'email': payment.order.email
-            },
-            statement_descriptor=self.statement_descriptor(payment, 35),
-            redirect={
-                'return_url': build_absolute_uri(self.event, 'plugins:stripe:return', kwargs={
-                    'order': payment.order.code,
-                    'payment': payment.pk,
-                    'hash': hashlib.sha1(payment.order.secret.lower().encode()).hexdigest(),
-                })
-            },
-            **self.api_kwargs
-        )
-        return source
-
-    def payment_is_valid_session(self, request):
-        return True
-
-    def checkout_prepare(self, request, cart):
-        return True
+    @property
+    def is_enabled(self) -> bool:
+        return self.settings.get('_enabled', as_type=bool) and self.settings.get('method_przelewy24', as_type=bool)
 
     def payment_presale_render(self, payment: OrderPayment) -> str:
         pi = payment.info_data or {}
         try:
-            return gettext('Bank account at {bank}').format(bank=pi["source"]["p24"]["bank"].replace('_', '').title())
+            return gettext('Bank account at {bank}').format(
+                bank=(
+                    pi.get("latest_charge", {}).get("payment_method_details", {}).get("p24", {}).get("bank") or
+                    pi.get("source", {}).get("p24", {}).get("bank", "?")
+                ).replace("_", " ").title()
+            )
         except:
             logger.exception('Could not parse payment data')
             return super().payment_presale_render(payment)
 
 
-class StripeWeChatPay(StripeMethod):
+class StripeWeChatPay(StripeRedirectMethod):
     identifier = 'stripe_wechatpay'
     verbose_name = _('WeChat Pay via Stripe')
     public_name = _('WeChat Pay')
-    method = 'wechatpay'
+    method = 'wechat_pay'
+    confirmation_method = 'automatic'
+    explanation = _(
+        'This payment method is available to users of the Chinese app WeChat. Please keep your login information '
+        'available.'
+    )
 
-    def payment_form_render(self, request) -> str:
-        template = get_template('pretixplugins/stripe/checkout_payment_form_simple_noform.html')
-        ctx = {
-            'request': request,
-            'event': self.event,
-            'settings': self.settings,
-            'form': self.payment_form(request)
+    @property
+    def is_enabled(self) -> bool:
+        return self.settings.get('_enabled', as_type=bool) and self.settings.get('method_wechatpay', as_type=bool)
+
+    def _payment_intent_kwargs(self, request, payment):
+        return {
+            "payment_method_data": {
+                "type": "wechat_pay",
+            },
+            "payment_method_options": {
+                "wechat_pay": {
+                    "client": "web"
+                },
+            }
         }
-        return template.render(ctx)
 
-    def _create_source(self, request, payment):
-        source = stripe.Source.create(
-            type='wechat',
-            amount=self._get_amount(payment),
-            currency=self.event.currency.lower(),
-            metadata={
-                'order': str(payment.order.id),
-                'event': self.event.id,
-                'code': payment.order.code
+
+class StripeRevolutPay(StripeRedirectMethod):
+    identifier = 'stripe_revolut_pay'
+    verbose_name = _('Revolut Pay via Stripe')
+    public_name = _('Revolut Pay')
+    method = 'revolut_pay'
+    confirmation_method = 'automatic'
+    explanation = _(
+        'This payment method is available to users of the Revolut app. Please keep your login information '
+        'available.'
+    )
+
+    def _payment_intent_kwargs(self, request, payment):
+        return {
+            "payment_method_data": {
+                "type": "revolut_pay",
             },
-            statement_descriptor=self.statement_descriptor(payment, 32),
-            redirect={
-                'return_url': build_absolute_uri(self.event, 'plugins:stripe:return', kwargs={
-                    'order': payment.order.code,
-                    'payment': payment.pk,
-                    'hash': hashlib.sha1(payment.order.secret.lower().encode()).hexdigest(),
-                })
+        }
+
+
+class StripePayByBank(StripeRedirectMethod):
+    identifier = 'stripe_pay_by_bank'
+    verbose_name = _('Pay by bank via Stripe')
+    public_name = _('Pay by bank')
+    method = 'pay_by_bank'
+    redirect_in_widget_allowed = False
+    confirmation_method = 'automatic'
+    explanation = _(
+        'Pay by bank allows you to authorize a secure Open Banking payment from your banking app. Currently available '
+        'only with a UK bank account.'
+    )
+
+    def is_allowed(self, request: HttpRequest, total: Decimal=None) -> bool:
+        return super().is_allowed(request, total) and self.event.currency == 'GBP'
+
+    def _payment_intent_kwargs(self, request, payment):
+        return {
+            "payment_method_data": {
+                "type": "pay_by_bank",
+                "billing_details": {
+                    "email": payment.order.email,
+                },
             },
-            **self.api_kwargs
-        )
-        return source
+        }
 
-    def payment_is_valid_session(self, request):
-        return True
 
-    def checkout_prepare(self, request, cart):
-        return True
+class StripePayPal(StripeRedirectMethod):
+    identifier = 'stripe_paypal'
+    verbose_name = _('PayPal via Stripe')
+    public_name = _('PayPal')
+    method = 'paypal'
+    redirect_in_widget_allowed = False
 
-    def execute_payment(self, request: HttpRequest, payment: OrderPayment):
-        self._init_api()
-        try:
-            source = self._create_source(request, payment)
 
-        except stripe.error.StripeError as e:
-            if e.json_body and 'err' in e.json_body:
-                err = e.json_body['error']
-                logger.exception('Stripe error: %s' % str(err))
+class StripeSwish(StripeRedirectMethod):
+    identifier = 'stripe_swish'
+    verbose_name = _('Swish via Stripe')
+    public_name = _('Swish')
+    method = 'swish'
+    confirmation_method = 'automatic'
+    explanation = _(
+        'This payment method is available to users of the Swedish apps Swish and BankID. Please have your app '
+        'ready.'
+    )
 
-                if err.get('code') == 'idempotency_key_in_use':
-                    # Same thing happening twice – we don't want to record a failure, as that might prevent the
-                    # other thread from succeeding.
-                    return
-            else:
-                err = {'message': str(e)}
-                logger.exception('Stripe error: %s' % str(e))
-            payment.fail(info={
-                'error': True,
-                'message': err['message'],
-            })
-            raise PaymentException(_('We had trouble communicating with Stripe. Please try again and get in touch '
-                                     'with us if this problem persists.'))
+    def _payment_intent_kwargs(self, request, payment):
+        return {
+            "payment_method_data": {
+                "type": "swish",
+            },
+            "payment_method_options": {
+                "swish": {
+                    "reference": payment.order.full_code,
+                },
+            }
+        }
 
-        ReferencedStripeObject.objects.get_or_create(
-            reference=source.id,
-            defaults={'order': payment.order, 'payment': payment}
-        )
-        payment.info = str(source)
-        payment.save()
 
-        return eventreverse(request.event, 'presale:event.order', kwargs={
-            'order': payment.order.code,
-            'secret': payment.order.secret
-        })
+class StripePromptPay(StripeRedirectMethod):
+    identifier = 'stripe_promptpay'
+    verbose_name = _('PromptPay via Stripe')
+    public_name = 'PromptPay'
+    method = 'promptpay'
+    confirmation_method = 'automatic'
+    explanation = _(
+        'This payment method is available to PromptPay users in Thailand. Please have your app ready.'
+    )
+
+    def is_allowed(self, request: HttpRequest, total: Decimal=None) -> bool:
+        return super().is_allowed(request, total) and request.event.currency == "THB"
+
+    def _payment_intent_kwargs(self, request, payment):
+        return {
+            "payment_method_data": {
+                "type": "promptpay",
+                "billing_details": {
+                    "email": payment.order.email,
+                },
+            },
+        }
+
+
+class StripeTwint(StripeRedirectMethod):
+    identifier = 'stripe_twint'
+    verbose_name = _('TWINT via Stripe')
+    public_name = 'TWINT'
+    method = 'twint'
+    confirmation_method = 'automatic'
+    explanation = _(
+        'This payment method is available to users of the Swiss app TWINT. Please have your app '
+        'ready.'
+    )
+
+    def is_allowed(self, request: HttpRequest, total: Decimal=None) -> bool:
+        return super().is_allowed(request, total) and request.event.currency == "CHF" and total <= Decimal("5000.00")
+
+    def _payment_intent_kwargs(self, request, payment):
+        return {
+            "payment_method_data": {
+                "type": "twint",
+            },
+        }
+
+
+class StripeMobilePay(StripeRedirectMethod):
+    identifier = 'stripe_mobilepay'
+    verbose_name = 'MobilePay via Stripe'
+    public_name = 'MobilePay'
+    method = 'mobilepay'
+    confirmation_method = 'automatic'
+    explanation = _(
+        'This payment method is available to MobilePay app users in Denmark and Finland. Please have your app ready.'
+    )
+
+    def _payment_intent_kwargs(self, request, payment):
+        return {
+            "payment_method_data": {
+                "type": "mobilepay",
+            },
+        }
+
+
+class StripeWero(StripeRedirectMethod):
+    identifier = 'stripe_wero'
+    verbose_name = _('WERO via Stripe')
+    public_name = 'WERO'
+    method = 'wero'
+    confirmation_method = 'automatic'
+    explanation = _(
+        'This payment method is available to European online banking users, whose banking institutions support WERO '
+        'either through their native banking apps or through the WERO wallet app. Please have you app ready.'
+    )

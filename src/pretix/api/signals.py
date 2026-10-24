@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -21,19 +21,48 @@
 #
 from datetime import timedelta
 
-from django.dispatch import Signal, receiver
+from django.dispatch import receiver
 from django.utils.timezone import now
 from django_scopes import scopes_disabled
 
 from pretix.api.models import ApiCall, WebHookCall
-from pretix.base.signals import periodic_task
+from pretix.base.signals import EventPluginSignal, GlobalSignal, periodic_task
 from pretix.helpers.periodic import minimum_interval
 
-register_webhook_events = Signal()
+register_webhook_events = GlobalSignal()
 """
 This signal is sent out to get all known webhook events. Receivers should return an
-instance of a subclass of pretix.api.webhooks.WebhookEvent or a list of such
+instance of a subclass of ``pretix.api.webhooks.WebhookEvent`` or a list of such
 instances.
+"""
+
+register_device_security_profile = GlobalSignal()
+"""
+This signal is sent out to get all known device security_profiles. Receivers should
+return an instance of a subclass of ``pretix.api.auth.devicesecurity.BaseSecurityProfile``
+or a list of such instances.
+"""
+
+order_api_details = EventPluginSignal()
+"""
+Arguments: ``order``
+
+This signal is sent out to fill the ``plugin_details`` field of the order API. Receivers
+should return a dictionary that is combined with the dictionaries of all other plugins.
+Note that doing database or network queries in receivers to this signal is discouraged
+and could cause serious performance issues. The main purpose is to provide information
+from e.g. ``meta_info`` to the API consumer,
+"""
+
+orderposition_api_details = EventPluginSignal()
+"""
+Arguments: ``orderposition``
+
+This signal is sent out to fill the ``plugin_details`` field of the order API. Receivers
+should return a dictionary that is combined with the dictionaries of all other plugins.
+Note that doing database or network queries in receivers to this signal is discouraged
+and could cause serious performance issues. The main purpose is to provide information
+from e.g. ``meta_info`` to the API consumer,
 """
 
 

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -36,9 +36,12 @@ from collections import OrderedDict
 
 from django import forms
 from django.utils.translation import gettext_lazy as _
-from i18nfield.forms import I18nFormField, I18nTextarea, I18nTextInput
+from i18nfield.forms import I18nFormField, I18nTextInput
 
-from pretix.base.forms import SecretKeySettingsField, SettingsForm
+from pretix import settings
+from pretix.base.forms import (
+    I18nMarkdownTextarea, SecretKeySettingsField, SettingsForm,
+)
 from pretix.base.settings import GlobalSettingsObject
 from pretix.base.signals import register_global_settings
 
@@ -66,12 +69,12 @@ class GlobalSettingsForm(SettingsForm):
                 help_text=_("Will be included as the link in the additional footer text.")
             )),
             ('banner_message', I18nFormField(
-                widget=I18nTextarea,
+                widget=I18nMarkdownTextarea,
                 required=False,
                 label=_("Global message banner"),
             )),
             ('banner_message_detail', I18nFormField(
-                widget=I18nTextarea,
+                widget=I18nMarkdownTextarea,
                 required=False,
                 label=_("Global message banner detail text"),
             )),
@@ -93,6 +96,13 @@ class GlobalSettingsForm(SettingsForm):
                 label=_("Leaflet tiles attribution"),
                 help_text=_("e.g. {sample}").format(
                     sample='&copy; &lt;a href=&quot;https://www.openstreetmap.org/copyright&quot;&gt;OpenStreetMap&lt;/a&gt; contributors'
+                )
+            )),
+            ('apple_domain_association', forms.CharField(
+                required=False,
+                label=_("ApplePay MerchantID Domain Association"),
+                help_text=_("Will be served at {domain}/.well-known/apple-developer-merchantid-domain-association").format(
+                    domain=settings.SITE_URL
                 )
             )),
         ])
@@ -118,7 +128,7 @@ class UpdateSettingsForm(SettingsForm):
     )
     update_check_email = forms.EmailField(
         required=False,
-        label=_("E-mail notifications"),
+        label=_("Email notifications"),
         help_text=_("We will notify you at this address if we detect that a new update is available. This "
                     "address will not be transmitted to pretix.eu, the emails will be sent by this server "
                     "locally.")

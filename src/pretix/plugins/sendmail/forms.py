@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -39,47 +39,28 @@ from django.core.exceptions import ValidationError
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _, pgettext_lazy
 from django_scopes.forms import SafeModelMultipleChoiceField
-from i18nfield.forms import I18nFormField, I18nTextarea, I18nTextInput
+from i18nfield.forms import I18nFormField, I18nTextInput
 
-from pretix.base.email import get_available_placeholders
-from pretix.base.forms import I18nModelForm, PlaceholderValidator
+from pretix.base.forms import I18nMarkdownTextarea, I18nModelForm
 from pretix.base.forms.widgets import (
-    SplitDateTimePickerWidget, TimePickerWidget, format_placeholders_help_text,
+    SplitDateTimePickerWidget, TimePickerWidget,
 )
 from pretix.base.models import CheckinList, Item, Order, SubEvent
 from pretix.control.forms import CachedFileField, SplitDateTimeField
 from pretix.control.forms.widgets import Select2, Select2Multiple
 from pretix.plugins.sendmail.models import Rule
 
-
-class FormPlaceholderMixin:
-    def _set_field_placeholders(self, fn, base_parameters):
-        placeholders = get_available_placeholders(self.event, base_parameters)
-        ht = format_placeholders_help_text(placeholders, self.event)
-        if self.fields[fn].help_text:
-            self.fields[fn].help_text += ' ' + str(ht)
-        else:
-            self.fields[fn].help_text = ht
-        self.fields[fn].validators.append(
-            PlaceholderValidator(['{%s}' % p for p in placeholders.keys()])
-        )
+from pretix.base.services.placeholders import FormPlaceholderMixin  # noqa
 
 
 class BaseMailForm(FormPlaceholderMixin, forms.Form):
     subject = forms.CharField(label=_("Subject"))
     message = forms.CharField(label=_("Message"))
-    attachment = CachedFileField(
-        label=_("Attachment"),
-        required=False,
-        ext_whitelist=settings.FILE_UPLOAD_EXTENSIONS_EMAIL_ATTACHMENT,
-        help_text=_('Sending an attachment increases the chance of your email not arriving or being sorted into spam folders. We recommend only using PDFs '
-                    'of no more than 2 MB in size.'),
-        max_size=settings.FILE_UPLOAD_MAX_SIZE_EMAIL_ATTACHMENT
-    )
 
     def __init__(self, *args, **kwargs):
         event = self.event = kwargs.pop('event')
         context_parameters = kwargs.pop('context_parameters')
+        request = kwargs.pop('request')
         super().__init__(*args, **kwargs)
         self.fields['subject'] = I18nFormField(
             label=_('Subject'),
@@ -88,11 +69,21 @@ class BaseMailForm(FormPlaceholderMixin, forms.Form):
         )
         self.fields['message'] = I18nFormField(
             label=_('Message'),
-            widget=I18nTextarea, required=True,
+            widget=I18nMarkdownTextarea, required=True,
             locales=event.settings.get('locales'),
         )
-        self._set_field_placeholders('subject', context_parameters)
-        self._set_field_placeholders('message', context_parameters)
+        self.fields['attachment'] = CachedFileField(
+            label=_("Attachment"),
+            required=False,
+            ext_whitelist=settings.FILE_UPLOAD_EXTENSIONS_EMAIL_ATTACHMENT,
+            help_text=_(
+                'Sending an attachment increases the chance of your email not arriving or being sorted into spam folders. We recommend only using PDFs '
+                'of no more than 2 MB in size.'),
+            max_size=settings.FILE_UPLOAD_MAX_SIZE_EMAIL_ATTACHMENT,
+            request=request,
+        )
+        self._set_field_placeholders('subject', context_parameters, rich=False)
+        self._set_field_placeholders('message', context_parameters, rich=True)
 
 
 class WaitinglistMailForm(BaseMailForm):
@@ -177,7 +168,7 @@ class OrderMailForm(BaseMailForm):
         required=False
     )
     checkin_lists = SafeModelMultipleChoiceField(queryset=CheckinList.objects.none(), required=False)  # overridden later
-    not_checked_in = forms.BooleanField(label=pgettext_lazy('sendmail_form', 'Restrict to recipients without check-in'), required=False)
+    not_checked_in = forms.BooleanField(label=pgettext_lazy('sendmail_form', 'Restrict to recipients without check-in on any list'), required=False)
     subevent = forms.ModelChoiceField(
         SubEvent.objects.none(),
         label=pgettext_lazy('sendmail_form', 'Restrict to a specific event date'),
@@ -237,10 +228,20 @@ class OrderMailForm(BaseMailForm):
             ]
         self.fields['recipients'].choices = recp_choices
 
-        choices = [(e, l) for e, l in Order.STATUS_CHOICE if e != 'n']
-        choices.insert(0, ('valid_if_pending', _('payment pending but already confirmed')))
-        choices.insert(0, ('na', _('payment pending (except unapproved or already confirmed)')))
-        choices.insert(0, ('pa', _('approval pending')))
+        if not self.event.settings.mail_attach_tickets:
+            self.fields['attach_tickets'].disabled = True
+            self.fields['attach_tickets'].help_text = _("Attachment of tickets is disabled in this event's email "
+                                                        "settings.")
+
+        choices = [
+            (Order.STATUS_PAID, _('Paid (or canceled with paid fee)')),
+            ('valid_if_pending', _('payment pending but already confirmed')),
+            ('na', _('payment pending (except unapproved or already confirmed)')),
+            ('pa', _('approval pending')),
+            (Order.STATUS_CANCELED, _('Canceled (fully)')),
+            (Order.STATUS_EXPIRED, _("Expired")),
+        ]
+
         if not event.settings.get('payment_term_expire_automatically', as_type=bool):
             choices.append(
                 ('overdue', _('pending with payment overdue'))
@@ -286,7 +287,6 @@ class OrderMailForm(BaseMailForm):
                         'event': event.slug,
                         'organizer': event.organizer.slug,
                     }),
-                    'data-placeholder': pgettext_lazy('subevent', 'Date')
                 }
             )
             self.fields['subevent'].widget.choices = self.fields['subevent'].choices
@@ -329,6 +329,7 @@ class RuleForm(FormPlaceholderMixin, I18nModelForm):
             ),
             'send_to': forms.RadioSelect,
             'checked_in_status': forms.RadioSelect,
+            'template': I18nMarkdownTextarea,
         }
 
     def __init__(self, *args, **kwargs):
@@ -366,7 +367,6 @@ class RuleForm(FormPlaceholderMixin, I18nModelForm):
                         'event': self.event.slug,
                         'organizer': self.event.organizer.slug,
                     }),
-                    'data-placeholder': pgettext_lazy('subevent', 'Date')
                 }
             )
             self.fields['subevent'].widget.choices = self.fields['subevent'].choices
@@ -387,17 +387,21 @@ class RuleForm(FormPlaceholderMixin, I18nModelForm):
             ]
         )
 
-        self._set_field_placeholders('subject', ['event', 'order'])
-        self._set_field_placeholders('template', ['event', 'order'])
+        self._set_field_placeholders('subject', ['event', 'order', 'event_or_subevent', 'position_or_address'])
+        self._set_field_placeholders('template', ['event', 'order', 'event_or_subevent', 'position_or_address'], rich=True)
 
-        choices = [(e, l) for e, l in Order.STATUS_CHOICE if e != 'n']
-        choices.insert(0, ('n__valid_if_pending', _('payment pending but already confirmed')))
-        choices.insert(0, ('n__not_pending_approval_and_not_valid_if_pending',
-                           _('payment pending (except unapproved or already confirmed)')))
-        choices.insert(0, ('n__pending_approval', _('approval pending')))
+        choices = [
+            (Order.STATUS_PAID, _('Paid (or canceled with paid fee)')),
+            ('n__valid_if_pending', _('payment pending but already confirmed')),
+            ('n__not_pending_approval_and_not_valid_if_pending',
+                _('payment pending (except unapproved or already confirmed)')),
+            ('n__pending_approval', _('approval pending')),
+            (Order.STATUS_CANCELED, _('Canceled (fully)')),
+            (Order.STATUS_EXPIRED, _("Expired")),
+        ]
         if not self.event.settings.get('payment_term_expire_automatically', as_type=bool):
             choices.append(
-                ('p__overdue', _('pending with payment overdue'))
+                ('n__pending_overdue', _('pending with payment overdue'))
             )
         self.fields['restrict_to_status'] = forms.MultipleChoiceField(
             label=pgettext_lazy('sendmail_from', 'Restrict to orders with status'),

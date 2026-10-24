@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -54,6 +54,7 @@ from ...control.forms.filter import get_all_payment_providers
 from ...helpers import GroupConcat
 from ...helpers.iter import chunked_iterable
 from ..exporter import BaseExporter, MultiSheetListExporter
+from ..invoicing.transmission import get_transmission_types
 from ..services.export import ExportError
 from ..services.invoices import invoice_pdf_task
 from ..signals import (
@@ -86,6 +87,7 @@ class InvoiceExporterMixin:
                          ('', _('All payment providers')),
                      ] + [
                          (k, v.verbose_name) for k, v in self.event.get_payment_providers().items()
+                         if not v.is_meta
                      ],
                      required=False,
                      help_text=_('Only include invoices for orders that have at least one payment attempt '
@@ -124,6 +126,7 @@ class InvoiceExporter(InvoiceExporterMixin, BaseExporter):
     identifier = 'invoices'
     verbose_name = _('All invoices')
     description = _('Download all invoices created by the system as a ZIP file of PDF files.')
+    repeatable_read = False
 
     def render(self, form_data: dict, output_file=None):
         qs = self.invoices_queryset(form_data).filter(shredded=False)
@@ -179,6 +182,7 @@ class InvoiceDataExporter(InvoiceExporterMixin, MultiSheetListExporter):
                     'includes two sheets, one with a line for every invoice, and one with a line for every position of '
                     'every invoice.')
     featured = True
+    repeatable_read = False
 
     @property
     def additional_form_fields(self):
@@ -194,11 +198,11 @@ class InvoiceDataExporter(InvoiceExporterMixin, MultiSheetListExporter):
     def iterate_sheet(self, form_data, sheet):
         _ = gettext
         if sheet == 'invoices':
-            yield [
+            headers = [
                 _('Invoice number'),
                 _('Date'),
                 _('Order code'),
-                _('E-mail address'),
+                _('Email address'),
                 _('Invoice type'),
                 _('Cancellation of'),
                 _('Language'),
@@ -206,6 +210,7 @@ class InvoiceDataExporter(InvoiceExporterMixin, MultiSheetListExporter):
                 _('Invoice sender:') + ' ' + _('Address'),
                 _('Invoice sender:') + ' ' + _('ZIP code'),
                 _('Invoice sender:') + ' ' + _('City'),
+                _('Invoice sender:') + ' ' + pgettext('address', 'State'),
                 _('Invoice sender:') + ' ' + _('Country'),
                 _('Invoice sender:') + ' ' + _('Tax ID'),
                 _('Invoice sender:') + ' ' + _('VAT ID'),
@@ -226,7 +231,17 @@ class InvoiceDataExporter(InvoiceExporterMixin, MultiSheetListExporter):
                 _('Total value (without taxes)'),
                 _('Payment matching IDs'),
                 _('Payment providers'),
+                _('Transmission type'),
+                _('Transmission status'),
+                _('Transmission date'),
             ]
+
+            transmission_types = get_transmission_types()
+            for tt in transmission_types:
+                for c in tt.describe_info_columns():
+                    headers.append(str(tt.verbose_name) + ': ' + str(c))
+
+            yield headers
 
             p_providers = OrderPayment.objects.filter(
                 order=OuterRef('order'),
@@ -238,7 +253,7 @@ class InvoiceDataExporter(InvoiceExporterMixin, MultiSheetListExporter):
                 'm'
             ).order_by()
 
-            base_qs = self.invoices_queryset(form_data)\
+            base_qs = self.invoices_queryset(form_data)
 
             qs = base_qs.select_related(
                 'order', 'refers'
@@ -276,7 +291,7 @@ class InvoiceDataExporter(InvoiceExporterMixin, MultiSheetListExporter):
                                 if mid:
                                     pmis.append(mid)
                     pmi = '\n'.join(pmis)
-                    yield [
+                    line = [
                         i.full_invoice_no,
                         date_format(i.date, "SHORT_DATE_FORMAT"),
                         i.order.code,
@@ -288,6 +303,7 @@ class InvoiceDataExporter(InvoiceExporterMixin, MultiSheetListExporter):
                         i.invoice_from,
                         i.invoice_from_zipcode,
                         i.invoice_from_city,
+                        i.invoice_from_state,
                         i.invoice_from_country,
                         i.invoice_from_tax_id,
                         i.invoice_from_vat_id,
@@ -310,8 +326,20 @@ class InvoiceDataExporter(InvoiceExporterMixin, MultiSheetListExporter):
                         ', '.join([
                             str(self.providers.get(p, p)) for p in sorted(set((i.payment_providers or '').split(',')))
                             if p and p != 'free'
-                        ])
+                        ]),
+                        i.transmission_type_instance.verbose_name,
+                        i.get_transmission_status_display(),
+                        date_format(i.transmission_date, "SHORT_DATETIME_FORMAT") if i.transmission_date else "",
                     ]
+                    for tt in transmission_types:
+                        if tt.identifier == i.transmission_type:
+                            described = dict(tt.describe_info(i.invoice_to_transmission_info, i.invoice_to_country, i.invoice_to_is_business))
+                            for c in tt.describe_info_columns():
+                                line.append(described.get(c, ""))
+                        else:
+                            for c in tt.describe_info_columns():
+                                line.append("")
+                    yield line
         elif sheet == 'lines':
             yield [
                 _('Invoice number'),
@@ -325,7 +353,7 @@ class InvoiceDataExporter(InvoiceExporterMixin, MultiSheetListExporter):
                 _('Event start date'),
                 _('Date'),
                 _('Order code'),
-                _('E-mail address'),
+                _('Email address'),
                 _('Invoice type'),
                 _('Cancellation of'),
                 _('Invoice sender:') + ' ' + _('Name'),

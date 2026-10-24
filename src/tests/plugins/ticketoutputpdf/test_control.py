@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -54,9 +54,7 @@ class TicketLayoutFormTest(SoupTest):
             date_from=datetime.datetime(2013, 12, 26, tzinfo=datetime.timezone.utc),
         )
         self.item1 = Item.objects.create(event=self.event1, name="Standard", default_price=0, position=1)
-        t = Team.objects.create(organizer=self.orga1, can_change_event_settings=True, can_view_orders=True,
-                                can_change_items=True, all_events=True, can_create_events=True,
-                                can_change_vouchers=True, can_change_orders=True)
+        t = Team.objects.create(organizer=self.orga1, all_event_permissions=True, all_organizer_permissions=True)
         t.members.add(self.user)
         t.limit_events.add(self.event1)
         self.client.login(email='dummy@dummy.dummy', password='dummy')
@@ -134,7 +132,7 @@ class TicketLayoutFormTest(SoupTest):
     def test_item_copy(self):
         with scopes_disabled():
             bl2 = self.event1.ticket_layouts.create(name="Layout 2")
-            TicketLayoutItem.objects.create(item=self.item1, layout=bl2)
+            TicketLayoutItem.objects.create(item=self.item1, layout=bl2, sales_channel=self.orga1.sales_channels.get(identifier="web"))
         self.client.post('/control/event/%s/%s/items/add' % (self.orga1.slug, self.event1.slug), {
             'name_0': 'Intermediate',
             'default_price': '23.00',
@@ -150,7 +148,7 @@ class TicketLayoutFormTest(SoupTest):
     def test_copy_event(self):
         with scopes_disabled():
             bl2 = self.event1.ticket_layouts.create(name="Layout 2")
-            TicketLayoutItem.objects.create(item=self.item1, layout=bl2)
+            TicketLayoutItem.objects.create(item=self.item1, layout=bl2, sales_channel=self.orga1.sales_channels.get(identifier="web"))
         self.post_doc('/control/events/add', {
             'event_wizard-current_step': 'foundation',
             'event_wizard-prefix': 'event_wizard',

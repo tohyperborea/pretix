@@ -1,0 +1,13 @@
+{% load i18n %}{% blocktrans with code=code reason=reason instance=instance %}Hello,
+
+{{ reason }}
+
+    {{ code }}
+
+Don't share this code with anyone. The {{ instance }} team will never ask you for it.
+
+If you didn't request this code, please contact us immediately.
+
+Thanks,  
+The {{ instance }} Team
+{% endblocktrans %}

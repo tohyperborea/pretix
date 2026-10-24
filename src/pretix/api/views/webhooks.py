@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -19,6 +19,9 @@
 # You should have received a copy of the GNU Affero General Public License along with this program.  If not, see
 # <https://www.gnu.org/licenses/>.
 #
+import django_filters
+from django.db import transaction
+from django_filters.rest_framework import DjangoFilterBackend, FilterSet
 from rest_framework import viewsets
 
 from pretix.api.models import WebHook
@@ -26,11 +29,17 @@ from pretix.api.serializers.webhooks import WebHookSerializer
 from pretix.helpers.dicts import merge_dicts
 
 
+class WebhookFilter(FilterSet):
+    enabled = django_filters.rest_framework.BooleanFilter()
+
+
 class WebHookViewSet(viewsets.ModelViewSet):
     serializer_class = WebHookSerializer
     queryset = WebHook.objects.none()
-    permission = 'can_change_organizer_settings'
-    write_permission = 'can_change_organizer_settings'
+    permission = 'organizer.settings.general:write'
+    write_permission = 'organizer.settings.general:write'
+    filter_backends = (DjangoFilterBackend,)
+    filterset_class = WebhookFilter
 
     def get_queryset(self):
         return self.request.organizer.webhooks.prefetch_related('listeners')
@@ -40,6 +49,7 @@ class WebHookViewSet(viewsets.ModelViewSet):
         ctx['organizer'] = self.request.organizer
         return ctx
 
+    @transaction.atomic()
     def perform_create(self, serializer):
         inst = serializer.save(organizer=self.request.organizer)
         self.request.organizer.log_action(
@@ -49,6 +59,7 @@ class WebHookViewSet(viewsets.ModelViewSet):
             data=merge_dicts(self.request.data, {'id': inst.pk})
         )
 
+    @transaction.atomic()
     def perform_update(self, serializer):
         inst = serializer.save(organizer=self.request.organizer)
         self.request.organizer.log_action(
@@ -59,6 +70,7 @@ class WebHookViewSet(viewsets.ModelViewSet):
         )
         return inst
 
+    @transaction.atomic()
     def perform_destroy(self, instance):
         self.request.organizer.log_action(
             'pretix.webhook.changed',

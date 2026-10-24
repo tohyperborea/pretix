@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -24,17 +24,13 @@ from smtplib import SMTPResponseException
 
 import pytest
 import responses
+from django.conf import settings
 from django.db import transaction
 from django.test.utils import override_settings
 from django_scopes import scopes_disabled
 from tests.base import SoupTest, extract_form_fields
 
-from pretix.base.models import Event, Organizer, Team, User
-
-
-@pytest.fixture
-def class_monkeypatch(request, monkeypatch):
-    request.cls.monkeypatch = monkeypatch
+from pretix.base.models import Event, Organizer, OutgoingMail, Team, User
 
 
 @pytest.mark.usefixtures("class_monkeypatch")
@@ -43,16 +39,15 @@ class OrganizerTest(SoupTest):
     def setUp(self):
         super().setUp()
         self.user = User.objects.create_user('dummy@dummy.dummy', 'dummy')
-        self.orga1 = Organizer.objects.create(name='CCC', slug='ccc')
-        self.orga2 = Organizer.objects.create(name='MRM', slug='mrm')
+        self.orga1 = Organizer.objects.create(name='CCC', slug='ccc', plugins='pretix.plugins.banktransfer')
+        self.orga2 = Organizer.objects.create(name='MRM', slug='mrm', plugins='pretix.plugins.banktransfer')
         self.event1 = Event.objects.create(
             organizer=self.orga1, name='30C3', slug='30c3',
             date_from=datetime.datetime(2013, 12, 26, tzinfo=datetime.timezone.utc),
             plugins='pretix.plugins.banktransfer,tests.testdummy'
         )
 
-        t = Team.objects.create(organizer=self.orga1, can_create_events=True, can_change_event_settings=True,
-                                can_change_items=True, can_change_organizer_settings=True)
+        t = Team.objects.create(organizer=self.orga1, all_organizer_permissions=True, all_event_permissions=True)
         t.members.add(self.user)
         t.limit_events.add(self.event1)
 
@@ -81,13 +76,6 @@ class OrganizerTest(SoupTest):
         assert self.orga1.name == "CCC e.V."
 
     def test_organizer_display_settings(self):
-        called = False
-
-        def set_called(*args, **kwargs):
-            nonlocal called
-            called = True
-
-        self.monkeypatch.setattr("pretix.presale.style.regenerate_organizer_css.apply_async", set_called)
         assert not self.orga1.settings.presale_css_checksum
         doc = self.get_doc('/control/organizer/%s/edit' % (self.orga1.slug,))
         doc.select("[name=settings-primary_color]")[0]['value'] = "#33c33c"
@@ -99,7 +87,6 @@ class OrganizerTest(SoupTest):
             assert doc.select("[name=settings-primary_color]")[0]['value'] == "#33c33c"
         self.orga1.settings.flush()
         assert self.orga1.settings.primary_color == "#33c33c"
-        assert called
 
     def test_email_settings(self):
         doc = self.get_doc('/control/organizer/%s/settings/email' % self.orga1.slug)
@@ -173,6 +160,22 @@ class OrganizerTest(SoupTest):
         assert "mail_from" not in self.orga1.settings._cache()
 
     @staticmethod
+    def _fake_dmarc_record(hostname):
+        return {
+            'test.pretix.dev': 'v=DMARC1; p=quarantine; sp=none; adkim=r; aspf=r;',
+            'bad.pretix.dev': None,
+            'none.pretix.dev': None,
+        }[hostname]
+
+    @staticmethod
+    def _fake_cname_record(hostname):
+        return {
+            'pretix._domainkey.test.pretix.dev': 'test-pretix-dev.dkim.pretix.eu.',
+            'pretix._domainkey.bad.pretix.dev': 'example.org',
+            'pretix._domainkey.none.pretix.dev': None,
+        }[hostname]
+
+    @staticmethod
     def _fake_spf_record(hostname):
         return {
             'test.pretix.dev': 'v=spf1 a mx include:level2.pretix.dev ~all',
@@ -185,9 +188,17 @@ class OrganizerTest(SoupTest):
             'spftest.pretix.dev': None,
         }[hostname]
 
-    @override_settings(MAIL_CUSTOM_SENDER_VERIFICATION_REQUIRED=False, MAIL_CUSTOM_SENDER_SPF_STRING="include:spftest.pretix.dev include:test2.pretix.dev")
-    def test_email_setup_no_verification_spf_success(self):
+    @override_settings(
+        MAIL_CUSTOM_SENDER_VERIFICATION_REQUIRED=False,
+        MAIL_CUSTOM_SENDER_SPF_STRING="include:spftest.pretix.dev include:test2.pretix.dev",
+        MAIL_CUSTOM_SENDER_DKIM_SELECTOR="pretix",
+        MAIL_CUSTOM_SENDER_DKIM_CNAME="dkim.pretix.eu.",
+        MAIL_CUSTOM_SENDER_DMARC_REQUIRED=True,
+    )
+    def test_email_setup_no_verification_spf_dmarc_dkim_success(self):
         self.monkeypatch.setattr("pretix.control.views.mailsetup.get_spf_record", OrganizerTest._fake_spf_record)
+        self.monkeypatch.setattr("pretix.control.views.mailsetup.get_cname_record", OrganizerTest._fake_cname_record)
+        self.monkeypatch.setattr("pretix.control.views.mailsetup.get_dmarc_record", OrganizerTest._fake_dmarc_record)
         doc = self.post_doc(
             '/control/organizer/%s/settings/email/setup' % self.orga1.slug,
             {
@@ -218,6 +229,43 @@ class OrganizerTest(SoupTest):
             {
                 'mode': 'simple',
                 'simple-mail_from': 'test@test.pretix.dev',
+            },
+            follow=True
+        )
+        assert doc.select('.alert-danger')
+        self.orga1.settings.flush()
+        # not yet saved
+        assert "mail_from" not in self.orga1.settings._cache()
+
+    @override_settings(MAIL_CUSTOM_SENDER_VERIFICATION_REQUIRED=False,
+                       MAIL_CUSTOM_SENDER_DKIM_SELECTOR="pretix",
+                       MAIL_CUSTOM_SENDER_DKIM_CNAME="dkim.pretix.eu.",
+                       MAIL_CUSTOM_SENDER_SPF_STRING="")
+    def test_email_setup_no_verification_dkim_warning(self):
+        self.monkeypatch.setattr("pretix.control.views.mailsetup.get_cname_record", OrganizerTest._fake_cname_record)
+        doc = self.post_doc(
+            '/control/organizer/%s/settings/email/setup' % self.orga1.slug,
+            {
+                'mode': 'simple',
+                'simple-mail_from': 'test@bad.pretix.dev',
+            },
+            follow=True
+        )
+        assert doc.select('.alert-danger')
+        self.orga1.settings.flush()
+        # not yet saved
+        assert "mail_from" not in self.orga1.settings._cache()
+
+    @override_settings(MAIL_CUSTOM_SENDER_VERIFICATION_REQUIRED=False,
+                       MAIL_CUSTOM_SENDER_DMARC_REQUIRED=True,
+                       MAIL_CUSTOM_SENDER_SPF_STRING="")
+    def test_email_setup_no_verification_dmarc_warning(self):
+        self.monkeypatch.setattr("pretix.control.views.mailsetup.get_dmarc_record", OrganizerTest._fake_dmarc_record)
+        doc = self.post_doc(
+            '/control/organizer/%s/settings/email/setup' % self.orga1.slug,
+            {
+                'mode': 'simple',
+                'simple-mail_from': 'test@bad.pretix.dev',
             },
             follow=True
         )
@@ -331,3 +379,241 @@ class OrganizerTest(SoupTest):
             p = self.orga1.sso_providers.get()
             assert p.configuration['scope'] == 'openid email'
             assert p.configuration['provider_config'] == conf
+
+    def test_sales_channel_add_edit_remove(self):
+        doc = self.post_doc(
+            '/control/organizer/%s/channel/add?type=api' % self.orga1.slug,
+            {
+                'label_0': 'API 1',
+                'identifier': 'custom',
+            },
+            follow=True
+        )
+        assert not doc.select('.has-error, .alert-danger')
+        with scopes_disabled():
+            assert str(self.orga1.sales_channels.get(identifier="api.custom").label) == "API 1"
+
+        doc = self.post_doc(
+            '/control/organizer/%s/channel/api.custom/edit' % self.orga1.slug,
+            {
+                'label_0': 'API 2',
+            },
+            follow=True
+        )
+        assert not doc.select('.has-error, .alert-danger')
+        with scopes_disabled():
+            assert str(self.orga1.sales_channels.get(identifier="api.custom").label) == "API 2"
+
+        doc = self.post_doc(
+            '/control/organizer/%s/channel/api.custom/delete' % self.orga1.slug,
+            {},
+            follow=True
+        )
+        assert not doc.select('.has-error, .alert-danger')
+        with scopes_disabled():
+            assert not self.orga1.sales_channels.filter(identifier="api.custom").exists()
+
+    def test_sales_channel_add_invalid_type(self):
+        doc = self.post_doc(
+            '/control/organizer/%s/channel/add?type=web' % self.orga1.slug,
+            {
+                'label_0': 'API 1',
+                'identifier': 'custom',
+            },
+            follow=True
+        )
+        assert doc.select('.large-link-group')
+
+    def test_sales_channel_delete_invalid(self):
+        doc = self.post_doc(
+            '/control/organizer/%s/channel/web/delete' % self.orga1.slug,
+            {
+                'label_0': 'API 1',
+                'identifier': 'custom',
+            },
+            follow=True
+        )
+        assert doc.select('.alert-danger')
+        with scopes_disabled():
+            assert self.orga1.sales_channels.filter(identifier="web").exists()
+
+    def test_plugins(self):
+        doc = self.get_doc('/control/organizer/%s/settings/plugins' % self.orga1.slug)
+        self.assertIn("Stripe", doc.select(".form-plugins")[0].text)
+        self.assertIn("Enable", doc.select("[name=\"plugin:tests.testdummyorga\"]")[0].text)
+        self.assertIn("Enable", doc.select("[name=\"plugin:tests.testdummyhybrid\"]")[0].text)
+        assert not doc.select("[name=\"plugin:pretix.plugins.stripe\"]")
+        assert not doc.select("[name=\"plugin:tests.testdummy\"]")
+        assert not doc.select("[name=\"plugin:tests.testdummyrestricted\"]")
+        assert not doc.select("[name=\"plugin:tests.testdummyorgarestricted\"]")
+        assert not doc.select("[name=\"plugin:tests.testdummyhidden\"]")
+
+        doc = self.post_doc('/control/organizer/%s/settings/plugins' % self.orga1.slug,
+                            {'plugin:tests.testdummyorga': 'enable'})
+        self.assertIn("Disable", doc.select("[name=\"plugin:tests.testdummyorga\"]")[0].text)
+
+        doc = self.post_doc('/control/organizer/%s/settings/plugins' % self.orga1.slug,
+                            {'plugin:tests.testdummyhybrid': 'enable'})
+        self.assertIn("Events with plugin testdummyhybrid", doc.select("h1")[0].text)
+        self.orga1.refresh_from_db()
+        assert "tests.testdummyhybrid" in self.orga1.get_plugins()
+
+        doc = self.post_doc('/control/organizer/%s/settings/plugins' % self.orga1.slug,
+                            {'plugin:tests.testdummyhybrid': 'disable'})
+        self.assertIn("Enable", doc.select("[name=\"plugin:tests.testdummyhybrid\"]")[0].text)
+
+        self.post_doc('/control/organizer/%s/settings/plugins' % self.orga1.slug,
+                      {'plugin:tests.testdummy': 'enable'})
+        self.orga1.refresh_from_db()
+        assert "tests.testdummy" not in self.orga1.get_plugins()
+
+        self.post_doc('/control/organizer/%s/settings/plugins' % self.orga1.slug,
+                      {'plugin:tests.testdummyorgarestricted': 'enable'})
+        self.orga1.refresh_from_db()
+        assert "testdummyorgarestricted" not in self.orga1.get_plugins()
+
+        self.orga1.settings.allowed_restricted_plugins = ["tests.testdummyorgarestricted"]
+
+        self.post_doc('/control/organizer/%s/settings/plugins' % self.orga1.slug,
+                      {'plugin:tests.testdummyorgarestricted': 'enable'})
+        self.orga1.refresh_from_db()
+        assert "tests.testdummyorgarestricted" in self.orga1.get_plugins()
+
+    def test_plugin_events(self):
+        resp = self.client.get('/control/organizer/%s/settings/plugins/tests.testdummyorga/events' % self.orga1.slug)
+        assert resp.status_code == 404
+        assert b"only be enabled for the entire organizer account" in resp.content
+
+        resp = self.client.get(
+            '/control/organizer/%s/settings/plugins/tests.testdummyrestricted/events' % self.orga1.slug)
+        assert resp.status_code == 404
+        assert b"currently not allowed" in resp.content
+
+        resp = self.client.get('/control/organizer/%s/settings/plugins/tests.testdummyhybrid/events' % self.orga1.slug)
+        assert resp.status_code == 404
+        assert b"currently not active on the organizer" in resp.content
+
+        resp = self.client.get('/control/organizer/%s/settings/plugins/pretix.plugins.stripe/events' % self.orga1.slug)
+        assert resp.status_code == 200
+
+        resp = self.client.post('/control/organizer/%s/settings/plugins/pretix.plugins.stripe/events' % self.orga1.slug,
+                                {'events': self.event1.pk})
+        assert resp.status_code == 302
+        self.event1.refresh_from_db()
+        assert 'pretix.plugins.stripe' in self.event1.get_plugins()
+        assert 'pretix.plugins.banktransfer' in self.event1.get_plugins()
+
+        resp = self.client.post('/control/organizer/%s/settings/plugins/pretix.plugins.banktransfer/events' % self.orga1.slug,
+                                {})
+        assert resp.status_code == 302
+        self.event1.refresh_from_db()
+        assert 'pretix.plugins.banktransfer' not in self.event1.get_plugins()
+        assert 'pretix.plugins.stripe' in self.event1.get_plugins()
+
+    def test_outgoing_mails_list_and_detail(self):
+        m1 = OutgoingMail.objects.create(
+            organizer=self.orga1,
+            to=['rightrecipient@example.com'],
+            subject='Test',
+            body_plain='Test',
+            sender='sender@example.com',
+            headers={},
+        )
+        m2 = OutgoingMail.objects.create(
+            organizer=self.orga2,
+            to=['wrongrecipient@example.com'],
+            subject='Test',
+            body_plain='Test',
+            sender='sender@example.com',
+            headers={},
+        )
+        resp = self.client.get('/control/organizer/%s/outgoingmails' % self.orga1.slug)
+        assert resp.status_code == 200
+        assert b"rightrecipient@example.com" in resp.content
+        assert b"wrongrecipient@example.com" not in resp.content
+
+        resp = self.client.get('/control/organizer/%s/outgoingmails?status=queued' % self.orga1.slug)
+        assert resp.status_code == 200
+        assert b"rightrecipient@example.com" in resp.content
+        resp = self.client.get('/control/organizer/%s/outgoingmails?status=sent' % self.orga1.slug)
+        assert resp.status_code == 200
+        assert b"rightrecipient@example.com" not in resp.content
+
+        if 'postgresql' in settings.DATABASES['default']['ENGINE']:
+            resp = self.client.get('/control/organizer/%s/outgoingmails?query=RIGHTrecipient@example.com' % self.orga1.slug)
+            assert resp.status_code == 200
+            assert b"rightrecipient@example.com" in resp.content
+            resp = self.client.get('/control/organizer/%s/outgoingmails?query=wrongrecipient@example.com' % self.orga1.slug)
+            assert resp.status_code == 200
+            assert b"rightrecipient@example.com" not in resp.content
+
+        resp = self.client.get('/control/organizer/%s/outgoingmail/%d/' % (self.orga1.slug, m1.pk))
+        assert resp.status_code == 200
+        assert b"rightrecipient@example.com" in resp.content
+
+        resp = self.client.get('/control/organizer/%s/outgoingmail/%d/' % (self.orga1.slug, m2.pk))
+        assert resp.status_code == 404
+
+    def test_outgoing_mails_retry(self):
+        m1 = OutgoingMail.objects.create(
+            organizer=self.orga1,
+            status=OutgoingMail.STATUS_SENT,
+            to=['rightrecipient@example.com'],
+            subject='Test',
+            body_plain='Test',
+            sender='sender@example.com',
+            headers={},
+        )
+        m2 = OutgoingMail.objects.create(
+            organizer=self.orga1,
+            status=OutgoingMail.STATUS_FAILED,
+            to=['rightrecipient@example.com'],
+            subject='Test',
+            body_plain='Test',
+            sender='sender@example.com',
+            headers={},
+        )
+        resp = self.client.post(
+            '/control/organizer/%s/outgoingmail/bulk_action' % self.orga1.slug,
+            data={
+                "action": "retry",
+                "outgoingmail": [m1.pk, m2.pk]
+            }
+        )
+        assert resp.status_code == 302
+        m1.refresh_from_db()
+        m2.refresh_from_db()
+        assert m1.status == OutgoingMail.STATUS_SENT
+        assert m2.status in (OutgoingMail.STATUS_SENT, OutgoingMail.STATUS_QUEUED)
+
+    def test_outgoing_mails_abort(self):
+        m1 = OutgoingMail.objects.create(
+            organizer=self.orga1,
+            status=OutgoingMail.STATUS_SENT,
+            to=['rightrecipient@example.com'],
+            subject='Test',
+            body_plain='Test',
+            sender='sender@example.com',
+            headers={},
+        )
+        m2 = OutgoingMail.objects.create(
+            organizer=self.orga1,
+            status=OutgoingMail.STATUS_QUEUED,
+            to=['rightrecipient@example.com'],
+            subject='Test',
+            body_plain='Test',
+            sender='sender@example.com',
+            headers={},
+        )
+        resp = self.client.post(
+            '/control/organizer/%s/outgoingmail/bulk_action' % self.orga1.slug,
+            data={
+                "action": "abort",
+                "__ALL": "on",
+            }
+        )
+        assert resp.status_code == 302
+        m1.refresh_from_db()
+        m2.refresh_from_db()
+        assert m1.status == OutgoingMail.STATUS_SENT
+        assert m2.status == OutgoingMail.STATUS_ABORTED

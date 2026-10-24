@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -26,9 +26,10 @@ from itertools import zip_longest
 
 import django_redis
 from django.conf import settings
-from django.db import models
+from django.db import connection, models
 from django.db.models import (
     Case, Count, F, Func, Max, OuterRef, Q, Subquery, Sum, Value, When,
+    prefetch_related_objects,
 )
 from django.utils.timezone import now
 
@@ -63,7 +64,8 @@ class QuotaAvailability:
     * count_cart (dict mapping quotas to ints)
     """
 
-    def __init__(self, count_waitinglist=True, ignore_closed=False, full_results=False, early_out=True):
+    def __init__(self, count_waitinglist=True, ignore_closed=False, full_results=False, early_out=True,
+                 allow_repeatable_read=False):
         """
         Initialize a new quota availability calculator
 
@@ -85,15 +87,18 @@ class QuotaAvailability:
                           keep the database-level quota cache up to date so backend overviews render quickly. If you
                           do not care about keeping the cache up to date, you can set this to ``False`` for further
                           performance improvements.
+
+        :param allow_repeatable_read: Allow to run this even in REPEATABLE READ mode, generally not advised.
         """
         self._queue = []
         self._count_waitinglist = count_waitinglist
         self._ignore_closed = ignore_closed
         self._full_results = full_results
-        self._item_to_quotas = defaultdict(list)
-        self._var_to_quotas = defaultdict(list)
+        self._item_to_quotas = defaultdict(set)
+        self._var_to_quotas = defaultdict(set)
         self._early_out = early_out
         self._quota_objects = {}
+        self._allow_repeatable_read = allow_repeatable_read
         self.results = {}
         self.count_paid_orders = defaultdict(int)
         self.count_pending_orders = defaultdict(int)
@@ -118,6 +123,10 @@ class QuotaAvailability:
         Compute the queued quotas. If ``allow_cache`` is set, results may also be taken from a cache that might
         be a few minutes outdated. In this case, you may not rely on the results in the ``count_*`` properties.
         """
+        if not self._allow_repeatable_read and getattr(connection, "tx_in_repeatable_read", False):
+            raise ValueError("You cannot compute quotas in REPEATABLE READ mode unless you explicitly opted in to "
+                             "do so.")
+
         now_dt = now_dt or now()
         quota_ids_set = {q.id for q in self._queue}
         if not quota_ids_set:
@@ -184,7 +193,7 @@ class QuotaAvailability:
         lock_name = '_'.join([str(p) for p in sorted([q.pk for q in quotas])])
         if rc.exists(f'quotas:availabilitycachewrite:{lock_name}{self._cache_key_suffix}'):
             return
-        rc.setex(f'quotas:availabilitycachewrite:{lock_name}{self._cache_key_suffix}', '1', 10)
+        rc.set(f'quotas:availabilitycachewrite:{lock_name}{self._cache_key_suffix}', '1', ex=10)
 
         update = defaultdict(list)
         for q in quotas:
@@ -243,13 +252,16 @@ class QuotaAvailability:
             quota_id__in=[q.pk for q in quotas]
         ).values('quota_id', 'item_id')
         for m in q_items:
-            self._item_to_quotas[m['item_id']].append(self._quota_objects[m['quota_id']])
+            self._item_to_quotas[m['item_id']].add(self._quota_objects[m['quota_id']])
 
         q_vars = Quota.variations.through.objects.filter(
             quota_id__in=[q.pk for q in quotas]
-        ).values('quota_id', 'itemvariation_id')
+        ).values('quota_id', 'itemvariation_id', 'itemvariation__item_id')
         for m in q_vars:
-            self._var_to_quotas[m['itemvariation_id']].append(self._quota_objects[m['quota_id']])
+            self._var_to_quotas[m['itemvariation_id']].add(self._quota_objects[m['quota_id']])
+            # We can't be 100% certain that a quota, when it is connected to a variation, is also always connected to
+            # the parent item, so we double-check here just to be sure.
+            self._item_to_quotas[m['itemvariation__item_id']].add(self._quota_objects[m['quota_id']])
 
         self._compute_orders(quotas, q_items, q_vars, size_left)
 
@@ -378,7 +390,10 @@ class QuotaAvailability:
             Q(
                 Q(
                     Q(variation_id__isnull=True) &
-                    Q(item_id__in={i['item_id'] for i in q_items if i['quota_id'] in quota_ids})
+                    Q(item_id__in=(
+                        {i['item_id'] for i in q_items if i['quota_id'] in quota_ids} |
+                        {i['itemvariation__item_id'] for i in q_vars if i['quota_id'] in quota_ids}
+                    ))
                 ) | Q(
                     variation_id__in={i['itemvariation_id'] for i in q_vars if i['quota_id'] in quota_ids}
                 ) | Q(
@@ -440,6 +455,12 @@ class QuotaAvailability:
                         self.results[q] = Quota.AVAILABILITY_RESERVED, 0
 
     def _compute_waitinglist(self, quotas, q_items, q_vars, size_left):
+        prefetch_related_objects(quotas, "event", "event__organizer")
+        quotas = [
+            q for q in quotas
+            if not q.event.settings.waiting_list_auto_disable or q.event.settings.waiting_list_auto_disable.datetime(q.subevent or q.event) > now()
+        ]
+
         events = {q.event_id for q in quotas}
         subevents = {q.subevent_id for q in quotas}
         quota_ids = {q.pk for q in quotas}

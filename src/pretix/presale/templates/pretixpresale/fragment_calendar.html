@@ -1,17 +1,15 @@
+{% load html_time %}
 {% load i18n %}
 {% load date_fast %}
+{% load calendarhead %}
 <div class="table-responsive">
-    <table class="table table-calendar">
+    <table class="table table-calendar" role="grid"{% if any_events is False %} aria-hidden="true"{% endif %}>
         <caption class="sr-only">{% trans "Calendar" %}</caption>
         <thead>
         <tr>
-            <th><span aria-hidden="true">{{ weeks.1.0.date|date_fast:"D" }}</span><span class="sr-only">{{ weeks.1.0.date|date_fast:"l" }}</span></th>
-            <th><span aria-hidden="true">{{ weeks.1.1.date|date_fast:"D" }}</span><span class="sr-only">{{ weeks.1.1.date|date_fast:"l" }}</span></th>
-            <th><span aria-hidden="true">{{ weeks.1.2.date|date_fast:"D" }}</span><span class="sr-only">{{ weeks.1.2.date|date_fast:"l" }}</span></th>
-            <th><span aria-hidden="true">{{ weeks.1.3.date|date_fast:"D" }}</span><span class="sr-only">{{ weeks.1.3.date|date_fast:"l" }}</span></th>
-            <th><span aria-hidden="true">{{ weeks.1.4.date|date_fast:"D" }}</span><span class="sr-only">{{ weeks.1.4.date|date_fast:"l" }}</span></th>
-            <th><span aria-hidden="true">{{ weeks.1.5.date|date_fast:"D" }}</span><span class="sr-only">{{ weeks.1.5.date|date_fast:"l" }}</span></th>
-            <th><span aria-hidden="true">{{ weeks.1.6.date|date_fast:"D" }}</span><span class="sr-only">{{ weeks.1.6.date|date_fast:"l" }}</span></th>
+            {% for d in weeks|iter_weekdays %}
+                <th><span aria-hidden="true" class="text-muted">{{ d|date_fast:"D" }}</span><span class="sr-only">{{ d|date_fast:"l" }}</span></th>
+            {% endfor %}
         </tr>
         </thead>
         <tbody>
@@ -21,14 +19,32 @@
                     {% if day %}
                         <td class="day {% if day.events %}has-events{% else %}no-events{% endif %}"
                             data-date="{{ day.date|date_fast:"SHORT_DATE_FORMAT" }}">
-                            <p><time datetime="{{ day.date|date_fast:"Y-m-d" }}">{{ day.day }}</time></p>
+                            <p>
+                            {% if day.events %}
+                                <a href="#selected-day" class="day-label event hidden-sm hidden-md hidden-lg" aria-describedby="nr-of-events-{{ day.date|date_fast:"Y-m-d" }}">
+                                    <b aria-hidden="true">{{ day.day }}</b>
+                                    <time datetime="{{ day.date|date_fast:"Y-m-d" }}" class="sr-only">
+                                        {{ day.date|date_fast:"SHORT_DATE_FORMAT" }}
+                                    </time>
+                                    <span class="sr-only" id="nr-of-events-{{ day.date|date_fast:"Y-m-d" }}">{% blocktrans trimmed count count=day.events|length %}
+                                        {{ count }} event
+                                    {% plural %}
+                                        {{ count }} events
+                                    {% endblocktrans %}</span>
+                                </a>
+                                <time datetime="{{ day.date|date_fast:"Y-m-d" }}" class="hidden-xs">{{ day.day }}</time>
+                            {% else %}
+                                <time datetime="{{ day.date|date_fast:"Y-m-d" }}" class="day-label">{{ day.day }}</time>
+                                <span class="sr-only">{% trans "No events" %}</span>
+                            {% endif %}
+                            </p>
                             <ul class="events">
                                 {% for event in day.events %}
                                     <li><a class="event {% if event.continued %}continued{% endif %} {% spaceless %}
     {% if event.event.presale_is_running and show_avail %}
         {% if event.event.best_availability_state == 100 %}
             available {% if event.event.best_availability_is_low %} low {% endif %}
-        {% elif event.event.settings.waiting_list_enabled and event.event.best_availability_state >= 0 %}
+        {% elif event.event.waiting_list_active and event.event.best_availability_state >= 0 %}
             waitinglist
         {% elif event.event.best_availability_state == 20 %}
             reserved
@@ -39,7 +55,7 @@
         running
     {% elif event.event.presale_has_ended %}
         over
-    {% elif event.event.settings.presale_start_show_date and event.event.presale_start %}
+    {% elif event.event.settings.presale_start_show_date and event.event.effective_presale_start %}
         soon
     {% else %}
         soon
@@ -77,7 +93,7 @@
                                                                 <span class="fa fa-ticket" aria-hidden="true"></span> {% trans "Book now" %}
                                                             {% endif %}
                                                         {% endif %}
-                                                    {% elif event.event.settings.waiting_list_enabled and event.event.best_availability_state >= 0 %}
+                                                    {% elif event.event.waiting_list_active and event.event.best_availability_state >= 0 %}
                                                         <span class="fa fa-ticket" aria-hidden="true"></span> {% trans "Waiting list" %}
                                                     {% elif event.event.best_availability_state == 20 %}
                                                         {% trans "Reserved" %}
@@ -92,13 +108,12 @@
                                                     <span class="fa fa-ticket" aria-hidden="true"></span> {% trans "Book now" %}
                                                 {% elif event.event.presale_has_ended %}
                                                     {% trans "Sale over" %}
-                                                {% elif event.event.settings.presale_start_show_date and event.event.presale_start %}
+                                                {% elif event.event.settings.presale_start_show_date and event.event.effective_presale_start %}
                                                     <span class="fa fa-ticket" aria-hidden="true"></span>
-                                                    {% with date_human=event.event.presale_start|date_fast:"SHORT_DATE_FORMAT" date_iso=event.event.presale_start|date_fast:"c"  %}
-                                                    {% blocktrans with start_date="<time datetime='"|add:date_iso|add:"'>"|add:date_human|add:"</time>"|safe %}
+                                                    {% html_time event.event.effective_presale_start "SHORT_DATE_FORMAT" as start_date %}
+                                                    {% blocktrans with start_date=start_date %}
                                                         from {{ start_date }}
                                                     {% endblocktrans %}
-                                                    {% endwith %}
                                                 {% else %}
                                                     <span class="fa fa-ticket" aria-hidden="true"></span> {% trans "Soon" %}
                                                 {% endif %}
@@ -114,9 +129,7 @@
                 {% endfor %}
             </tr>
         {% endfor %}
-        <tr class="selected-day hidden">
-            <td colspan="7"></td>
-        </tr>
         </tbody>
     </table>
+    <div id="selected-day" aria-live="polite" class="table-calendar hidden-sm hidden-md hidden-lg"></div>
 </div>

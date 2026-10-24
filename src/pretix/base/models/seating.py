@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -22,7 +22,6 @@
 import json
 from collections import namedtuple
 
-import jsonschema
 from django.contrib.staticfiles import finders
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -38,6 +37,8 @@ from pretix.base.models import Event, Item, LoggedModel, Organizer, SubEvent
 @deconstructible
 class SeatingPlanLayoutValidator:
     def __call__(self, value):
+        import jsonschema
+
         if not isinstance(value, dict):
             try:
                 val = json.loads(value)
@@ -52,6 +53,30 @@ class SeatingPlanLayoutValidator:
         except jsonschema.ValidationError as e:
             e = str(e).replace('%', '%%')
             raise ValidationError(_('Your layout file is not a valid seating plan. Error message: {}').format(e))
+
+        try:
+            seat_guids = set()
+            for z in val["zones"]:
+                for r in z["rows"]:
+                    for s in r["seats"]:
+                        if not s.get("seat_guid"):
+                            raise ValidationError(
+                                _("Seat with zone {zone}, row {row}, and number {number} has no seat ID.").format(
+                                    zone=z["name"],
+                                    row=r["row_number"],
+                                    number=s["seat_number"],
+                                )
+                            )
+                        elif s["seat_guid"] in seat_guids:
+                            raise ValidationError(
+                                _("Multiple seats have the same ID: {id}").format(
+                                    id=s["seat_guid"],
+                                )
+                            )
+
+                        seat_guids.add(s["seat_guid"])
+        except ValidationError as e:
+            raise ValidationError(_('Your layout file is not a valid seating plan. Error message: {}').format(", ".join(e.message for e in e.error_list)))
 
 
 class SeatingPlan(LoggedModel):
@@ -93,7 +118,10 @@ class SeatingPlan(LoggedModel):
         for zi, z in enumerate(self.layout_data['zones']):
             zpos = (z['position']['x'], z['position']['y'])
             for ri, r in enumerate(z['rows']):
-                rpos = (zpos[0] + r['position']['x'], zpos[1] + r['position']['y'])
+                rpos = (
+                    zpos[0] + r.get('position', {}).get('x', 0),
+                    zpos[1] + r.get('position', {}).get('y', 0),
+                )
                 row_label = None
                 if r.get('row_label'):
                     row_label = r['row_label'].replace("%s", r.get('row_number', str(ri)))
@@ -122,8 +150,8 @@ class SeatingPlan(LoggedModel):
                         zone=z['name'],
                         category=s['category'],
                         sorting_rank=rank,
-                        x=rpos[0] + s['position']['x'],
-                        y=rpos[1] + s['position']['y'],
+                        x=rpos[0] + s.get('position', {}).get('x', 0),
+                        y=rpos[1] + s.get('position', {}).get('y', 0),
                     )
 
 
@@ -185,7 +213,7 @@ class Seat(models.Model):
 
     @classmethod
     def annotated(cls, qs, event_id, subevent, ignore_voucher_id=None, minimal_distance=0,
-                  ignore_order_id=None, ignore_cart_id=None, distance_only_within_row=False):
+                  ignore_order_id=None, ignore_cart_id=None, distance_only_within_row=False, annotate_ids=False):
         from . import CartPosition, Order, OrderPosition, Voucher
 
         vqs = Voucher.objects.filter(
@@ -214,17 +242,24 @@ class Seat(models.Model):
         )
         if ignore_cart_id:
             cqs = cqs.exclude(cart_id=ignore_cart_id)
-        qs_annotated = qs.annotate(
-            has_order=Exists(
-                opqs
-            ),
-            has_cart=Exists(
-                cqs
-            ),
-            has_voucher=Exists(
-                vqs
+        if annotate_ids:
+            qs_annotated = qs.annotate(
+                orderposition_id=Subquery(opqs.values('id')),
+                cartposition_id=Subquery(cqs.values('id')),
+                voucher_id=Subquery(vqs.values('id')),
             )
-        )
+        else:
+            qs_annotated = qs.annotate(
+                has_order=Exists(
+                    opqs
+                ),
+                has_cart=Exists(
+                    cqs
+                ),
+                has_voucher=Exists(
+                    vqs
+                )
+            )
 
         if minimal_distance > 0:
             # TODO: Is there a more performant implementation on PostgreSQL using
@@ -235,7 +270,11 @@ class Seat(models.Model):
                     Power(F('y') - OuterRef('y'), Value(2), output_field=models.FloatField())
                 )
             ).filter(
-                Q(has_order=True) | Q(has_cart=True) | Q(has_voucher=True),
+                (
+                    (Q(orderposition_id__isnull=False) | Q(cartposition_id__isnull=False) | Q(voucher_id__isnull=False))
+                    if annotate_ids else
+                    (Q(has_order=True) | Q(has_cart=True) | Q(has_voucher=True))
+                ),
                 distance__lt=minimal_distance ** 2
             )
             if distance_only_within_row:
@@ -243,11 +282,15 @@ class Seat(models.Model):
             qs_annotated = qs_annotated.annotate(has_closeby_taken=Exists(sq_closeby))
         return qs_annotated
 
-    def is_available(self, ignore_cart=None, ignore_orderpos=None, ignore_voucher_id=None, sales_channel='web',
-                     ignore_distancing=False, distance_ignore_cart_id=None):
+    def is_available(self, ignore_cart=None, ignore_orderpos=None, ignore_voucher_id=None,
+                     sales_channel='web',
+                     ignore_distancing=False, distance_ignore_cart_id=None, always_allow_blocked=False):
         from .orders import Order
+        from .organizer import SalesChannel
 
-        if self.blocked and sales_channel not in self.event.settings.seating_allow_blocked_seats_for_channel:
+        if isinstance(sales_channel, SalesChannel):
+            sales_channel = sales_channel.identifier
+        if not always_allow_blocked and self.blocked and sales_channel not in self.event.settings.seating_allow_blocked_seats_for_channel:
             return False
         opqs = self.orderposition_set.filter(
             order__status__in=[Order.STATUS_PENDING, Order.STATUS_PAID],

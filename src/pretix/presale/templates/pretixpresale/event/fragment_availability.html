@@ -1,21 +1,40 @@
 {% load i18n %}
 {% load eventurl %}
+{% load availability %}
 
-{% if avail <= 10 %}
+{% if item.current_unavailability_reason == 'require_voucher' %}
+    <div class="col-md-2 col-sm-3 col-xs-6 availability-box unavailable">
+        <p><small><a href="#voucher">{% trans "Enter a voucher code below to buy this product." %}</a></small></p>
+    </div>
+{% elif item.current_unavailability_reason == 'hidden_if_item_available' %}
+    <div class="col-md-2 col-sm-3 col-xs-6 availability-box unavailable">
+        <p><small>{% trans "Not available yet." %}</small></p>
+    </div>
+{% elif item.current_unavailability_reason == 'available_from' or var.current_unavailability_reason == 'available_from' %}
+    <div class="col-md-2 col-sm-3 col-xs-6 availability-box unavailable">
+        <p><small>{% trans "Not available yet." %}</small></p>
+    </div>
+{% elif item.current_unavailability_reason == 'available_until' or var.current_unavailability_reason == 'available_until' %}
+    <div class="col-md-2 col-sm-3 col-xs-6 availability-box unavailable">
+        <p><small>{% trans "Not available any more." %}</small></p>
+    </div>
+{% elif avail <= 10 %}
     <div class="col-md-2 col-sm-3 col-xs-6 availability-box gone">
-        {% if price != None and not price %}
-            <strong>{% trans "FULLY BOOKED" %}</strong>
+        {# Sideburn: plugins can replace the sold-out label; upstream's markup is unchanged in the else branch. #}
+        {% sold_out_override event item var as override %}
+        {% if override %}{{ override }}{% else %}
+        {% if price or original_price %}
+            <strong>{% trans "SOLD OUT" %}</strong>
         {% else %}
-                <strong>{% trans "These tickets will be assigned by lottery" %}</strong>
+            <strong>{% trans "FULLY BOOKED" %}</strong>
         {% endif %}
         {% if allow_waitinglist and item.allow_waitinglist %}
             <br/>
-            <a href="{% eventurl event "presale:event.waitinglist" cart_namespace=cart_namespace|default_if_none:"" %}?item={{ item.pk }}{% if var %}&var={{ var.pk }}{% endif %}{% if subevent %}&subevent={{ subevent.pk }}{% endif %}">
-            <h2>
+            <a href="{% eventurl event "presale:event.waitinglist" cart_namespace=cart_namespace|default_if_none:"" %}?item={{ item.pk }}{% if var %}&var={{ var.pk }}{% endif %}{% if subevent %}&subevent={{ subevent.pk }}{% endif %}" class="btn btn-default btn-block">
                 <span class="fa fa-plus-circle" aria-hidden="true"></span>
-                {% trans "Register here" %}
-            </h2>
+                {% trans "Waiting list" %}
             </a>
+        {% endif %}
         {% endif %}
     </div>
 {% elif avail < 100 %}
@@ -25,7 +44,7 @@
         {% trans "All remaining products are reserved but might become available again." %}
         {% if allow_waitinglist and item.allow_waitinglist %}
             <br/>
-            <a href="{% eventurl event "presale:event.waitinglist" cart_namespace=cart_namespace|default_if_none:"" %}?item={{ item.pk }}{% if var %}&var={{ var.pk }}{% endif %}{% if subevent %}&subevent={{ subevent.pk }}{% endif %}">
+            <a href="{% eventurl event "presale:event.waitinglist" cart_namespace=cart_namespace|default_if_none:"" %}?item={{ item.pk }}{% if var %}&var={{ var.pk }}{% endif %}{% if subevent %}&subevent={{ subevent.pk }}{% endif %}" class="btn btn-default btn-block">
                 <span class="fa fa-plus-circle" aria-hidden="true"></span>
                 {% trans "Waiting list" %}
             </a>

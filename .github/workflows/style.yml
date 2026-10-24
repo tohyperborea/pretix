@@ -23,19 +23,19 @@ jobs:
     name: isort
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v2
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v1
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
         with:
-          python-version: 3.11
-      - uses: actions/cache@v1
+          python-version: 3.13
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
       - name: Install Dependencies
-        run: pip3 install -e ".[dev]" psycopg2-binary
+        run: pip3 install uv && uv pip install --system -e ".[dev]" psycopg2-binary
       - name: Run isort
         run: isort -c .
         working-directory: ./src
@@ -43,19 +43,19 @@ jobs:
     name: flake8
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v2
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v1
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
         with:
-          python-version: 3.11
-      - uses: actions/cache@v1
+          python-version: 3.13
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
       - name: Install Dependencies
-        run: pip3 install -e ".[dev]" psycopg2-binary
+        run: pip3 install uv && uv pip install --system -e ".[dev]" psycopg2-binary
       - name: Run flake8
         run: flake8 .
         working-directory: ./src
@@ -63,11 +63,11 @@ jobs:
     name: licenseheaders
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v2
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v1
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
         with:
-          python-version: 3.11
+          python-version: 3.13
       - name: Install Dependencies
         run: pip3 install licenseheaders
       - name: Run licenseheaders

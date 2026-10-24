@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -19,6 +19,7 @@
 # You should have received a copy of the GNU Affero General Public License along with this program.  If not, see
 # <https://www.gnu.org/licenses/>.
 #
+import warnings
 from urllib.parse import urljoin
 
 from django.conf import settings
@@ -26,6 +27,15 @@ from django.urls import reverse
 
 
 def build_absolute_uri(urlname, args=None, kwargs=None):
+    warnings.warn(
+        'Usage of build_absolute_uri is confusing since there are many functions with that name. '
+        'Replace this usage with mainreverse_absolute.',
+        DeprecationWarning
+    )
+    return mainreverse_absolute(urlname, args, kwargs)
+
+
+def mainreverse_absolute(urlname, args=None, kwargs=None):
     from pretix.multidomain import maindomain_urlconf
 
     return urljoin(settings.SITE_URL, reverse(urlname, args=args, kwargs=kwargs, urlconf=maindomain_urlconf))

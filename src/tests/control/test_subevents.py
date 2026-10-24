@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -45,8 +45,7 @@ class SubEventsTest(SoupTest):
             has_subevents=True
         )
 
-        t = Team.objects.create(organizer=self.orga1, can_create_events=True, can_change_event_settings=True,
-                                can_change_items=True)
+        t = Team.objects.create(organizer=self.orga1, all_organizer_permissions=True, all_event_permissions=True)
         t.members.add(self.user)
         t.limit_events.add(self.event1)
         self.ticket = self.event1.items.create(name='Early-bird ticket',
@@ -111,9 +110,9 @@ class SubEventsTest(SoupTest):
             assert se.checkinlist_set.count() == 1
 
     def test_modify(self):
-        doc = self.get_doc('/control/event/ccc/30c3/subevents/%d/' % self.subevent1.pk)
+        doc = self.get_doc('/control/event/ccc/30c3/subevents/%d/edit' % self.subevent1.pk)
         assert doc.select("input[name=quotas-TOTAL_FORMS]")
-        doc = self.post_doc('/control/event/ccc/30c3/subevents/%d/' % self.subevent1.pk, {
+        doc = self.post_doc('/control/event/ccc/30c3/subevents/%d/edit' % self.subevent1.pk, {
             'name_0': 'SE2',
             'active': 'on',
             'date_from_0': '2017-07-01',
@@ -176,7 +175,8 @@ class SubEventsTest(SoupTest):
                 code='FOO', event=self.event1, email='dummy@dummy.test',
                 status=Order.STATUS_PENDING,
                 datetime=now(), expires=now() + datetime.timedelta(days=10),
-                total=14, locale='en'
+                total=14, locale='en',
+                sales_channel=self.orga1.sales_channels.get(identifier="web"),
             )
             OrderPosition.objects.create(
                 order=o,
@@ -230,13 +230,21 @@ class SubEventsTest(SoupTest):
             'rel_presale_start_0': 'unset',
             'rel_presale_start_1': '',
             'rel_presale_start_2': '1',
-            'rel_presale_start_3': 'date_from',
+            'rel_presale_start_3': 'event__date_from',
             'rel_presale_start_4': '',
+            'rel_presale_start_5': '',
+            'rel_presale_start_6': 'event__date_from',
+            'rel_presale_start_7': 'before',
+            'rel_presale_start_8': 'before',
             'rel_presale_end_1': '',
             'rel_presale_end_0': 'relative',
             'rel_presale_end_2': '1',
-            'rel_presale_end_3': 'date_from',
+            'rel_presale_end_3': 'event__date_from',
             'rel_presale_end_4': '13:29:31',
+            'rel_presale_end_5': '',
+            'rel_presale_end_6': 'event__date_from',
+            'rel_presale_end_7': 'before',
+            'rel_presale_end_8': 'before',
             'quotas-TOTAL_FORMS': '1',
             'quotas-INITIAL_FORMS': '0',
             'quotas-MIN_NUM_FORMS': '0',
@@ -320,13 +328,21 @@ class SubEventsTest(SoupTest):
             'rel_presale_start_0': 'unset',
             'rel_presale_start_1': '',
             'rel_presale_start_2': '1',
-            'rel_presale_start_3': 'date_from',
+            'rel_presale_start_3': 'event__date_from',
             'rel_presale_start_4': '',
+            'rel_presale_start_5': '',
+            'rel_presale_start_6': 'event__date_from',
+            'rel_presale_start_7': 'before',
+            'rel_presale_start_8': 'before',
             'rel_presale_end_1': '',
             'rel_presale_end_0': 'relative',
             'rel_presale_end_2': '1',
-            'rel_presale_end_3': 'date_from',
+            'rel_presale_end_3': 'event__date_from',
             'rel_presale_end_4': '13:29:31',
+            'rel_presale_end_5': '',
+            'rel_presale_end_6': 'event__date_from',
+            'rel_presale_end_7': 'before',
+            'rel_presale_end_8': 'before',
             'quotas-TOTAL_FORMS': '1',
             'quotas-INITIAL_FORMS': '0',
             'quotas-MIN_NUM_FORMS': '1',
@@ -387,13 +403,21 @@ class SubEventsTest(SoupTest):
             'rel_presale_start_0': 'unset',
             'rel_presale_start_1': '',
             'rel_presale_start_2': '1',
-            'rel_presale_start_3': 'date_from',
+            'rel_presale_start_3': 'event__date_from',
             'rel_presale_start_4': '',
+            'rel_presale_start_5': '',
+            'rel_presale_start_6': 'event__date_from',
+            'rel_presale_start_7': 'before',
+            'rel_presale_start_8': 'before',
             'rel_presale_end_1': '',
             'rel_presale_end_0': 'relative',
             'rel_presale_end_2': '1',
-            'rel_presale_end_3': 'date_from',
+            'rel_presale_end_3': 'event__date_from',
             'rel_presale_end_4': '13:29:31',
+            'rel_presale_end_5': '',
+            'rel_presale_end_6': 'event__date_from',
+            'rel_presale_end_7': 'before',
+            'rel_presale_end_8': 'before',
             'quotas-TOTAL_FORMS': '1',
             'quotas-INITIAL_FORMS': '0',
             'quotas-MIN_NUM_FORMS': '0',
@@ -455,13 +479,21 @@ class SubEventsTest(SoupTest):
             'rel_presale_start_0': 'unset',
             'rel_presale_start_1': '',
             'rel_presale_start_2': '1',
-            'rel_presale_start_3': 'date_from',
+            'rel_presale_start_3': 'event__date_from',
             'rel_presale_start_4': '',
+            'rel_presale_start_5': '',
+            'rel_presale_start_6': 'event__date_from',
+            'rel_presale_start_7': 'before',
+            'rel_presale_start_8': 'before',
             'rel_presale_end_1': '',
             'rel_presale_end_0': 'relative',
             'rel_presale_end_2': '1',
-            'rel_presale_end_3': 'date_from',
+            'rel_presale_end_3': 'event__date_from',
             'rel_presale_end_4': '02:30:00',
+            'rel_presale_end_5': '',
+            'rel_presale_end_6': 'event__date_from',
+            'rel_presale_end_7': 'before',
+            'rel_presale_end_8': 'before',
             'quotas-TOTAL_FORMS': '1',
             'quotas-INITIAL_FORMS': '0',
             'quotas-MIN_NUM_FORMS': '0',
@@ -535,13 +567,21 @@ class SubEventsTest(SoupTest):
             'rel_presale_start_0': 'unset',
             'rel_presale_start_1': '',
             'rel_presale_start_2': '1',
-            'rel_presale_start_3': 'date_from',
+            'rel_presale_start_3': 'event__date_from',
             'rel_presale_start_4': '',
+            'rel_presale_start_5': '',
+            'rel_presale_start_6': 'event__date_from',
+            'rel_presale_start_7': 'before',
+            'rel_presale_start_8': 'before',
             'rel_presale_end_1': '',
             'rel_presale_end_0': 'relative',
             'rel_presale_end_2': '1',
-            'rel_presale_end_3': 'date_from',
+            'rel_presale_end_3': 'event__date_from',
             'rel_presale_end_4': '13:29:31',
+            'rel_presale_end_5': '',
+            'rel_presale_end_6': 'event__date_from',
+            'rel_presale_end_7': 'before',
+            'rel_presale_end_8': 'before',
             'quotas-TOTAL_FORMS': '1',
             'quotas-INITIAL_FORMS': '0',
             'quotas-MIN_NUM_FORMS': '0',
@@ -599,13 +639,21 @@ class SubEventsTest(SoupTest):
             'rel_presale_start_0': 'unset',
             'rel_presale_start_1': '',
             'rel_presale_start_2': '1',
-            'rel_presale_start_3': 'date_from',
+            'rel_presale_start_3': 'event__date_from',
             'rel_presale_start_4': '',
+            'rel_presale_start_5': '',
+            'rel_presale_start_6': 'event__date_from',
+            'rel_presale_start_7': 'before',
+            'rel_presale_start_8': 'before',
             'rel_presale_end_0': 'unset',
             'rel_presale_end_1': '',
             'rel_presale_end_2': '1',
-            'rel_presale_end_3': 'date_from',
+            'rel_presale_end_3': 'event__date_from',
             'rel_presale_end_4': '13:29:31',
+            'rel_presale_end_5': '',
+            'rel_presale_end_6': 'event__date_from',
+            'rel_presale_end_7': 'before',
+            'rel_presale_end_8': 'before',
             'quotas-TOTAL_FORMS': '1',
             'quotas-INITIAL_FORMS': '0',
             'quotas-MIN_NUM_FORMS': '0',
@@ -663,13 +711,21 @@ class SubEventsTest(SoupTest):
             'rel_presale_start_0': 'unset',
             'rel_presale_start_1': '',
             'rel_presale_start_2': '1',
-            'rel_presale_start_3': 'date_from',
+            'rel_presale_start_3': 'event__date_from',
             'rel_presale_start_4': '',
+            'rel_presale_start_5': '',
+            'rel_presale_start_6': 'event__date_from',
+            'rel_presale_start_7': 'before',
+            'rel_presale_start_8': 'before',
             'rel_presale_end_0': 'unset',
             'rel_presale_end_1': '',
             'rel_presale_end_2': '1',
-            'rel_presale_end_3': 'date_from',
+            'rel_presale_end_3': 'event__date_from',
             'rel_presale_end_4': '13:29:31',
+            'rel_presale_end_5': '',
+            'rel_presale_end_6': 'event__date_from',
+            'rel_presale_end_7': 'before',
+            'rel_presale_end_8': 'before',
             'quotas-TOTAL_FORMS': '1',
             'quotas-INITIAL_FORMS': '0',
             'quotas-MIN_NUM_FORMS': '0',
@@ -691,6 +747,92 @@ class SubEventsTest(SoupTest):
         assert ses[1].date_from.isoformat() == "2018-04-12T11:29:31+00:00"
         assert ses[-1].date_from.isoformat() == "2019-03-28T12:29:31+00:00"
 
+    def test_create_bulk_skip_existing(self):
+        with scopes_disabled():
+            self.event1.subevents.all().delete()
+            # SubEvent ends at rrule start time
+            self.event1.subevents.create(
+                date_from=datetime.datetime(2018, 4, 4, 9, 0, tzinfo=datetime.timezone.utc),
+                date_to=datetime.datetime(2018, 4, 4, 10, 0, tzinfo=datetime.timezone.utc),
+            )
+            # SubEvent overlaps rrule start
+            self.event1.subevents.create(
+                date_from=datetime.datetime(2018, 4, 5, 9, 30, tzinfo=datetime.timezone.utc),
+                date_to=datetime.datetime(2018, 4, 5, 10, 30, tzinfo=datetime.timezone.utc),
+            )
+            # SubEvent times are same as rrule
+            self.event1.subevents.create(
+                date_from=datetime.datetime(2018, 4, 6, 10, 0, tzinfo=datetime.timezone.utc),
+                date_to=datetime.datetime(2018, 4, 6, 11, 0, tzinfo=datetime.timezone.utc),
+            )
+            # SubEvent starts at rrule end time
+            self.event1.subevents.create(
+                date_from=datetime.datetime(2018, 4, 7, 11, 0, tzinfo=datetime.timezone.utc),
+                date_to=datetime.datetime(2018, 4, 7, 12, 0, tzinfo=datetime.timezone.utc),
+            )
+            # SubEvent overlaps entire rrule time
+            self.event1.subevents.create(
+                date_from=datetime.datetime(2018, 4, 8, 9, 0, tzinfo=datetime.timezone.utc),
+                date_to=datetime.datetime(2018, 4, 8, 12, 0, tzinfo=datetime.timezone.utc),
+            )
+            # SubEvent has before rrule time and no end
+            self.event1.subevents.create(
+                date_from=datetime.datetime(2018, 4, 9, 9, 0, tzinfo=datetime.timezone.utc),
+            )
+            existing_events = list(self.event1.subevents.values_list('pk', flat=True))
+
+        self.event1.settings.timezone = 'Europe/Berlin'
+        doc = self.post_doc('/control/event/ccc/30c3/subevents/bulk_add', {
+            'rruleformset-TOTAL_FORMS': '1',
+            'rruleformset-INITIAL_FORMS': '0',
+            'rruleformset-MIN_NUM_FORMS': '0',
+            'rruleformset-MAX_NUM_FORMS': '1000',
+            'rruleformset-0-end': 'count',
+            'rruleformset-0-count': '10',
+            'rruleformset-0-interval': '1',
+            'rruleformset-0-freq': 'weekly',
+            'rruleformset-0-dtstart': '2018-04-03',
+            'rruleformset-0-weekly_byweekday': ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'],
+            'rruleformset-0-yearly_same': 'on',
+            'rruleformset-0-monthly_same': 'on',
+            'timeformset-TOTAL_FORMS': '1',
+            'timeformset-INITIAL_FORMS': '0',
+            'timeformset-MIN_NUM_FORMS': '1',
+            'timeformset-MAX_NUM_FORMS': '1000',
+            'timeformset-0-time_from': '12:00:00',
+            'timeformset-0-time_to': '13:00:00',
+            'rruleformset-0-until': '2019-04-03',
+            'skip_if_overlap': 'on',
+            'name_0': 'Foo',
+            'active': 'on',
+            'frontpage_text_0': '',
+            'quotas-TOTAL_FORMS': '1',
+            'quotas-INITIAL_FORMS': '0',
+            'quotas-MIN_NUM_FORMS': '0',
+            'quotas-MAX_NUM_FORMS': '1000',
+            'quotas-0-name': 'Q1',
+            'quotas-0-size': '50',
+            'quotas-0-itemvars': str(self.ticket.pk),
+            'checkinlist_set-TOTAL_FORMS': '0',
+            'checkinlist_set-INITIAL_FORMS': '0',
+            'checkinlist_set-MIN_NUM_FORMS': '0',
+            'checkinlist_set-MAX_NUM_FORMS': '1000',
+        })
+        assert doc.select(".alert-success")
+        with scopes_disabled():
+            ses = list(self.event1.subevents.exclude(pk__in=existing_events).order_by('date_from'))
+
+        assert len(ses) == 7
+        assert [s.date_from.date().isoformat() for s in ses] == [
+            '2018-04-03',
+            '2018-04-04',
+            '2018-04-07',
+            '2018-04-09',
+            '2018-04-10',
+            '2018-04-11',
+            '2018-04-12'
+        ]
+
     def test_delete_bulk(self):
         self.subevent2.active = True
         self.subevent2.save()
@@ -699,7 +841,8 @@ class SubEventsTest(SoupTest):
                 code='FOO', event=self.event1, email='dummy@dummy.test',
                 status=Order.STATUS_PENDING,
                 datetime=now(), expires=now() + datetime.timedelta(days=10),
-                total=14, locale='en'
+                total=14, locale='en',
+                sales_channel=self.orga1.sales_channels.get(identifier="web"),
             )
             OrderPosition.objects.create(
                 order=o,

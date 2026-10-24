@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -40,8 +40,10 @@ from dateutil.rrule import rruleset
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.core.files import File
-from django.db import connections, transaction
-from django.db.models import Count, F, Prefetch, ProtectedError
+from django.db import transaction
+from django.db.models import (
+    Count, Exists, F, OuterRef, Prefetch, ProtectedError, Subquery,
+)
 from django.db.models.functions import Coalesce, TruncDate, TruncTime
 from django.forms import inlineformset_factory
 from django.http import Http404, HttpResponse, HttpResponseRedirect
@@ -49,17 +51,21 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.formats import get_format
 from django.utils.functional import cached_property
-from django.utils.timezone import make_aware
+from django.utils.http import url_has_allowed_host_and_scheme
+from django.utils.timezone import make_aware, now
 from django.utils.translation import gettext_lazy as _, pgettext_lazy
 from django.views import View
-from django.views.generic import CreateView, FormView, ListView, UpdateView
+from django.views.generic import (
+    CreateView, DetailView, FormView, ListView, UpdateView,
+)
 
-from pretix.base.models import CartPosition, LogEntry
+from pretix.base.models import CartPosition, LogEntry, OrderPosition
 from pretix.base.models.checkin import CheckinList
 from pretix.base.models.event import SubEvent, SubEventMetaValue
 from pretix.base.models.items import (
-    ItemVariation, Quota, SubEventItem, SubEventItemVariation,
+    Item, ItemVariation, Quota, SubEventItem, SubEventItemVariation,
 )
+from pretix.base.models.orders import CancellationRequest
 from pretix.base.reldate import RelativeDate, RelativeDateWrapper
 from pretix.base.services import tickets
 from pretix.base.services.quotas import QuotaAvailability
@@ -79,6 +85,7 @@ from pretix.control.views import PaginationMixin
 from pretix.control.views.event import MetaDataEditorMixin
 from pretix.helpers import GroupConcat
 from pretix.helpers.compat import CompatDeleteView
+from pretix.helpers.i18n import get_format_without_seconds
 from pretix.helpers.models import modelcopy
 
 
@@ -117,10 +124,13 @@ class SubEventList(EventPermissionRequiredMixin, PaginationMixin, SubEventQueryM
     model = SubEvent
     context_object_name = 'subevents'
     template_name = 'pretixcontrol/subevents/index.html'
-    permission = 'can_change_settings'
+    permission = None
 
     def get_queryset(self):
-        return super().get_queryset(True)
+        return super().get_queryset(True).prefetch_related(
+            'meta_values',
+            'meta_values__property',
+        )
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -153,7 +163,7 @@ class SubEventList(EventPermissionRequiredMixin, PaginationMixin, SubEventQueryM
 class SubEventDelete(EventPermissionRequiredMixin, CompatDeleteView):
     model = SubEvent
     template_name = 'pretixcontrol/subevents/delete.html'
-    permission = 'can_change_settings'
+    permission = 'event.subevents:write'
     context_object_name = 'subevents'
 
     def get_object(self, queryset=None) -> SubEvent:
@@ -171,21 +181,38 @@ class SubEventDelete(EventPermissionRequiredMixin, CompatDeleteView):
             return HttpResponseRedirect(self.get_success_url())
         return super().get(request, *args, **kwargs)
 
-    @transaction.atomic
     def delete(self, request, *args, **kwargs):
         self.object = self.get_object()
         success_url = self.get_success_url()
 
-        if not self.object.allow_delete():
-            messages.error(request, pgettext_lazy('subevent', 'A date can not be deleted if orders already have been '
-                                                              'placed.'))
-            return HttpResponseRedirect(self.get_success_url())
+        try:
+            with transaction.atomic():
+                if not self.object.allow_delete():
+                    messages.error(request, pgettext_lazy('subevent', 'A date can not be deleted if orders already have been '
+                                                                      'placed.'))
+                    return HttpResponseRedirect(success_url)
+                self.object.log_action('pretix.subevent.deleted', user=self.request.user)
+                CartPosition.objects.filter(addon_to__subevent=self.object).delete()
+                self.object.cartposition_set.all().delete()
+                self.object.delete()
+        except ProtectedError:
+            if self.object.active:
+                with transaction.atomic():
+                    self.object.log_action(
+                        'pretix.subevent.changed', user=self.request.user, data={
+                            'active': False
+                        },
+                    )
+                self.object.active = False
+                self.object.save(update_fields=['active'])
+            messages.error(self.request, pgettext_lazy(
+                'subevent',
+                'The date could not be deleted as some constraints (e.g. data created by plug-ins) did not allow '
+                'it. The date was disabled instead.'
+            ))
         else:
-            self.object.log_action('pretix.subevent.deleted', user=self.request.user)
-            CartPosition.objects.filter(addon_to__subevent=self.object).delete()
-            self.object.cartposition_set.all().delete()
-            self.object.delete()
             messages.success(request, pgettext_lazy('subevent', 'The selected date has been deleted.'))
+
         return HttpResponseRedirect(success_url)
 
     def get_success_url(self) -> str:
@@ -221,7 +248,7 @@ class SubEventEditorMixin(MetaDataEditorMixin):
             property=p,
             disabled=(
                 p.protected and
-                not self.request.user.has_organizer_permission(self.request.organizer, 'can_change_organizer_settings', request=self.request)
+                not self.request.user.has_organizer_permission(self.request.organizer, 'organizer.settings.general:write', request=self.request)
             ),
             default=self._default_meta.get(p.name, ''),
             instance=val_instances.get(p.pk, self.meta_model(property=p, subevent=self.object)),
@@ -278,7 +305,7 @@ class SubEventEditorMixin(MetaDataEditorMixin):
                     'name': q.name,
                     'release_after_exit': q.release_after_exit,
                     'ignore_for_event_availability': q.ignore_for_event_availability,
-                    'itemvars': [str(i.pk) for i in q.items.all()] + [
+                    'itemvars': [str(i.pk) for i in q.items.all() if (len(i.variations.all()) == 0)] + [
                         '{}-{}'.format(v.item_id, v.pk) for v in q.variations.all()
                     ]
                 } for q in self.copy_from.quotas.prefetch_related('items', 'variations')
@@ -292,6 +319,7 @@ class SubEventEditorMixin(MetaDataEditorMixin):
             ]
             extra = 0
 
+        kwargs['searchable_selection'] = True
         formsetclass = inlineformset_factory(
             SubEvent, Quota,
             form=QuotaForm, formset=QuotaFormSet, min_num=1, validate_min=True,
@@ -396,6 +424,19 @@ class SubEventEditorMixin(MetaDataEditorMixin):
             except SubEvent.DoesNotExist:
                 pass
 
+    def _copy_from_date_to_relative(self, value):
+        if not value:
+            return value
+        tz = self.request.event.timezone
+        days = (self.copy_from.date_from.astimezone(tz).date() - value.astimezone(tz).date()).days
+        return RelativeDateWrapper(RelativeDate(
+            days=abs(days),
+            base_date_name='event__date_from',
+            time=value.astimezone(tz).time(),
+            minutes=None,
+            is_after=days < 0,
+        ))
+
     @cached_property
     def itemvar_forms(self):
         se_item_instances = {
@@ -408,15 +449,21 @@ class SubEventEditorMixin(MetaDataEditorMixin):
         if self.copy_from:
             se_item_instances = {
                 sei.item_id: SubEventItem(
-                    item=sei.item, price=sei.price, disabled=sei.disabled,
-                    available_from=sei.available_from, available_until=sei.available_until
+                    item=sei.item,
+                    price=sei.price,
+                    disabled=sei.disabled,
+                    available_from=sei.available_from,
+                    available_until=sei.available_until
                 )
                 for sei in SubEventItem.objects.filter(subevent=self.copy_from).select_related('item')
             }
             se_var_instances = {
                 sei.variation_id: SubEventItemVariation(
-                    variation=sei.variation, price=sei.price, disabled=sei.disabled,
-                    available_from=sei.available_from, available_until=sei.available_until
+                    variation=sei.variation,
+                    price=sei.price,
+                    disabled=sei.disabled,
+                    available_from=sei.available_from,
+                    available_until=sei.available_until
                 )
                 for sei in SubEventItemVariation.objects.filter(subevent=self.copy_from).select_related('variation')
             }
@@ -426,17 +473,34 @@ class SubEventEditorMixin(MetaDataEditorMixin):
             if i.has_variations:
                 for v in i.variations.all():
                     inst = se_var_instances.get(v.pk) or SubEventItemVariation(subevent=self.object, variation=v)
+                    if self.copy_from:
+                        initial = {
+                            'rel_available_from': self._copy_from_date_to_relative(inst.available_from),
+                            'rel_available_until': self._copy_from_date_to_relative(inst.available_until)
+                        }
+                    else:
+                        initial = {}
                     formlist.append(self.itemvarformclass(
                         prefix='itemvar-{}'.format(v.pk),
-                        item=i, variation=v,
+                        item=i,
+                        variation=v,
+                        initial=initial,
                         instance=inst,
                         data=(self.request.POST if self.request.method == "POST" else None)
                     ))
             else:
                 inst = se_item_instances.get(i.pk) or SubEventItem(subevent=self.object, item=i)
+                if self.copy_from:
+                    initial = {
+                        'rel_available_from': self._copy_from_date_to_relative(inst.available_from),
+                        'rel_available_until': self._copy_from_date_to_relative(inst.available_until)
+                    }
+                else:
+                    initial = {}
                 formlist.append(self.itemformclass(
                     prefix='item-{}'.format(i.pk),
                     item=i,
+                    initial=initial,
                     instance=inst,
                     data=(self.request.POST if self.request.method == "POST" else None)
                 ))
@@ -448,10 +512,70 @@ class SubEventEditorMixin(MetaDataEditorMixin):
         ) and self.cl_formset.is_valid() and all(f.is_valid() for f in self.plugin_forms)
 
 
-class SubEventUpdate(EventPermissionRequiredMixin, SubEventEditorMixin, UpdateView):
+class SubEventDetail(EventPermissionRequiredMixin, DetailView):
     model = SubEvent
     template_name = 'pretixcontrol/subevents/detail.html'
-    permission = 'can_change_settings'
+    permission = None
+    context_object_name = 'subevent'
+
+    def get_object(self, queryset=None) -> SubEvent:
+        try:
+            return self.request.event.subevents.get(
+                id=self.kwargs['subevent']
+            )
+        except SubEvent.DoesNotExist:
+            raise Http404(pgettext_lazy("subevent", "The requested date does not exist."))
+
+    def get_context_data(self, **kwargs):
+        oqs = self.request.event.orders.filter(
+            Exists(
+                OrderPosition.objects.filter(
+                    subevent=self.object,
+                    order_id=OuterRef("id"),
+                )
+            )
+        ).annotate(
+            pcnt=Subquery(
+                OrderPosition.objects.filter(
+                    subevent=self.object,
+                    order_id=OuterRef("id"),
+                ).values("subevent").annotate(c=Count("*")).values("c")
+            ),
+            has_cancellation_request=Exists(CancellationRequest.objects.filter(order=OuterRef("pk"))),
+        ).select_related("invoice_address").prefetch_related("sales_channel")
+        ctx = {
+            "quotas": self.object.quotas.prefetch_related(
+                Prefetch(
+                    "items",
+                    queryset=Item.objects.annotate(
+                        has_variations=Exists(ItemVariation.objects.filter(item=OuterRef("pk")))
+                    ),
+                    to_attr="cached_items"
+                ),
+                "variations",
+                "variations__item",
+            ).order_by("name", "pk"),
+            "checkinlists": self.object.checkinlist_set.prefetch_related("limit_products"),
+            "orders": oqs[:11],
+            "order_count": oqs.count(),
+        }
+
+        qa = QuotaAvailability()
+        qa.queue(*ctx["quotas"])
+        qa.compute()
+        for quota in ctx["quotas"]:
+            quota.cached_avail = qa.results[quota]
+
+        return super().get_context_data(
+            **kwargs,
+            **ctx,
+        )
+
+
+class SubEventUpdate(EventPermissionRequiredMixin, SubEventEditorMixin, UpdateView):
+    model = SubEvent
+    template_name = 'pretixcontrol/subevents/edit.html'
+    permission = 'event.subevents:write'
     context_object_name = 'subevent'
     form_class = SubEventForm
 
@@ -474,6 +598,7 @@ class SubEventUpdate(EventPermissionRequiredMixin, SubEventEditorMixin, UpdateVi
 
     @transaction.atomic
     def form_valid(self, form):
+        self.object = form.save()
         self.save_formset(self.object)
         self.save_cl_formset(self.object)
         self.save_meta()
@@ -483,42 +608,61 @@ class SubEventUpdate(EventPermissionRequiredMixin, SubEventEditorMixin, UpdateVi
             # TODO: LogEntry?
 
         messages.success(self.request, _('Your changes have been saved.'))
-        if form.has_changed() or any(f.has_changed() for f in self.plugin_forms):
-            data = {
-                k: form.cleaned_data.get(k) for k in form.changed_data
-            }
-            for f in self.plugin_forms:
-                data.update({
-                    k: (f.cleaned_data.get(k).name
-                        if isinstance(f.cleaned_data.get(k), File)
-                        else f.cleaned_data.get(k))
-                    for k in f.changed_data
-                })
+
+        change_data = {
+            k: (form.cleaned_data.get(k).name
+                if isinstance(form.cleaned_data.get(k), File)
+                else form.cleaned_data.get(k))
+            for k in form.changed_data
+        }
+        meta_changed = {}
+        for f in self.meta_forms:
+            if f.has_changed():
+                meta_changed[f.property.name] = f.cleaned_data["value"]
+        if meta_changed:
+            change_data['meta_data'] = meta_changed
+        for f in self.plugin_forms:
+            change_data.update({
+                k: (f.cleaned_data.get(k).name
+                    if isinstance(f.cleaned_data.get(k), File)
+                    else f.cleaned_data.get(k))
+                for k in f.changed_data
+            })
+        if change_data:
             self.object.log_action(
-                'pretix.subevent.changed', user=self.request.user, data=data
+                'pretix.subevent.changed', user=self.request.user, data=change_data
             )
+
         for f in self.plugin_forms:
             f.subevent = self.object
             f.save()
         tickets.invalidate_cache.apply_async(kwargs={'event': self.request.event.pk})
-        return super().form_valid(form)
+        return HttpResponseRedirect(self.get_success_url())
 
     def get_success_url(self) -> str:
-        return reverse('control:event.subevents', kwargs={
+        if "next" in self.request.GET and url_has_allowed_host_and_scheme(self.request.GET.get("next"), allowed_hosts=None):
+            return self.request.GET.get("next")
+        return reverse('control:event.subevent', kwargs={
             'organizer': self.request.event.organizer.slug,
             'event': self.request.event.slug,
-        }) + ('?' + self.request.GET.get('returnto') if 'returnto' in self.request.GET else '')
+            'subevent': self.object.pk,
+        })
 
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
         kwargs['event'] = self.request.event
         return kwargs
 
+    def get_context_data(self, **kwargs):
+        return super().get_context_data(
+            next_url=self.get_success_url()
+        )
+
 
 class SubEventCreate(SubEventEditorMixin, EventPermissionRequiredMixin, CreateView):
     model = SubEvent
-    template_name = 'pretixcontrol/subevents/detail.html'
-    permission = 'can_change_settings'
+    template_name = 'pretixcontrol/subevents/edit.html'
+    permission = 'event.subevents:write'
     context_object_name = 'subevent'
     form_class = SubEventForm
 
@@ -571,6 +715,14 @@ class SubEventCreate(SubEventEditorMixin, EventPermissionRequiredMixin, CreateVi
                     else f.cleaned_data.get(k))
                 for k in f.cleaned_data
             })
+
+        meta_changed = {}
+        for f in self.meta_forms:
+            if f.has_changed():
+                meta_changed[f.property.name] = f.cleaned_data["value"]
+        if meta_changed:
+            data['meta_data'] = meta_changed
+
         form.instance.log_action('pretix.subevent.added', data=dict(data), user=self.request.user)
 
         self.save_formset(form.instance)
@@ -612,29 +764,35 @@ class SubEventCreate(SubEventEditorMixin, EventPermissionRequiredMixin, CreateVi
 
 
 class SubEventBulkAction(SubEventQueryMixin, EventPermissionRequiredMixin, View):
-    permission = 'can_change_settings'
+    permission = 'event.subevents:write'
 
     @transaction.atomic
     def post(self, request, *args, **kwargs):
         if request.POST.get('action') == 'disable':
+            log_entries = []
             for obj in self.get_queryset():
-                obj.log_action(
+                log_entries.append(obj.log_action(
                     'pretix.subevent.changed', user=self.request.user, data={
                         'active': False
-                    }
-                )
+                    }, save=False
+                ))
                 obj.active = False
                 obj.save(update_fields=['active'])
+
+            LogEntry.bulk_create_and_postprocess(log_entries)
             messages.success(request, pgettext_lazy('subevent', 'The selected dates have been disabled.'))
         elif request.POST.get('action') == 'enable':
+            log_entries = []
             for obj in self.get_queryset():
-                obj.log_action(
+                log_entries.append(obj.log_action(
                     'pretix.subevent.changed', user=self.request.user, data={
                         'active': True
-                    }
-                )
+                    }, save=False
+                ))
                 obj.active = True
                 obj.save(update_fields=['active'])
+
+            LogEntry.bulk_create_and_postprocess(log_entries)
             messages.success(request, pgettext_lazy('subevent', 'The selected dates have been enabled.'))
         elif request.POST.get('action') == 'delete':
             return render(request, 'pretixcontrol/subevents/delete_bulk.html', {
@@ -642,22 +800,28 @@ class SubEventBulkAction(SubEventQueryMixin, EventPermissionRequiredMixin, View)
                 'forbidden': self.get_queryset().filter(orderposition__isnull=False).distinct(),
             })
         elif request.POST.get('action') == 'delete_confirm':
+            log_entries = []
+            to_delete = []
             for obj in self.get_queryset():
                 try:
                     if not obj.allow_delete():
                         raise ProtectedError('only deactivate', [obj])
-                    CartPosition.objects.filter(addon_to__subevent=obj).delete()
-                    obj.cartposition_set.all().delete()
-                    obj.log_action('pretix.subevent.deleted', user=self.request.user)
-                    obj.delete()
+                    log_entries.append(obj.log_action('pretix.subevent.deleted', user=self.request.user, save=False))
+                    to_delete.append(obj.pk)
                 except ProtectedError:
-                    obj.log_action(
+                    log_entries.append(obj.log_action(
                         'pretix.subevent.changed', user=self.request.user, data={
                             'active': False
-                        }
-                    )
+                        }, save=False,
+                    ))
                     obj.active = False
                     obj.save(update_fields=['active'])
+
+            if to_delete:
+                CartPosition.objects.filter(addon_to__subevent_id__in=to_delete).delete()
+                CartPosition.objects.filter(subevent_id__in=to_delete).delete()
+                SubEvent.objects.filter(pk__in=to_delete).delete()
+            LogEntry.bulk_create_and_postprocess(log_entries)
             messages.success(request, pgettext_lazy('subevent', 'The selected dates have been deleted or disabled.'))
         return redirect(self.get_success_url())
 
@@ -671,7 +835,7 @@ class SubEventBulkAction(SubEventQueryMixin, EventPermissionRequiredMixin, View)
 class SubEventBulkCreate(SubEventEditorMixin, EventPermissionRequiredMixin, AsyncFormView):
     model = SubEvent
     template_name = 'pretixcontrol/subevents/bulk.html'
-    permission = 'can_change_settings'
+    permission = 'event.subevents:write'
     context_object_name = 'subevent'
     form_class = SubEventBulkForm
     itemformclass = BulkSubEventItemForm
@@ -715,9 +879,16 @@ class SubEventBulkCreate(SubEventEditorMixin, EventPermissionRequiredMixin, Asyn
         ctx['rrule_formset'] = self.rrule_formset
         ctx['time_formset'] = self.time_formset
 
-        tf = get_format('TIME_INPUT_FORMATS')[0]
+        tf = get_format_without_seconds('TIME_INPUT_FORMATS')
+        ctx['time_admission_sample'] = time(8, 30, 0).strftime(tf)
         ctx['time_begin_sample'] = time(9, 0, 0).strftime(tf)
         ctx['time_end_sample'] = time(18, 0, 0).strftime(tf)
+
+        df = get_format('DATETIME_INPUT_FORMATS')[0]
+        ctx['datetime_sample'] = now().replace(
+            year=2000, month=12, day=31, hour=18, minute=0, second=0, microsecond=0
+        ).strftime(df)
+
         return ctx
 
     @cached_property
@@ -754,18 +925,8 @@ class SubEventBulkCreate(SubEventEditorMixin, EventPermissionRequiredMixin, Asyn
             initial['time_from'] = i.date_from.astimezone(tz).time()
             initial['time_to'] = i.date_to.astimezone(tz).time() if i.date_to else None
             initial['time_admission'] = i.date_admission.astimezone(tz).time() if i.date_admission else None
-            initial['rel_presale_start'] = RelativeDateWrapper(RelativeDate(
-                days_before=(i.date_from.astimezone(tz).date() - i.presale_start.astimezone(tz).date()).days,
-                base_date_name='date_from',
-                time=i.presale_start.astimezone(tz).time(),
-                minutes_before=None
-            )) if i.presale_start else None
-            initial['rel_presale_end'] = RelativeDateWrapper(RelativeDate(
-                days_before=(i.date_from.astimezone(tz).date() - i.presale_end.astimezone(tz).date()).days,
-                base_date_name='date_from',
-                time=i.presale_end.astimezone(tz).time(),
-                minutes_before=None
-            )) if i.presale_end else None
+            initial['rel_presale_start'] = self._copy_from_date_to_relative(i.presale_start)
+            initial['rel_presale_end'] = self._copy_from_date_to_relative(i.presale_end)
         else:
             kwargs['instance'] = SubEvent(event=self.request.event)
             initial['location'] = self.request.event.location
@@ -850,6 +1011,35 @@ class SubEventBulkCreate(SubEventEditorMixin, EventPermissionRequiredMixin, Asyn
 
             if len(subevents) > 100_000:
                 raise ValidationError(_('Please do not create more than 100.000 dates at once.'))
+
+        if form.cleaned_data.get("skip_if_overlap") and subevents:
+            def overlaps(a_from, a_to, b_from, b_to):
+                if a_from == b_from:
+                    return True
+                if a_from > b_from:
+                    # a starts after b
+                    # check if it starts before b ends
+                    return b_to and a_from < b_to
+                # a starts before b
+                # check if it ends before b starts
+                return a_to and a_to > b_from
+
+            date_min = min(se.date_from for se in subevents)
+            date_max = max(se.date_to or se.date_from for se in subevents)
+            dates_existing = list(self.request.event.subevents.annotate(
+                date_fromto=Coalesce('date_to', 'date_from'),
+            ).filter(
+                date_from__lte=date_max,
+                date_fromto__gte=date_min,
+            ).values('date_from', 'date_to'))
+            subevents = [
+                se for se in subevents if not any(
+                    overlaps(se.date_from, se.date_to, other['date_from'], other['date_to'])
+                    for other in dates_existing
+                )
+            ]
+            if not subevents:
+                raise ValidationError(_('All dates would be skipped because they conflict with existing dates.'))
 
         for i, se in enumerate(subevents):
             se.save(clear_cache=False)
@@ -979,13 +1169,7 @@ class SubEventBulkCreate(SubEventEditorMixin, EventPermissionRequiredMixin, Asyn
                 f.save()
         set_progress(90)
 
-        if connections['default'].features.can_return_rows_from_bulk_insert:
-            LogEntry.objects.bulk_create(log_entries)
-            LogEntry.bulk_postprocess(log_entries)
-        else:
-            for le in log_entries:
-                le.save()
-            LogEntry.bulk_postprocess(log_entries)
+        LogEntry.bulk_create_and_postprocess(log_entries)
 
         self.request.event.cache.clear()
         return len(subevents)
@@ -1005,7 +1189,7 @@ class SubEventBulkCreate(SubEventEditorMixin, EventPermissionRequiredMixin, Asyn
 
 
 class SubEventBulkEdit(SubEventQueryMixin, EventPermissionRequiredMixin, FormView):
-    permission = 'can_change_settings'
+    permission = 'event.subevents:write'
     form_class = SubEventBulkEditForm
     template_name = 'pretixcontrol/subevents/bulk_edit.html'
     context_object_name = 'subevent'
@@ -1092,6 +1276,11 @@ class SubEventBulkEdit(SubEventQueryMixin, EventPermissionRequiredMixin, FormVie
             self._default_meta = self.request.event.meta_data
 
         for p in self.request.organizer.meta_properties.all():
+            if p.protected and not self.request.user.has_organizer_permission(
+                    self.request.organizer, 'organizer.settings.general:write', request=self.request
+            ):
+                continue
+
             inst = SubEventMetaValue(property=p)
             if len(matches[p.id]) == 1 and matches[p.id][0]['c'] == total:
                 inst.value = matches[p.id][0]['value']
@@ -1110,7 +1299,10 @@ class SubEventBulkEdit(SubEventQueryMixin, EventPermissionRequiredMixin, FormVie
         kwargs = {}
 
         if self.sampled_quotas is not None:
-            kwargs['instance'] = self.get_queryset()[0]
+            try:
+                kwargs['instance'] = self.get_queryset()[0]
+            except IndexError:
+                raise Http404("No matching dates")
 
         formsetclass = inlineformset_factory(
             SubEvent, Quota,
@@ -1410,6 +1602,7 @@ class SubEventBulkEdit(SubEventQueryMixin, EventPermissionRequiredMixin, FormVie
             'name',
             'location',
             'frontpage_text',
+            'comment',
             'geo_lat',
             'geo_lon',
             'is_public',
@@ -1547,13 +1740,7 @@ class SubEventBulkEdit(SubEventQueryMixin, EventPermissionRequiredMixin, FormVie
         self.save_itemvars()
         self.save_meta()
 
-        if connections['default'].features.can_return_rows_from_bulk_insert:
-            LogEntry.objects.bulk_create(log_entries, batch_size=200)
-            LogEntry.bulk_postprocess(log_entries)
-        else:
-            for le in log_entries:
-                le.save()
-            LogEntry.bulk_postprocess(log_entries)
+        LogEntry.bulk_create_and_postprocess(log_entries)
 
         self.request.event.cache.clear()
         messages.success(self.request, _('Your changes have been saved.'))

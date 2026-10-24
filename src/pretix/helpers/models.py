@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -20,9 +20,11 @@
 # <https://www.gnu.org/licenses/>.
 #
 import copy
+from decimal import Decimal
 
 from django.core.files import File
 from django.db import models
+from django.db.models.fields import DecimalField
 
 
 class Thumbnail(models.Model):
@@ -44,3 +46,43 @@ def modelcopy(obj: models.Model, **kwargs):
         else:
             setattr(n, f.name, copy.deepcopy(val))
     return n
+
+
+# django 5 contains this in django.utils.choices.flatten_choices
+def flatten_choices(choices):
+    """Flatten choices by removing nested values."""
+    for value_or_group, label_or_nested in choices or ():
+        if isinstance(label_or_nested, (list, tuple)):
+            yield from label_or_nested
+        else:
+            yield value_or_group, label_or_nested
+
+
+def _normalize_decimal(d: Decimal) -> Decimal:
+    """
+    Strips trailing zeros, e.g.
+
+    20.000 → 20
+    20.010 → 20.01
+    20.100 → 20.1
+
+    But unlike of Decimal.normalize(), 20.000 will not become 2e+1. Very small decimals might still be represented
+    in scientific notation when printed.
+    """
+    normalized = d.normalize()
+    sign, digit, exponent = normalized.as_tuple()
+    if exponent > 0:
+        return normalized.quantize(1)
+    return normalized
+
+
+class NormalizedDecimalField(DecimalField):
+    """
+    Variant of DecimalField that never outputs the trailing zeros, so we always have normalized decimals internally.
+    Use this only for fields where the trailing zeros are pointless (e.g. percentages), not for monetary amounts.
+    """
+
+    def from_db_value(self, value, expression, connection):
+        if value is not None:
+            value = _normalize_decimal(value)
+        return value

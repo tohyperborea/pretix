@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -19,6 +19,7 @@
 # You should have received a copy of the GNU Affero General Public License along with this program.  If not, see
 # <https://www.gnu.org/licenses/>.
 #
+
 from django.db import transaction
 from django.db.models import F, Q
 from django.utils.timezone import now
@@ -39,6 +40,7 @@ with scopes_disabled():
     class VoucherFilter(FilterSet):
         active = BooleanFilter(method='filter_active')
         code = CharFilter(lookup_expr='iexact')
+        search = CharFilter(method='search_qs')
 
         class Meta:
             model = Voucher
@@ -53,6 +55,9 @@ with scopes_disabled():
                 return queryset.filter(Q(redeemed__gte=F('max_usages')) |
                                        (Q(valid_until__isnull=False) & Q(valid_until__lte=now())))
 
+        def search_qs(self, qs, name, value):
+            return qs.filter(Q(code__icontains=value) | Q(tag__icontains=value) | Q(comment__icontains=value))
+
 
 class VoucherViewSet(viewsets.ModelViewSet):
     serializer_class = VoucherSerializer
@@ -61,11 +66,16 @@ class VoucherViewSet(viewsets.ModelViewSet):
     ordering = ('id',)
     ordering_fields = ('id', 'code', 'max_usages', 'valid_until', 'value')
     filterset_class = VoucherFilter
-    permission = 'can_view_vouchers'
-    write_permission = 'can_change_vouchers'
+    permission = 'event.vouchers:read'
+    write_permission = 'event.vouchers:write'
 
+    @scopes_disabled()  # we have an event check here, and we can save some performance on subqueries
     def get_queryset(self):
-        return self.request.event.vouchers.select_related('seat').all()
+        return Voucher.annotate_budget_used(
+            self.request.event.vouchers
+        ).select_related(
+            'item', 'quota', 'seat', 'variation'
+        )
 
     @transaction.atomic()
     def create(self, request, *args, **kwargs):

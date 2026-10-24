@@ -5,7 +5,7 @@ export DATA_DIR=/data/
 export HOME=/pretix
 
 AUTOMIGRATE=${AUTOMIGRATE:-yes}
-NUM_WORKERS_DEFAULT=$((2 * $(nproc --all)))
+NUM_WORKERS_DEFAULT=$((2 * $(nproc)))
 export NUM_WORKERS=${NUM_WORKERS:-$NUM_WORKERS_DEFAULT}
 
 if [ ! -d /data/logs ]; then
@@ -47,7 +47,7 @@ if [ "$1" == "taskworker" ]; then
 fi
 
 if [ "$1" == "upgrade" ]; then
-    exec python3 -m pretix updatestyles
+    exec python3 -m pretix updateassets
 fi
 
 exec python3 -m pretix "$@"

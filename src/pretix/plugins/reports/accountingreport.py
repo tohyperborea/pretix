@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -28,7 +28,7 @@ from decimal import Decimal
 from django import forms
 from django.db.models import F, Sum
 from django.db.models.functions import Coalesce
-from django.utils.formats import date_format, localize
+from django.utils.formats import date_format
 from django.utils.html import escape
 from django.utils.timezone import now
 from django.utils.translation import gettext as _, gettext_lazy, pgettext_lazy
@@ -36,19 +36,20 @@ from reportlab.lib import colors, pagesizes
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.units import mm
 from reportlab.platypus import (
-    KeepTogether, PageTemplate, Paragraph, Spacer, Table, TableStyle,
+    KeepTogether, PageTemplate, Spacer, Table, TableStyle,
 )
 
 from pretix.base.exporter import BaseExporter
 from pretix.base.models import (
     GiftCardTransaction, OrderFee, OrderPayment, OrderRefund, Transaction,
 )
-from pretix.base.templatetags.money import money_filter
+from pretix.base.templatetags.money import money_filter, tax_rate_format
 from pretix.base.timeframes import (
     DateFrameField,
     resolve_timeframe_to_datetime_start_inclusive_end_exclusive,
 )
 from pretix.control.forms.filter import get_all_payment_providers
+from pretix.helpers.reportlab import PlainTextParagraph
 from pretix.plugins.reports.exporters import ReportlabExportMixin
 
 
@@ -269,18 +270,18 @@ class ReportExporter(ReportlabExportMixin, BaseExporter):
     def _transaction_group_header_label(self):
         return _("Event") + " / " + _("Product")
 
-    def _transaction_group_label(self, form_data, r):
+    def _transaction_group(self, form_data, r):
         if not self.is_multievent and not form_data.get("split_subevents"):
-            return None
+            return None, None
         if r.get("subevent_id"):
             return "{} - {} ({}) [{}]".format(
                 r["order__event__name"],
                 r["subevent__name"],
                 date_format(r["subevent__date_from"]),
                 r["order__event__slug"]
-            )
+            ), f"subevent-{r['subevent_id']}"
         else:
-            return "{} [{}]".format(r["order__event__name"], r["order__event__slug"])
+            return "{} [{}]".format(r["order__event__name"], r["order__event__slug"]), f"event-{r['order__event__slug']}"
 
     def _transaction_row_label(self, r):
         if r["item_id"]:
@@ -310,13 +311,13 @@ class ReportExporter(ReportlabExportMixin, BaseExporter):
 
         tdata = [
             [
-                Paragraph(self._transaction_group_header_label(), tstyle_bold),
-                Paragraph(_("Price"), tstyle_bold_right),
-                Paragraph(_("Tax rate"), tstyle_bold_right),
-                Paragraph("#", tstyle_bold_right),
-                Paragraph(_("Net total"), tstyle_bold_right),
-                Paragraph(_("Tax total"), tstyle_bold_right),
-                Paragraph(_("Gross total"), tstyle_bold_right),
+                PlainTextParagraph(self._transaction_group_header_label(), tstyle_bold),
+                PlainTextParagraph(_("Price"), tstyle_bold_right),
+                PlainTextParagraph(_("Tax rate"), tstyle_bold_right),
+                PlainTextParagraph("#", tstyle_bold_right),
+                PlainTextParagraph(_("Net total"), tstyle_bold_right),
+                PlainTextParagraph(_("Tax total"), tstyle_bold_right),
+                PlainTextParagraph(_("Gross total"), tstyle_bold_right),
             ]
         ]
 
@@ -342,17 +343,17 @@ class ReportExporter(ReportlabExportMixin, BaseExporter):
         last_group = None
         last_group_head_idx = 0
         for r in qs:
-            e = self._transaction_group_label(form_data, r)
+            group_label, group_id = self._transaction_group(form_data, r)
 
-            if e != last_group:
-                if last_group_head_idx > 0 and e is not None:
-                    tdata[last_group_head_idx][4] = Paragraph(money_filter(sum_price_by_group - sum_tax_by_group, currency), tstyle_bold_right),
-                    tdata[last_group_head_idx][5] = Paragraph(money_filter(sum_tax_by_group, currency), tstyle_bold_right),
-                    tdata[last_group_head_idx][6] = Paragraph(money_filter(sum_price_by_group, currency), tstyle_bold_right),
+            if group_id != last_group:
+                if last_group_head_idx > 0 and group_id is not None:
+                    tdata[last_group_head_idx][4] = PlainTextParagraph(money_filter(sum_price_by_group - sum_tax_by_group, currency), tstyle_bold_right),
+                    tdata[last_group_head_idx][5] = PlainTextParagraph(money_filter(sum_tax_by_group, currency), tstyle_bold_right),
+                    tdata[last_group_head_idx][6] = PlainTextParagraph(money_filter(sum_price_by_group, currency), tstyle_bold_right),
                 tdata.append(
                     [
-                        Paragraph(
-                            e,
+                        PlainTextParagraph(
+                            group_label,
                             tstyle_bold,
                         ),
                         "",
@@ -366,7 +367,7 @@ class ReportExporter(ReportlabExportMixin, BaseExporter):
                 tstyledata.append(
                     ("SPAN", (0, len(tdata) - 1), (3, len(tdata) - 1)),
                 )
-                last_group = e
+                last_group = group_id
                 last_group_head_idx = len(tdata) - 1
                 sum_price_by_group = Decimal("0.00")
                 sum_tax_by_group = Decimal("0.00")
@@ -374,20 +375,20 @@ class ReportExporter(ReportlabExportMixin, BaseExporter):
             text = self._transaction_row_label(r)
             tdata.append(
                 [
-                    Paragraph(text, tstyle),
-                    Paragraph(
+                    PlainTextParagraph(text, tstyle),
+                    PlainTextParagraph(
                         money_filter(r["price"], currency)
                         if "price" in r and r["price"] is not None
                         else "",
                         tstyle_right,
                     ),
-                    Paragraph(localize(r["tax_rate"].normalize()) + " %", tstyle_right),
-                    Paragraph(str(r["sum_cont"]), tstyle_right),
-                    Paragraph(
+                    PlainTextParagraph(tax_rate_format(r["tax_rate"]) + " %", tstyle_right),
+                    PlainTextParagraph(str(r["sum_cont"]), tstyle_right),
+                    PlainTextParagraph(
                         money_filter(r["sum_price"] - r["sum_tax"], currency), tstyle_right
                     ),
-                    Paragraph(money_filter(r["sum_tax"], currency), tstyle_right),
-                    Paragraph(money_filter(r["sum_price"], currency), tstyle_right),
+                    PlainTextParagraph(money_filter(r["sum_tax"], currency), tstyle_right),
+                    PlainTextParagraph(money_filter(r["sum_price"], currency), tstyle_right),
                 ]
             )
             sum_cnt_by_tax_rate[r["tax_rate"]] += r["sum_cont"]
@@ -397,19 +398,19 @@ class ReportExporter(ReportlabExportMixin, BaseExporter):
             sum_tax_by_group += r["sum_tax"]
 
         if last_group_head_idx > 0 and last_group is not None:
-            tdata[last_group_head_idx][4] = Paragraph(money_filter(sum_price_by_group - sum_tax_by_group, currency), tstyle_bold_right),
-            tdata[last_group_head_idx][5] = Paragraph(money_filter(sum_tax_by_group, currency), tstyle_bold_right),
-            tdata[last_group_head_idx][6] = Paragraph(money_filter(sum_price_by_group, currency), tstyle_bold_right),
+            tdata[last_group_head_idx][4] = PlainTextParagraph(money_filter(sum_price_by_group - sum_tax_by_group, currency), tstyle_bold_right),
+            tdata[last_group_head_idx][5] = PlainTextParagraph(money_filter(sum_tax_by_group, currency), tstyle_bold_right),
+            tdata[last_group_head_idx][6] = PlainTextParagraph(money_filter(sum_price_by_group, currency), tstyle_bold_right),
 
         if len(sum_tax_by_tax_rate) > 1:
             for tax_rate in sorted(sum_tax_by_tax_rate.keys(), reverse=True):
                 tdata.append(
                     [
-                        Paragraph(_("Sum"), tstyle),
-                        Paragraph("", tstyle_right),
-                        Paragraph(localize(tax_rate.normalize()) + " %", tstyle_right),
-                        Paragraph("", tstyle_right),
-                        Paragraph(
+                        PlainTextParagraph(_("Sum"), tstyle),
+                        PlainTextParagraph("", tstyle_right),
+                        PlainTextParagraph(tax_rate_format(tax_rate) + " %", tstyle_right),
+                        PlainTextParagraph("", tstyle_right),
+                        PlainTextParagraph(
                             money_filter(
                                 sum_price_by_tax_rate[tax_rate]
                                 - sum_tax_by_tax_rate[tax_rate],
@@ -417,10 +418,10 @@ class ReportExporter(ReportlabExportMixin, BaseExporter):
                             ),
                             tstyle_right,
                         ),
-                        Paragraph(
+                        PlainTextParagraph(
                             money_filter(sum_tax_by_tax_rate[tax_rate], currency), tstyle_right
                         ),
-                        Paragraph(
+                        PlainTextParagraph(
                             money_filter(sum_price_by_tax_rate[tax_rate], currency),
                             tstyle_right,
                         ),
@@ -438,11 +439,11 @@ class ReportExporter(ReportlabExportMixin, BaseExporter):
 
         tdata.append(
             [
-                Paragraph(_("Sum"), tstyle_bold),
-                Paragraph("", tstyle_right),
-                Paragraph("", tstyle_right),
-                Paragraph("", tstyle_bold_right),
-                Paragraph(
+                PlainTextParagraph(_("Sum"), tstyle_bold),
+                PlainTextParagraph("", tstyle_right),
+                PlainTextParagraph("", tstyle_right),
+                PlainTextParagraph("", tstyle_bold_right),
+                PlainTextParagraph(
                     money_filter(
                         sum(sum_price_by_tax_rate.values())
                         - sum(sum_tax_by_tax_rate.values()),
@@ -450,11 +451,11 @@ class ReportExporter(ReportlabExportMixin, BaseExporter):
                     ),
                     tstyle_bold_right,
                 ),
-                Paragraph(
+                PlainTextParagraph(
                     money_filter(sum(sum_tax_by_tax_rate.values()), currency),
                     tstyle_bold_right,
                 ),
-                Paragraph(
+                PlainTextParagraph(
                     money_filter(sum(sum_price_by_tax_rate.values()), currency),
                     tstyle_bold_right,
                 ),
@@ -492,10 +493,10 @@ class ReportExporter(ReportlabExportMixin, BaseExporter):
 
         tdata = [
             [
-                Paragraph(_("Payment method"), tstyle_bold),
-                Paragraph(_("Payments"), tstyle_bold_right),
-                Paragraph(_("Refunds"), tstyle_bold_right),
-                Paragraph(_("Total"), tstyle_bold_right),
+                PlainTextParagraph(_("Payment method"), tstyle_bold),
+                PlainTextParagraph(_("Payments"), tstyle_bold_right),
+                PlainTextParagraph(_("Refunds"), tstyle_bold_right),
+                PlainTextParagraph(_("Total"), tstyle_bold_right),
             ]
         ]
 
@@ -536,20 +537,20 @@ class ReportExporter(ReportlabExportMixin, BaseExporter):
         for p in providers:
             tdata.append(
                 [
-                    Paragraph(provider_names.get(p, p), tstyle),
-                    Paragraph(
+                    PlainTextParagraph(provider_names.get(p, p), tstyle),
+                    PlainTextParagraph(
                         money_filter(payments_by_provider[p], currency)
                         if p in payments_by_provider
                         else "",
                         tstyle_right,
                     ),
-                    Paragraph(
+                    PlainTextParagraph(
                         money_filter(refunds_by_provider[p], currency)
                         if p in refunds_by_provider
                         else "",
                         tstyle_right,
                     ),
-                    Paragraph(
+                    PlainTextParagraph(
                         money_filter(
                             payments_by_provider.get(p, Decimal("0.00"))
                             - refunds_by_provider.get(p, Decimal("0.00")),
@@ -562,20 +563,20 @@ class ReportExporter(ReportlabExportMixin, BaseExporter):
 
         tdata.append(
             [
-                Paragraph(_("Sum"), tstyle_bold),
-                Paragraph(
+                PlainTextParagraph(_("Sum"), tstyle_bold),
+                PlainTextParagraph(
                     money_filter(
                         sum(payments_by_provider.values(), Decimal("0.00")), currency
                     ),
                     tstyle_bold_right,
                 ),
-                Paragraph(
+                PlainTextParagraph(
                     money_filter(
                         sum(refunds_by_provider.values(), Decimal("0.00")), currency
                     ),
                     tstyle_bold_right,
                 ),
-                Paragraph(
+                PlainTextParagraph(
                     money_filter(
                         sum(payments_by_provider.values(), Decimal("0.00"))
                         - sum(refunds_by_provider.values(), Decimal("0.00")),
@@ -640,17 +641,19 @@ class ReportExporter(ReportlabExportMixin, BaseExporter):
             open_before = tx_before - p_before + r_before
             tdata.append(
                 [
-                    Paragraph(
+                    PlainTextParagraph(
                         _("Pending payments at {datetime}").format(
                             datetime=date_format(
-                                df_start - datetime.timedelta.resolution,
+                                (df_start - datetime.timedelta.resolution).astimezone(
+                                    self.timezone
+                                ),
                                 "SHORT_DATETIME_FORMAT",
                             )
                         ),
                         tstyle,
                     ),
                     "",
-                    Paragraph(money_filter(open_before, currency), tstyle_right),
+                    PlainTextParagraph(money_filter(open_before, currency), tstyle_right),
                 ]
             )
         else:
@@ -667,40 +670,42 @@ class ReportExporter(ReportlabExportMixin, BaseExporter):
         ] or Decimal("0.00")
         tdata.append(
             [
-                Paragraph(_("Orders"), tstyle),
-                Paragraph("+", tstyle_center),
-                Paragraph(money_filter(tx_during, currency), tstyle_right),
+                PlainTextParagraph(_("Orders"), tstyle),
+                PlainTextParagraph("+", tstyle_center),
+                PlainTextParagraph(money_filter(tx_during, currency), tstyle_right),
             ]
         )
         tdata.append(
             [
-                Paragraph(_("Payments"), tstyle),
-                Paragraph("-", tstyle_center),
-                Paragraph(money_filter(p_during, currency), tstyle_right),
+                PlainTextParagraph(_("Payments"), tstyle),
+                PlainTextParagraph("-", tstyle_center),
+                PlainTextParagraph(money_filter(p_during, currency), tstyle_right),
             ]
         )
         tdata.append(
             [
-                Paragraph(_("Refunds"), tstyle),
-                Paragraph("+", tstyle_center),
-                Paragraph(money_filter(r_during, currency), tstyle_right),
+                PlainTextParagraph(_("Refunds"), tstyle),
+                PlainTextParagraph("+", tstyle_center),
+                PlainTextParagraph(money_filter(r_during, currency), tstyle_right),
             ]
         )
 
         open_after = open_before + tx_during - p_during + r_during
         tdata.append(
             [
-                Paragraph(
+                PlainTextParagraph(
                     _("Pending payments at {datetime}").format(
                         datetime=date_format(
-                            (df_end or now()) - datetime.timedelta.resolution,
+                            ((df_end or now()) - datetime.timedelta.resolution).astimezone(
+                                self.timezone
+                            ),
                             "SHORT_DATETIME_FORMAT",
                         )
                     ),
                     tstyle_bold,
                 ),
-                Paragraph("=", tstyle_center),
-                Paragraph(money_filter(open_after, currency), tstyle_bold_right),
+                PlainTextParagraph("=", tstyle_center),
+                PlainTextParagraph(money_filter(open_after, currency), tstyle_bold_right),
             ]
         )
         tstyledata += [
@@ -747,44 +752,58 @@ class ReportExporter(ReportlabExportMixin, BaseExporter):
             )
             tdata.append(
                 [
-                    Paragraph(
+                    PlainTextParagraph(
                         _("Total gift card value at {datetime}").format(
                             datetime=date_format(
-                                df_start - datetime.timedelta.resolution,
+                                (df_start - datetime.timedelta.resolution).astimezone(
+                                    self.timezone
+                                ),
                                 "SHORT_DATETIME_FORMAT",
                             )
                         ),
                         tstyle,
                     ),
-                    Paragraph(money_filter(tx_before, currency), tstyle_right),
+                    PlainTextParagraph(money_filter(tx_before, currency), tstyle_right),
                 ]
             )
         else:
             tx_before = Decimal("0.00")
 
-        tx_during = self._giftcard_transaction_qs(form_data, currency).aggregate(s=Sum("value"))[
+        tx_during_pos = self._giftcard_transaction_qs(form_data, currency).filter(value__gte=Decimal("0.00")).aggregate(s=Sum("value"))[
             "s"
         ] or Decimal("0.00")
         tdata.append(
             [
-                Paragraph(_("Gift card transactions"), tstyle),
-                Paragraph(money_filter(tx_during, currency), tstyle_right),
+                PlainTextParagraph(_("Gift card transactions (credit)"), tstyle),
+                PlainTextParagraph(money_filter(tx_during_pos, currency), tstyle_right),
             ]
         )
 
-        open_after = tx_before + tx_during
+        tx_during_neg = self._giftcard_transaction_qs(form_data, currency).filter(value__lt=Decimal("0.00")).aggregate(s=Sum("value"))[
+            "s"
+        ] or Decimal("0.00")
         tdata.append(
             [
-                Paragraph(
+                PlainTextParagraph(_("Gift card transactions (debit)"), tstyle),
+                PlainTextParagraph(money_filter(tx_during_neg, currency), tstyle_right),
+            ]
+        )
+
+        open_after = tx_before + tx_during_pos + tx_during_neg
+        tdata.append(
+            [
+                PlainTextParagraph(
                     _("Total gift card value at {datetime}").format(
                         datetime=date_format(
-                            (df_end or now()) - datetime.timedelta.resolution,
+                            ((df_end or now()) - datetime.timedelta.resolution).astimezone(
+                                self.timezone
+                            ),
                             "SHORT_DATETIME_FORMAT",
                         )
                     ),
                     tstyle_bold,
                 ),
-                Paragraph(money_filter(open_after, currency), tstyle_bold_right),
+                PlainTextParagraph(money_filter(open_after, currency), tstyle_bold_right),
             ]
         )
         tstyledata += [
@@ -835,10 +854,10 @@ class ReportExporter(ReportlabExportMixin, BaseExporter):
             style_small.leading = 10
 
             story = [
-                Paragraph(self.verbose_name, style_h1),
+                PlainTextParagraph(self.verbose_name, style_h1),
                 Spacer(0, 3 * mm),
-                Paragraph(
-                    "<br />".join(escape(f) for f in self.describe_filters(form_data)),
+                PlainTextParagraph(
+                    "\n".join(escape(f) for f in self.describe_filters(form_data)),
                     style_small,
                 ),
             ]
@@ -847,50 +866,58 @@ class ReportExporter(ReportlabExportMixin, BaseExporter):
 
             for c in currencies:
                 c_head = f" [{c}]" if len(currencies) > 1 else ""
-                story += [
-                    Spacer(0, 3 * mm),
-                    Paragraph(_("Orders") + c_head, style_h2),
-                    Spacer(0, 3 * mm),
-                    *self._table_transactions(form_data, c),
-                ]
+                s = self._table_transactions(form_data, c)
+                if s:
+                    story += [
+                        Spacer(0, 3 * mm),
+                        PlainTextParagraph(_("Orders") + c_head, style_h2),
+                        Spacer(0, 3 * mm),
+                        *s
+                    ]
 
             for c in currencies:
                 c_head = f" [{c}]" if len(currencies) > 1 else ""
-                story += [
-                    Spacer(0, 8 * mm),
-                    Paragraph(_("Payments") + c_head, style_h2),
-                    Spacer(0, 3 * mm),
-                    *self._table_payments(form_data, c),
-                ]
+                s = self._table_payments(form_data, c)
+                if s:
+                    story += [
+                        Spacer(0, 8 * mm),
+                        PlainTextParagraph(_("Payments") + c_head, style_h2),
+                        Spacer(0, 3 * mm),
+                        *s
+                    ]
 
             for c in currencies:
                 c_head = f" [{c}]" if len(currencies) > 1 else ""
-                story += [
-                    Spacer(0, 8 * mm),
-                    KeepTogether(
-                        [
-                            Paragraph(_("Open items") + c_head, style_h2),
-                            Spacer(0, 3 * mm),
-                            *self._table_open_items(form_data, c),
-                        ]
-                    ),
-                ]
+                s = self._table_open_items(form_data, c)
+                if s:
+                    story += [
+                        Spacer(0, 8 * mm),
+                        KeepTogether(
+                            [
+                                PlainTextParagraph(_("Open items") + c_head, style_h2),
+                                Spacer(0, 3 * mm),
+                                *s
+                            ]
+                        ),
+                    ]
             if (
                 self.is_multievent
                 and self.events.count() == self.organizer.events.count()
             ):
                 for c in currencies:
                     c_head = f" [{c}]" if len(currencies) > 1 else ""
-                    story += [
-                        Spacer(0, 8 * mm),
-                        KeepTogether(
-                            [
-                                Paragraph(_("Gift cards") + c_head, style_h2),
-                                Spacer(0, 3 * mm),
-                                *self._table_gift_cards(form_data, c),
-                            ]
-                        ),
-                    ]
+                    s = self._table_gift_cards(form_data, c)
+                    if s:
+                        story += [
+                            Spacer(0, 8 * mm),
+                            KeepTogether(
+                                [
+                                    PlainTextParagraph(_("Gift cards") + c_head, style_h2),
+                                    Spacer(0, 3 * mm),
+                                    *s,
+                                ]
+                            ),
+                        ]
 
             doc.build(story, canvasmaker=self.canvas_class(doc))
             f.seek(0)

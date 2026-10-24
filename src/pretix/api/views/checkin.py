@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -20,12 +20,13 @@
 # <https://www.gnu.org/licenses/>.
 #
 import operator
+from datetime import timedelta
 from functools import reduce
 
 import django_filters
 from django.conf import settings
 from django.core.exceptions import ValidationError as BaseValidationError
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import (
     Count, Exists, F, Max, OrderBy, OuterRef, Prefetch, Q, Subquery,
     prefetch_related_objects,
@@ -35,24 +36,29 @@ from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils.functional import cached_property
 from django.utils.timezone import now
+from django.utils.translation import gettext
 from django_filters.rest_framework import DjangoFilterBackend, FilterSet
 from django_scopes import scopes_disabled
 from packaging.version import parse
-from rest_framework import views, viewsets
+from rest_framework import status, views, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import (
+    NotFound, PermissionDenied, ValidationError,
+)
 from rest_framework.fields import DateTimeField
 from rest_framework.generics import ListAPIView
 from rest_framework.permissions import SAFE_METHODS
 from rest_framework.response import Response
 
+from pretix.api.auth.utils import get_session_key_for_api_auth
 from pretix.api.serializers.checkin import (
-    CheckinListSerializer, CheckinRPCRedeemInputSerializer,
-    MiniCheckinListSerializer,
+    CheckinListSerializer, CheckinRPCAnnulInputSerializer,
+    CheckinRPCRedeemInputSerializer, MiniCheckinListSerializer,
 )
 from pretix.api.serializers.item import QuestionSerializer
 from pretix.api.serializers.order import (
-    CheckinListOrderPositionSerializer, FailedCheckinSerializer,
+    CheckinListOrderPositionSerializer, CheckinSerializer,
+    FailedCheckinSerializer,
 )
 from pretix.api.views import RichOrderingFilter
 from pretix.api.views.order import OrderPositionFilter
@@ -61,9 +67,15 @@ from pretix.base.models import (
     CachedFile, Checkin, CheckinList, Device, Event, Order, OrderPosition,
     Question, ReusableMedium, RevokedTicketSecret, TeamAPIToken,
 )
+from pretix.base.models.orders import PrintLog
+from pretix.base.permissions import AnyPermissionOf
 from pretix.base.services.checkin import (
-    CheckInError, RequiredQuestionsError, SQLLogic, perform_checkin,
+    CheckInError, RequiredMediaExchangeError, RequiredQuestionsError, SQLLogic,
+    perform_checkin,
 )
+from pretix.base.services.media import perform_media_exchange
+from pretix.base.signals import checkin_annulled
+from pretix.helpers import OF_SELF
 
 with scopes_disabled():
     class CheckinListFilter(FilterSet):
@@ -89,6 +101,16 @@ with scopes_disabled():
             )
             return queryset.filter(expr)
 
+    class CheckinFilter(FilterSet):
+        created_since = django_filters.IsoDateTimeFilter(field_name='created', lookup_expr='gte')
+        created_before = django_filters.IsoDateTimeFilter(field_name='created', lookup_expr='lt')
+        datetime_since = django_filters.IsoDateTimeFilter(field_name='datetime', lookup_expr='gte')
+        datetime_before = django_filters.IsoDateTimeFilter(field_name='datetime', lookup_expr='lt')
+
+        class Meta:
+            model = Checkin
+            fields = ['successful', 'error_reason', 'list', 'type', 'gate', 'device', 'auto_checked_in']
+
 
 class CheckinListViewSet(viewsets.ModelViewSet):
     serializer_class = CheckinListSerializer
@@ -100,11 +122,11 @@ class CheckinListViewSet(viewsets.ModelViewSet):
 
     def _get_permission_name(self, request):
         if request.path.endswith('/failed_checkins/'):
-            return 'can_checkin_orders', 'can_change_orders'
+            return 'event.orders:checkin', 'event.orders:write'
         elif request.method in SAFE_METHODS:
-            return 'can_view_orders', 'can_checkin_orders',
+            return 'event.orders:read', 'event.orders:checkin',
         else:
-            return 'can_change_event_settings'
+            return 'event.settings.general:write'
 
     def get_queryset(self):
         qs = self.request.event.checkin_lists.prefetch_related(
@@ -114,10 +136,11 @@ class CheckinListViewSet(viewsets.ModelViewSet):
         if 'subevent' in self.request.query_params.getlist('expand'):
             qs = qs.prefetch_related(
                 'subevent', 'subevent__event', 'subevent__subeventitem_set', 'subevent__subeventitemvariation_set',
-                'subevent__seat_category_mappings', 'subevent__meta_values'
+                'subevent__seat_category_mappings', 'subevent__meta_values',
             )
         return qs
 
+    @transaction.atomic()
     def perform_create(self, serializer):
         serializer.save(event=self.request.event)
         serializer.instance.log_action(
@@ -132,6 +155,7 @@ class CheckinListViewSet(viewsets.ModelViewSet):
         ctx['event'] = self.request.event
         return ctx
 
+    @transaction.atomic()
     def perform_update(self, serializer):
         serializer.save(event=self.request.event)
         serializer.instance.log_action(
@@ -141,7 +165,9 @@ class CheckinListViewSet(viewsets.ModelViewSet):
             data=self.request.data
         )
 
+    @transaction.atomic
     def perform_destroy(self, instance):
+        instance.checkins.all().delete()
         instance.log_action(
             'pretix.event.checkinlist.deleted',
             user=self.request.user,
@@ -161,17 +187,22 @@ class CheckinListViewSet(viewsets.ModelViewSet):
 
         if not serializer.validated_data.get('position'):
             kwargs['position'] = OrderPosition.all.filter(
+                order__event=self.request.event,
                 secret=serializer.validated_data['raw_barcode']
             ).first()
 
         clist = self.get_object()
         if serializer.validated_data.get('nonce'):
             if kwargs.get('position'):
-                prev = kwargs['position'].all_checkins.filter(nonce=serializer.validated_data['nonce']).first()
+                prev = kwargs['position'].all_checkins.filter(
+                    nonce=serializer.validated_data['nonce'],
+                    successful=False
+                ).first()
             else:
                 prev = clist.checkins.filter(
                     nonce=serializer.validated_data['nonce'],
                     raw_barcode=serializer.validated_data['raw_barcode'],
+                    successful=False
                 ).first()
             if prev:
                 # Ignore because nonce is already handled
@@ -285,6 +316,8 @@ with scopes_disabled():
             return queryset.filter(last_checked_in__isnull=not value)
 
         def check_rules_qs(self, queryset, name, value):
+            if not value:
+                return queryset
             if not self.checkinlist.rules:
                 return queryset
             return queryset.filter(
@@ -299,10 +332,16 @@ with scopes_disabled():
 def _handle_file_upload(data, user, auth):
     try:
         cf = CachedFile.objects.get(
-            session_key=f'api-upload-{str(type(user or auth))}-{(user or auth).pk}',
             file__isnull=False,
             pk=data[len("file:"):],
         )
+        if cf.session_key == "api-upload-<class 'django.contrib.auth.models.AnonymousUser'>-None":
+            # OK, backwards-compatibility of a security bug fixed 2026-09, delete this at some point, but should
+            # also be harmless because all files with this key are expired one day after deployment of this fix
+            # and no new files with this key are created
+            pass
+        elif cf.session_key != get_session_key_for_api_auth(user, auth):
+            raise ValidationError('The submitted file ID "{fid}" was not found.'.format(fid=data))
     except (ValidationError, BaseValidationError, IndexError):  # invalid uuid
         raise ValidationError('The submitted file ID "{fid}" was not found.'.format(fid=data))
     except CachedFile.DoesNotExist:
@@ -358,14 +397,21 @@ def _checkin_list_position_queryset(checkinlists, ignore_status=False, ignore_pr
 
     qs = qs.filter(reduce(operator.or_, lists_qs))
 
+    prefetch_related = [
+        Prefetch(
+            lookup='checkins',
+            queryset=Checkin.objects.filter(list_id__in=[cl.pk for cl in checkinlists]).select_related('device')
+        ),
+        Prefetch('print_logs', queryset=PrintLog.objects.select_related('device')),
+        'answers', 'answers__options', 'answers__question',
+    ]
+    select_related = [
+        'item', 'variation', 'order', 'addon_to', 'order__invoice_address', 'order', 'seat'
+    ]
+
     if pdf_data:
         qs = qs.prefetch_related(
-            Prefetch(
-                lookup='checkins',
-                queryset=Checkin.objects.filter(list_id__in=[cl.pk for cl in checkinlists])
-            ),
-            'answers', 'answers__options', 'answers__question',
-            Prefetch('addons', OrderPosition.objects.select_related('item', 'variation')),
+            # Don't add to list, we don't want to propagate to addons
             Prefetch('order', Order.objects.select_related('invoice_address').prefetch_related(
                 Prefetch(
                     'event',
@@ -374,43 +420,53 @@ def _checkin_list_position_queryset(checkinlists, ignore_status=False, ignore_pr
                 Prefetch(
                     'positions',
                     OrderPosition.objects.prefetch_related(
-                        Prefetch('checkins', queryset=Checkin.objects.all()),
+                        Prefetch('checkins', queryset=Checkin.objects.select_related('device')),
+                        Prefetch('print_logs', queryset=PrintLog.objects.select_related('device')),
                         'item', 'variation', 'answers', 'answers__options', 'answers__question',
                     )
                 )
             ))
-        ).select_related(
-            'item', 'variation', 'item__category', 'addon_to', 'order', 'order__invoice_address', 'seat'
         )
-    else:
-        qs = qs.prefetch_related(
-            Prefetch(
-                lookup='checkins',
-                queryset=Checkin.objects.filter(list_id__in=[cl.pk for cl in checkinlists])
-            ),
-            'answers', 'answers__options', 'answers__question',
-            Prefetch('addons', OrderPosition.objects.select_related('item', 'variation'))
-        ).select_related('item', 'variation', 'order', 'addon_to', 'order__invoice_address', 'order', 'seat')
 
     if expand and 'subevent' in expand:
-        qs = qs.prefetch_related(
+        prefetch_related += [
             'subevent', 'subevent__event', 'subevent__subeventitem_set', 'subevent__subeventitemvariation_set',
             'subevent__seat_category_mappings', 'subevent__meta_values'
-        )
+        ]
 
     if expand and 'item' in expand:
-        qs = qs.prefetch_related('item', 'item__addons', 'item__bundles', 'item__meta_values',
-                                 'item__variations').select_related('item__tax_rule')
+        prefetch_related += [
+            'item', 'item__addons', 'item__bundles', 'item__meta_values',
+            'item__variations',
+        ]
+        select_related.append('item__tax_rule')
 
     if expand and 'variation' in expand:
-        qs = qs.prefetch_related('variation')
+        prefetch_related += [
+            'variation', 'variation__meta_values',
+        ]
+
+    if expand and 'addons' in expand:
+        prefetch_related += [
+            Prefetch('addons', OrderPosition.objects.prefetch_related(*prefetch_related).select_related(*select_related)),
+        ]
+    else:
+        prefetch_related += [
+            Prefetch('addons', OrderPosition.objects.select_related('item', 'variation'))
+        ]
+
+    if pdf_data:
+        select_related.remove("order")  # Don't need it twice on this queryset
+
+    qs = qs.prefetch_related(*prefetch_related).select_related(*select_related)
 
     return qs
 
 
 def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force, checkin_type, ignore_unpaid, nonce,
                     untrusted_input, user, auth, expand, pdf_data, request, questions_supported, canceled_supported,
-                    source_type='barcode', legacy_url_support=False, simulate=False, gate=None):
+                    source_type='barcode', legacy_url_support=False, simulate=False, gate=None, use_order_locale=False,
+                    exchange_medium_type=None, exchange_medium_identifier=None):
     if not checkinlists:
         raise ValidationError('No check-in list passed.')
 
@@ -419,6 +475,7 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
 
     device = auth if isinstance(auth, Device) else None
     gate = gate or (auth.gate if isinstance(auth, Device) else None)
+    medium = None
 
     context = {
         'request': request,
@@ -431,7 +488,7 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
             'event': op.order.event,
             'pdf_data': pdf_data and (
                 user if user and user.is_authenticated else auth
-            ).has_event_permission(request.organizer, event, 'can_view_orders', request),
+            ).has_event_permission(request.organizer, event, 'event.orders:read', request),
         }
 
     common_checkin_args = dict(
@@ -447,6 +504,7 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
     )
     raw_barcode_for_checkin = None
     from_revoked_secret = False
+    reusable_medium_used = None
     if simulate:
         common_checkin_args['__fake_arg_to_prevent_this_from_being_saved'] = True
 
@@ -477,11 +535,12 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
     #    with respecting the force option), or it's a reusable medium (-> proceed with that)
     if not op_candidates:
         try:
-            media = ReusableMedium.objects.select_related('linked_orderposition').active().get(
+            medium = ReusableMedium.objects.active().filter(
+                Exists(ReusableMedium.linked_orderpositions.through.objects.filter(reusablemedium_id=OuterRef('pk')))
+            ).get(
                 organizer_id=checkinlists[0].event.organizer_id,
                 type=source_type,
                 identifier=raw_barcode,
-                linked_orderposition__isnull=False,
             )
             raw_barcode_for_checkin = raw_barcode
         except ReusableMedium.DoesNotExist:
@@ -536,6 +595,7 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
                                 'reason': Checkin.REASON_ALREADY_REDEEMED,
                                 'reason_explanation': None,
                                 'require_attention': False,
+                                'checkin_texts': [],
                                 '__warning': 'Compatibility hack active due to detected old pretixSCAN version',
                             }, status=400)
                     except:  # we don't care e.g. about invalid version numbers
@@ -547,6 +607,7 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
                     'reason': Checkin.REASON_INVALID,
                     'reason_explanation': None,
                     'require_attention': False,
+                    'checkin_texts': [],
                     'list': MiniCheckinListSerializer(checkinlists[0]).data,
                 }, status=404)
             elif revoked_matches and force:
@@ -576,33 +637,125 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
                     'reason': Checkin.REASON_REVOKED,
                     'reason_explanation': None,
                     'require_attention': False,
+                    'checkin_texts': [],
                     'position': CheckinListOrderPositionSerializer(op, context=_make_context(context, revoked_matches[
                         0].event)).data,
                     'list': MiniCheckinListSerializer(list_by_event[revoked_matches[0].event_id]).data,
                 }, status=400)
         else:
-            op_candidates = [media.linked_orderposition]
-            if list_by_event[media.linked_orderposition.order.event_id].addon_match:
-                op_candidates += list(media.linked_orderposition.addons.all())
+            linked_ops = medium.linked_orderpositions.all().select_related("order").prefetch_related("addons")
+            linked_event_ids = {op.order.event_id for op in linked_ops}
+            if not any(event_id in list_by_event for event_id in linked_event_ids):
+                # Medium exists but connected ticket is for the wrong event
+                if not simulate:
+                    checkinlists[0].event.log_action('pretix.event.checkin.unknown', data={
+                        'datetime': datetime,
+                        'type': checkin_type,
+                        'list': checkinlists[0].pk,
+                        'barcode': raw_barcode,
+                        'searched_lists': [cl.pk for cl in checkinlists]
+                    }, user=user, auth=auth)
+                    Checkin.objects.create(
+                        position=None,
+                        successful=False,
+                        error_reason=Checkin.REASON_INVALID,
+                        error_explanation=gettext('Medium connected to other event'),
+                        **common_checkin_args,
+                    )
+                return Response({
+                    'detail': 'Not found.',  # for backwards compatibility
+                    'status': 'error',
+                    'reason': Checkin.REASON_INVALID,
+                    'reason_explanation': gettext('Medium connected to other event'),
+                    'require_attention': False,
+                    'checkin_texts': [],
+                    'list': MiniCheckinListSerializer(checkinlists[0]).data,
+                }, status=404)
+            op_candidates = []
+            for op in linked_ops:
+                if op.order.event_id in list_by_event:
+                    reusable_medium_used = medium
+                    op_candidates.append(op)
+                    if list_by_event[op.order.event_id].addon_match:
+                        op_candidates += list(op.addons.all())
 
     # 3. Handle the "multiple options found" case: Except for the unlikely case of a secret being also a valid primary
-    #    key on the same list, we're probably dealing with the ``addon_match`` case here and need to figure out
-    #    which add-on has the right product.
+    #    key on the same list, we're probably dealing with multiple linked_orderpositions or the ``addon_match`` case
+    #    here and need to figure out which op has the right product. This basically is a valid-for-checkin-test on every op.
     if len(op_candidates) > 1:
-        op_candidates_matching_product = [
-            op for op in op_candidates
-            if (
-                (list_by_event[op.order.event_id].addon_match or op.secret == raw_barcode or legacy_url_support) and
-                (list_by_event[op.order.event_id].all_products or op.item_id in {i.pk for i in list_by_event[op.order.event_id].limit_products.all()})
-            )
-        ]
 
-        if len(op_candidates_matching_product) == 0:
-            # None of the found add-ons has the correct product, too bad! We could just error out here, but
+        if not reusable_medium_used:
+            # 3a. First, we clean up that we made an imprecise query above. If a scan is made for multiple check-in lists,
+            # we have queried ``addon_to__secret=raw_barcode``, even if some of the lists in question do not allow addon
+            # matching. So we accept all candidates that match one of these cases:
+            # - Exactly the ticket secret we scanned (because that's always a possible result)
+            # - Exactly the ticket pk we scanned (on legacy endpoints)
+            # - An add-on on a list that allows add-on matching
+            # This is not necessary when a reusable media was used, since in that case we already obeyed list.addon_match
+            # correctly above.
+            op_candidates_filtered = [
+                op for op in op_candidates
+                if (
+                    op.secret == raw_barcode or
+                    list_by_event[op.order.event_id].addon_match or
+                    (str(op.pk) == raw_barcode and legacy_url_support and not untrusted_input)
+                )
+            ]
+        else:
+            op_candidates_filtered = op_candidates
+
+        if len(op_candidates_filtered) > 1:
+            # 3b. If we still have multiple candidates, we filter by product based on the check-in list configuration.
+            # This is relevant for the addon_match scenario where the scanned ticket has multiple add-ons, but only
+            # one is contained in the check-in list used to scan. It makes sense to filter this first, since it is a
+            # "static" check, i.e. scanning the same QR code on the same check-in list will always do the same, no matter
+            # when I scan it, and it is "intentional" filtering in the sense that the admin configured this behaviour
+            # into the check-in list.
+            op_candidates_filtered = [
+                op for op in op_candidates_filtered
+                if list_by_event[op.order.event_id].all_products or op.item_id in {i.pk for i in list_by_event[op.order.event_id].limit_products.all()}
+            ]
+
+        if len(op_candidates_filtered) > 1:
+            # 3c. If we still have multiple candidates, we filter by validity date. This was introduced for the case where
+            # a reusable media refers to two tickets, one currently valid and one expired or in the future. Howeer,
+            # it could in theory also happen with two add-ons being on the same check-in list but without overlapping
+            # validity. It makes sense to filter this "after" the previous checks since it is not "intentional" filtering
+            # configured by the admin but "accidental" filtering that depends on the time of execution.
+            op_candidates_filtered = [
+                op for op in op_candidates_filtered
+                if (
+                    (not op.valid_from or op.valid_from <= datetime) and
+                    (not op.valid_until or op.valid_until > datetime)
+                )
+            ]
+
+        if len(op_candidates_filtered) == 0:
+            # None of the ops is valid today or has the correct product, too bad! We could just error out here, but
             # instead we just continue with *any* product and have it rejected by the check in perform_checkin.
-            # This has the advantage of a better error message.
-            op_candidates = [op_candidates[0]]
-        elif len(op_candidates_matching_product) > 1:
+            # To improve the error message, we select the op that will "work next" or - if none matches - "worked last".
+            op_candidate = None
+            for op in op_candidates:
+                if (
+                    op.valid_from and op.valid_from > datetime and
+                    (not op_candidate or op.valid_from < op_candidate.valid_from)
+                ):
+                    op_candidate = op
+
+            if not op_candidate:
+                # no candidate in the future, get closest in the past
+                for op in op_candidates:
+                    if (
+                        op.valid_until and op.valid_until < datetime and
+                        (not op_candidate or op.valid_until > op_candidate.valid_until)
+                    ):
+                        op_candidate = op
+
+            if not op_candidate:
+                op_candidate = op_candidates[0]
+
+            op_candidates = [op_candidate]
+        elif len(op_candidates_filtered) > 1:
             # It's still ambiguous, we'll error out.
             # We choose the first match (regardless of product) for the logging since it's most likely to be the
             # base product according to our order_by above.
@@ -631,11 +784,12 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
                 'reason': Checkin.REASON_AMBIGUOUS,
                 'reason_explanation': None,
                 'require_attention': op.require_checkin_attention,
+                'checkin_texts': op.checkin_texts,
                 'position': CheckinListOrderPositionSerializer(op, context=_make_context(context, op.order.event)).data,
                 'list': MiniCheckinListSerializer(list_by_event[op.order.event_id]).data,
             }, status=400)
         else:
-            op_candidates = op_candidates_matching_product
+            op_candidates = op_candidates_filtered
 
     op = op_candidates[0]
     common_checkin_args['list'] = list_by_event[op.order.event_id]
@@ -647,16 +801,30 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
             if str(q.pk) in answers_data:
                 try:
                     if q.type == Question.TYPE_FILE:
-                        given_answers[q] = _handle_file_upload(answers_data[str(q.pk)], user, auth)
+                        if answers_data[str(q.pk)]:
+                            given_answers[q] = _handle_file_upload(answers_data[str(q.pk)], user, auth)
+                        else:
+                            given_answers[q] = None
                     else:
                         given_answers[q] = q.clean_answer(answers_data[str(q.pk)])
                 except (ValidationError, BaseValidationError):
                     pass
 
     # 6. Pass to our actual check-in logic
-    with language(op.order.event.settings.locale):
+    if use_order_locale:
+        locale = op.order.locale
+    else:
+        locale = op.order.event.settings.locale
+    with language(locale):
         try:
-            perform_checkin(
+            if exchange_medium_identifier and medium:
+                # Cannot scan a medium and then request to exchange it
+                raise CheckInError(
+                    gettext('You cannot exchange a medium for a medium.'),
+                    'error'
+                )
+
+            checkin_args = dict(
                 op=op,
                 clist=list_by_event[op.order.event_id],
                 given_answers=given_answers,
@@ -674,16 +842,52 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
                 from_revoked_secret=from_revoked_secret,
                 simulate=simulate,
                 gate=gate,
+                reusable_medium=medium,
             )
+
+            if exchange_medium_identifier:  # other fields are filled, see CheckinRPCRedeemInputSerializer.validate
+                if simulate:
+                    raise CheckInError(
+                        gettext('You cannot simulate a medium exchange.'),
+                        'error'
+                    )
+                with transaction.atomic():
+                    # Do exchange and check-in atomically, i.e. both succeed or both fail
+                    medium = perform_media_exchange(
+                        organizer=request.organizer,
+                        media_type=exchange_medium_type,
+                        identifier=exchange_medium_identifier,
+                        link_orderposition=op,
+                        user=user,
+                        auth=auth,
+                    )
+                    source_type = medium.media_type.identifier
+                    checkin_args['reusable_medium'] = medium
+                    perform_checkin(**checkin_args)
+            else:
+                perform_checkin(**checkin_args)
         except RequiredQuestionsError as e:
             return Response({
                 'status': 'incomplete',
                 'require_attention': op.require_checkin_attention,
+                'checkin_texts': op.checkin_texts,
                 'position': CheckinListOrderPositionSerializer(op, context=_make_context(context, op.order.event)).data,
                 'questions': [
                     QuestionSerializer(q).data for q in e.questions
                 ],
                 'list': MiniCheckinListSerializer(list_by_event[op.order.event_id]).data,
+            }, status=400)
+        except RequiredMediaExchangeError as e:
+            return Response({
+                'status': 'exchange',
+                'require_attention': op.require_checkin_attention,
+                'checkin_texts': op.checkin_texts,
+                'position': CheckinListOrderPositionSerializer(op, context=_make_context(context, op.order.event)).data,
+                'media_policy': e.media_policy,
+                'media_type': e.media_type,
+                'list': MiniCheckinListSerializer(list_by_event[op.order.event_id]).data,
+                'reason': e.code,
+                'reason_explanation': e.msg,
             }, status=400)
         except CheckInError as e:
             if not simulate:
@@ -709,6 +913,7 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
                 'reason': e.code,
                 'reason_explanation': e.reason,
                 'require_attention': op.require_checkin_attention,
+                'checkin_texts': op.checkin_texts,
                 'position': CheckinListOrderPositionSerializer(op, context=_make_context(context, op.order.event)).data,
                 'list': MiniCheckinListSerializer(list_by_event[op.order.event_id]).data,
             }, status=400)
@@ -716,6 +921,7 @@ def _redeem_process(*, checkinlists, raw_barcode, answers_data, datetime, force,
             return Response({
                 'status': 'ok',
                 'require_attention': op.require_checkin_attention,
+                'checkin_texts': op.checkin_texts,
                 'position': CheckinListOrderPositionSerializer(op, context=_make_context(context, op.order.event)).data,
                 'list': MiniCheckinListSerializer(list_by_event[op.order.event_id]).data,
             }, status=201)
@@ -759,14 +965,14 @@ class CheckinListPositionViewSet(viewsets.ReadOnlyModelViewSet):
     }
 
     filterset_class = CheckinOrderPositionFilter
-    permission = ('can_view_orders', 'can_checkin_orders')
-    write_permission = ('can_change_orders', 'can_checkin_orders')
+    permission = AnyPermissionOf('event.orders:read', 'event.orders:checkin')
+    write_permission = AnyPermissionOf('event.orders:write', 'event.orders:checkin')
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
         ctx['event'] = self.request.event
         ctx['expand'] = self.request.query_params.getlist('expand')
-        ctx['pdf_data'] = self.request.query_params.get('pdf_data', 'false') == 'true'
+        ctx['pdf_data'] = self.request.query_params.get('pdf_data', 'false').lower() == 'true'
         return ctx
 
     def get_filterset_kwargs(self):
@@ -785,13 +991,13 @@ class CheckinListPositionViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self, ignore_status=False, ignore_products=False):
         qs = _checkin_list_position_queryset(
             [self.checkinlist],
-            ignore_status=self.request.query_params.get('ignore_status', 'false') == 'true' or ignore_status,
+            ignore_status=self.request.query_params.get('ignore_status', 'false').lower() == 'true' or ignore_status,
             ignore_products=ignore_products,
-            pdf_data=self.request.query_params.get('pdf_data', 'false') == 'true',
+            pdf_data=self.request.query_params.get('pdf_data', 'false').lower() == 'true',
             expand=self.request.query_params.getlist('expand'),
         )
 
-        if 'pk' not in self.request.resolver_match.kwargs and 'can_view_orders' not in self.request.eventpermset \
+        if 'pk' not in self.request.resolver_match.kwargs and 'event.orders:read' not in self.request.eventpermset \
                 and len(self.request.query_params.get('search', '')) < 3:
             qs = qs.none()
 
@@ -829,7 +1035,7 @@ class CheckinListPositionViewSet(viewsets.ReadOnlyModelViewSet):
             user=self.request.user,
             auth=self.request.auth,
             expand=self.request.query_params.getlist('expand'),
-            pdf_data=self.request.query_params.get('pdf_data', 'false') == 'true',
+            pdf_data=self.request.query_params.get('pdf_data', 'false').lower() == 'true',
             questions_supported=self.request.data.get('questions_supported', True),
             canceled_supported=self.request.data.get('canceled_supported', False),
             request=self.request,  # this is not clean, but we need it in the serializers for URL generation
@@ -840,9 +1046,9 @@ class CheckinListPositionViewSet(viewsets.ReadOnlyModelViewSet):
 class CheckinRPCRedeemView(views.APIView):
     def post(self, request, *args, **kwargs):
         if isinstance(self.request.auth, (TeamAPIToken, Device)):
-            events = self.request.auth.get_events_with_permission(('can_change_orders', 'can_checkin_orders'))
+            events = self.request.auth.get_events_with_permission(('event.orders:write', 'event.orders:checkin'))
         elif self.request.user.is_authenticated:
-            events = self.request.user.get_events_with_permission(('can_change_orders', 'can_checkin_orders'), self.request).filter(
+            events = self.request.user.get_events_with_permission(('event.orders:write', 'event.orders:checkin'), self.request).filter(
                 organizer=self.request.organizer
             )
         else:
@@ -864,11 +1070,15 @@ class CheckinRPCRedeemView(views.APIView):
             user=self.request.user,
             auth=self.request.auth,
             expand=self.request.query_params.getlist('expand'),
-            pdf_data=self.request.query_params.get('pdf_data', 'false') == 'true',
+            pdf_data=self.request.query_params.get('pdf_data', 'false').lower() == 'true',
             questions_supported=s.validated_data['questions_supported'],
+            use_order_locale=s.validated_data['use_order_locale'],
             canceled_supported=True,
             request=self.request,  # this is not clean, but we need it in the serializers for URL generation
             legacy_url_support=False,
+            exchange_medium_type=s.validated_data.get('exchange_medium_type'),
+            exchange_medium_identifier=s.validated_data.get('exchange_medium_identifier'),
+            simulate=s.validated_data.get('simulate'),
         )
 
 
@@ -902,15 +1112,16 @@ class CheckinRPCSearchView(ListAPIView):
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
         ctx['expand'] = self.request.query_params.getlist('expand')
+        ctx['organizer'] = self.request.organizer
         ctx['pdf_data'] = False
         return ctx
 
     @cached_property
     def lists(self):
         if isinstance(self.request.auth, (TeamAPIToken, Device)):
-            events = self.request.auth.get_events_with_permission(('can_view_orders', 'can_checkin_orders'))
+            events = self.request.auth.get_events_with_permission(('event.orders:read', 'event.orders:checkin'))
         elif self.request.user.is_authenticated:
-            events = self.request.user.get_events_with_permission(('can_view_orders', 'can_checkin_orders'), self.request).filter(
+            events = self.request.user.get_events_with_permission(('event.orders:read', 'event.orders:checkin'), self.request).filter(
                 organizer=self.request.organizer
             )
         else:
@@ -927,9 +1138,9 @@ class CheckinRPCSearchView(ListAPIView):
     @cached_property
     def has_full_access_permission(self):
         if isinstance(self.request.auth, (TeamAPIToken, Device)):
-            events = self.request.auth.get_events_with_permission('can_view_orders')
+            events = self.request.auth.get_events_with_permission('event.orders:read')
         elif self.request.user.is_authenticated:
-            events = self.request.user.get_events_with_permission('can_view_orders', self.request).filter(
+            events = self.request.user.get_events_with_permission('event.orders:read', self.request).filter(
                 organizer=self.request.organizer
             )
         else:
@@ -941,9 +1152,9 @@ class CheckinRPCSearchView(ListAPIView):
     def get_queryset(self, ignore_status=False, ignore_products=False):
         qs = _checkin_list_position_queryset(
             self.lists,
-            ignore_status=self.request.query_params.get('ignore_status', 'false') == 'true' or ignore_status,
+            ignore_status=self.request.query_params.get('ignore_status', 'false').lower() == 'true' or ignore_status,
             ignore_products=ignore_products,
-            pdf_data=self.request.query_params.get('pdf_data', 'false') == 'true',
+            pdf_data=self.request.query_params.get('pdf_data', 'false').lower() == 'true',
             expand=self.request.query_params.getlist('expand'),
         )
 
@@ -951,3 +1162,101 @@ class CheckinRPCSearchView(ListAPIView):
             qs = qs.none()
 
         return qs
+
+
+class CheckinRPCAnnulView(views.APIView):
+    def post(self, request, *args, **kwargs):
+        if isinstance(self.request.auth, (TeamAPIToken, Device)):
+            events = self.request.auth.get_events_with_permission(('event.orders:write', 'event.orders:checkin'))
+        elif self.request.user.is_authenticated:
+            events = self.request.user.get_events_with_permission(('event.orders:write', 'event.orders:checkin'), self.request).filter(
+                organizer=self.request.organizer
+            )
+        else:
+            raise ValueError("unknown authentication method")
+
+        s = CheckinRPCAnnulInputSerializer(data=request.data, context={'events': events})
+        s.is_valid(raise_exception=True)
+
+        with transaction.atomic():
+            try:
+                qs = Checkin.all.all()
+                if isinstance(request.auth, Device):
+                    qs = qs.filter(device=request.auth)
+                ci = qs.select_for_update(
+                    of=OF_SELF,
+                ).select_related("position", "position__order", "position__order__event").get(
+                    list__in=s.validated_data['lists'],
+                    nonce=s.validated_data['nonce'],
+                )
+                if connection.features.has_select_for_update_of and ci.position_id:
+                    # Lock position as well, can't do it with of= above because relation is nullable
+                    OrderPosition.objects.select_for_update(of=OF_SELF).get(pk=ci.position_id)
+
+                if not ci.successful or not ci.position:
+                    raise ValidationError("Cannot annul an unsuccessful checkin")
+            except Checkin.DoesNotExist:
+                raise NotFound("No check-in found based on nonce")
+            except Checkin.MultipleObjectsReturned:
+                raise ValidationError("Multiple check-ins found based on nonce")
+
+            annulment_time = s.validated_data.get("datetime") or now()
+
+            if annulment_time - ci.datetime > timedelta(minutes=15):
+                # Compare to sent datetime, which makes this cheatable, but allows offline annulment of checkins
+                ci.position.order.log_action('pretix.event.checkin.annulment.ignored', data={
+                    'checkin': ci.pk,
+                    'position': ci.position.id,
+                    'positionid': ci.position.positionid,
+                    'datetime': annulment_time,
+                    'error_explanation': s.validated_data.get("error_explanation"),
+                    'type': ci.type,
+                    'list': ci.list_id,
+                }, user=request.user, auth=request.auth)
+                return Response({
+                    "non_field_errors": ["Annulment is not allowed more than 15 minutes after check-in"]
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            if ci.device and ci.device != request.auth:
+                return Response({
+                    "non_field_errors": ["Annulment is only allowed from the same device"]
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            ci.successful = False
+            ci.error_reason = Checkin.REASON_ANNULLED
+            ci.error_explanation = s.validated_data.get("error_explanation")
+            ci.save(update_fields=["successful", "error_reason", "error_explanation"])
+            ci.position.order.log_action('pretix.event.checkin.annulled', data={
+                'checkin': ci.pk,
+                'position': ci.position.id,
+                'positionid': ci.position.positionid,
+                'datetime': annulment_time,
+                'error_explanation': s.validated_data.get("error_explanation"),
+                'type': ci.type,
+                'list': ci.list_id,
+            }, user=request.user, auth=request.auth)
+            checkin_annulled.send(ci.position.order.event, checkin=ci)
+
+        return Response({"status": "ok"}, status=status.HTTP_200_OK)
+
+
+class CheckinViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = CheckinSerializer
+    queryset = Checkin.all.none()
+    filter_backends = (DjangoFilterBackend, RichOrderingFilter)
+    filterset_class = CheckinFilter
+    ordering = ('created', 'id')
+    ordering_fields = ('created', 'datetime', 'id',)
+    permission = 'event.orders:read'
+
+    def get_queryset(self):
+        qs = Checkin.all.filter(list__event=self.request.event).select_related(
+            "position",
+            "device",
+        )
+        return qs
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['event'] = self.request.event
+        return ctx

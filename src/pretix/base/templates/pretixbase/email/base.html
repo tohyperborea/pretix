@@ -4,7 +4,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, user-scalable=false">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style type="text/css">
         body {
             background-color: #eee;
@@ -131,6 +131,9 @@
             text-align: left;
             padding: 0;
         }
+        .content table td.align-right {
+            text-align: right;
+        }
 
         a.button {
             display: inline-block;
@@ -171,12 +174,21 @@
         .order-details > thead > tr > td:first-child {
             width: 20%;
         }
+        .order-details, .cart-table {
+            border-spacing: 0;
+        }
+        .order-details td:first-child, .cart-table td:first-child {
+            padding-left: 0;
+        }
         .order-details td {
             font-size: 12px;
         }
 
         pre, pre code {
             white-space: pre-line;
+        }
+        .text-right, .content table td.text-right {
+            text-align: right;
         }
 
         {% if rtl %}
@@ -185,6 +197,9 @@
             }
             .content {
                 text-align: right;
+            }
+            .text-right, .content table td.text-right {
+                text-align: left;
             }
         {% endif %}
 

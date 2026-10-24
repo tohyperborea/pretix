@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -37,9 +37,11 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
-    'django.contrib.staticfiles',
     'django.contrib.humanize',
+    # pretix needs to go before staticfiles
+    # so we can override the runserver command
     'pretix.base',
+    'django.contrib.staticfiles',
     'pretix.control',
     'pretix.presale',
     'pretix.multidomain',
@@ -62,6 +64,7 @@ INSTALLED_APPS = [
     'pretix.plugins.badges',
     'pretix.plugins.manualpayment',
     'pretix.plugins.returnurl',
+    'pretix.plugins.autocheckin',
     'pretix.plugins.webcheckin',
     'django_countries',
     'oauth2_provider',
@@ -74,14 +77,25 @@ FORMAT_MODULE_PATH = [
     'pretix.helpers.formats',
 ]
 
+CORE_MODULES = {
+    "pretix.base",
+    "pretix.presale",
+    "pretix.control",
+    "pretix.plugins.checkinlists",
+    "pretix.plugins.reports",
+}
+
 ALL_LANGUAGES = [
     ('en', _('English')),
     ('de', _('German')),
     ('de-informal', _('German (informal)')),
     ('ar', _('Arabic')),
+    ('eu', _('Basque')),
+    ('ca', _('Catalan')),
     ('zh-hans', _('Chinese (simplified)')),
     ('zh-hant', _('Chinese (traditional)')),
     ('cs', _('Czech')),
+    ('hr', _('Croatian')),
     ('da', _('Danish')),
     ('nl', _('Dutch')),
     ('nl-informal', _('Dutch (informal)')),
@@ -89,15 +103,23 @@ ALL_LANGUAGES = [
     ('fi', _('Finnish')),
     ('gl', _('Galician')),
     ('el', _('Greek')),
+    ('he', _('Hebrew')),
+    ('hu', _('Hungarian')),
     ('id', _('Indonesian')),
     ('it', _('Italian')),
+    ('ja', _('Japanese')),
     ('lv', _('Latvian')),
+    ('nb-no', _('Norwegian Bokmål')),
     ('pl', _('Polish')),
     ('pt-pt', _('Portuguese (Portugal)')),
     ('pt-br', _('Portuguese (Brazil)')),
     ('ro', _('Romanian')),
     ('ru', _('Russian')),
+    ('sk', _('Slovak')),
+    ('sv', _('Swedish')),
     ('es', _('Spanish')),
+    ('es-419', _('Spanish (Latin America)')),
+    ('th', _('Thai')),
     ('tr', _('Turkish')),
     ('uk', _('Ukrainian')),
 ]
@@ -105,11 +127,13 @@ LANGUAGES_OFFICIAL = {
     'en', 'de', 'de-informal'
 }
 LANGUAGES_RTL = {
-    'ar', 'hw'
+    # When adding more right-to-left languages, also update pretix/static/pretixbase/scss/_rtl.scss
+    'ar', 'he'
 }
 LANGUAGES_INCUBATING = {
-    'pl', 'fi', 'pt-br', 'gl',
+    'pt-br', 'gl',
 }
+LANGUAGES = ALL_LANGUAGES
 LOCALE_PATHS = [
     os.path.join(os.path.dirname(__file__), 'locale'),
 ]
@@ -146,6 +170,18 @@ EXTRA_LANG_INFO = {
         'code': 'pt-pt',
         'name': 'Portuguese',
         'name_local': 'Português',
+    },
+    'nb-no': {
+        'bidi': False,
+        'code': 'nb-no',
+        'name': 'Norwegian Bokmal',
+        'name_local': 'norsk (bokmål)',
+    },
+    'es-419': {
+        'bidi': False,
+        'code': 'es-419',
+        'name': 'Spanish (Latin America)',
+        'name_local': 'Español',
     },
 }
 
@@ -211,7 +247,6 @@ STORAGES = {
 
 COMPRESS_PRECOMPILERS = (
     ('text/x-scss', 'django_libsass.SassCompiler'),
-    ('text/vue', 'pretix.helpers.compressor.VueCompiler'),
 )
 
 COMPRESS_OFFLINE_CONTEXT = {
@@ -233,7 +268,12 @@ COMPRESS_FILTERS = {
     )
 }
 
-CURRENCIES = list(currencies)
+CURRENCIES = [
+    c for c in currencies
+    if c.alpha_3 not in {
+        'USN', 'XAG', 'XAU', 'XBA', 'XBB', 'XBC', 'XBD', 'XDR', 'XPD', 'XPT', 'XSU', 'XTS', 'XUA',
+    }
+]
 CURRENCY_PLACES = {
     # default is 2
     'BIF': 0,
@@ -266,14 +306,17 @@ CACHE_LARGE_VALUES_ALIAS = 'default'
 FILE_UPLOAD_EXTENSIONS_IMAGE = (".png", ".jpg", ".gif", ".jpeg")
 PILLOW_FORMATS_IMAGE = ('PNG', 'GIF', 'JPEG')
 
-FILE_UPLOAD_EXTENSIONS_FAVICON = (".ico", ".png", "jpg", ".gif", ".jpeg")
+FILE_UPLOAD_EXTENSIONS_FAVICON = (".ico", ".png", ".jpg", ".gif", ".jpeg")
+PILLOW_FORMATS_QUESTIONS_FAVICON = ('PNG', 'GIF', 'JPEG', 'ICO')
 
-FILE_UPLOAD_EXTENSIONS_QUESTION_IMAGE = (".png", "jpg", ".gif", ".jpeg", ".bmp", ".tif", ".tiff", ".jfif")
+FILE_UPLOAD_EXTENSIONS_QUESTION_IMAGE = (".png", ".jpg", ".gif", ".jpeg", ".bmp", ".tif", ".tiff", ".jfif")
 PILLOW_FORMATS_QUESTIONS_IMAGE = ('PNG', 'GIF', 'JPEG', 'BMP', 'TIFF')
 
 FILE_UPLOAD_EXTENSIONS_EMAIL_ATTACHMENT = (
     ".png", ".jpg", ".gif", ".jpeg", ".pdf", ".txt", ".docx", ".gif", ".svg",
     ".pptx", ".ppt", ".doc", ".xlsx", ".xls", ".jfif", ".heic", ".heif", ".pages",
-    ".bmp", ".tif", ".tiff"
+    ".bmp", ".tif", ".tiff", ".ics",
 )
 FILE_UPLOAD_EXTENSIONS_OTHER = FILE_UPLOAD_EXTENSIONS_EMAIL_ATTACHMENT
+
+PRETIX_MAX_ORDER_SIZE = 500

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -20,6 +20,7 @@
 # <https://www.gnu.org/licenses/>.
 #
 import logging
+import uuid
 
 from django.core.signals import request_finished
 from django.dispatch import receiver
@@ -46,6 +47,13 @@ class RequestIdFilter(logging.Filter):
         return True
 
 
+class SkipNotFoundFilter(logging.Filter):
+    # Drop the WARNING "Not Found: ..." records django.request emits for 404s
+    # We have different access logs for that
+    def filter(self, record):
+        return getattr(record, 'status_code', None) != 404
+
+
 class RequestIdMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
@@ -58,7 +66,9 @@ class RequestIdMiddleware:
                 import sentry_sdk
                 sentry_sdk.set_tag("request_id", request.request_id)
         else:
-            local.request_id = request.request_id = None
+            # Web server did not pass a request ID, we still generate one to correlate between django logs and
+            # celery logs
+            local.request_id = request.request_id = str(uuid.uuid4())
 
         return self.get_response(request)
 

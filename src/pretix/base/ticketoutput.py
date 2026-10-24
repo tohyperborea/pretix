@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -96,6 +96,9 @@ class BaseTicketOutput:
         """
         raise NotImplementedError()
 
+    def get_tickets_to_print(self, order):
+        return order.positions_with_tickets
+
     def generate_order(self, order: Order) -> Tuple[str, str, str]:
         """
         This method is the same as order() but should not generate one file per order position
@@ -116,7 +119,7 @@ class BaseTicketOutput:
         """
         with tempfile.TemporaryDirectory() as d:
             with ZipFile(os.path.join(d, 'tmp.zip'), 'w') as zipf:
-                for pos in order.positions_with_tickets:
+                for pos in self.get_tickets_to_print(order):
                     fname, __, content = self.generate(pos)
                     zipf.writestr('{}-{}{}'.format(
                         order.code, pos.positionid, os.path.splitext(fname)[1]

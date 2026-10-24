@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -51,6 +51,9 @@ class TicketOutputPdfApp(AppConfig):
         featured = True
         description = _("Issue tickets as PDF files, usable on any device. Our drag-and-drop editor allows you to "
                         "customize the layout of the PDF files to your brand.")
+        settings_links = [
+            ((_("Settings"), _("Tickets")), "control:event.settings.tickets", {}),
+        ]
 
     def ready(self):
         from . import signals  # NOQA

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -103,12 +103,14 @@ class AuthorizationView(RecentAuthenticationRequiredMixin, BaseAuthorizationView
         self.success_url = uri
         logger.debug("Success url for the request: {0}".format(self.success_url))
 
-        msgs = [
+        msgs = [  # NOQA: F841
             _('The application "{application_name}" has been authorized to access your account.').format(
                 application_name=application.name
             )
         ]
-        #self.request.user.send_security_notice(msgs)
+        # Sideburn: no security email on every authorization; a Sideburn tool signs users in through
+        # pretix's OAuth provider.
+        # self.request.user.send_security_notice(msgs)
         self.request.user.log_action('pretix.user.oauth.authorized', user=self.request.user, data={
             'application_id': application.pk,
             'application_name': application.name,

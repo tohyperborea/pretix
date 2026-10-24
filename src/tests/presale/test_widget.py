@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -31,7 +31,6 @@ from django_scopes import scopes_disabled
 from freezegun import freeze_time
 
 from pretix.base.models import Order, OrderPosition
-from pretix.presale.style import regenerate_css, regenerate_organizer_css
 
 from .test_cart import CartTestMixin
 
@@ -47,7 +46,8 @@ class WidgetCartTest(CartTestMixin, TestCase):
             datetime=now() - datetime.timedelta(days=3),
             expires=now() + datetime.timedelta(days=11),
             total=Decimal("23"),
-            locale='en'
+            locale='en',
+            sales_channel=self.orga.sales_channels.get(identifier="web"),
         )
         self.ticket_pos = OrderPosition.objects.create(
             order=self.order,
@@ -58,9 +58,13 @@ class WidgetCartTest(CartTestMixin, TestCase):
         )
 
     def test_iframe_entry_view_wrapper(self):
-        self.client.get('/%s/%s/?iframe=1&locale=de' % (self.orga.slug, self.event.slug))
+        self.event.settings.locales = ["de", "en"]
+        r = self.client.get('/%s/%s/?iframe=1&locale=de' % (self.orga.slug, self.event.slug), headers={
+            "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8",
+        })
         assert 'iframe_session' in self.client.session
         assert self.client.cookies[settings.LANGUAGE_COOKIE_NAME].value == "de"
+        assert r.headers["Content-Language"] == "de"
 
     def test_allow_frame_if_namespaced(self):
         response = self.client.get('/%s/%s/' % (self.orga.slug, self.event.slug))
@@ -143,7 +147,7 @@ class WidgetCartTest(CartTestMixin, TestCase):
         self.assertIn('23', doc.select('.cart .cart-row')[0].select('.price')[1].text)
 
     def test_saleschannel_disabled(self):
-        self.event.sales_channels = []
+        self.event.all_sales_channels = False
         self.event.save()
         response = self.client.get('/%s/%s/widget/product_list' % (self.orga.slug, self.event.slug))
         data = json.loads(response.content.decode())
@@ -162,11 +166,14 @@ class WidgetCartTest(CartTestMixin, TestCase):
         assert response['Access-Control-Allow-Origin'] == '*'
         data = json.loads(response.content.decode())
         assert data == {
+            "target_url": "http://example.com/ccc/30c3/",
+            "subevent": None,
             "name": "30C3",
-            "date_range": f"Dec. 26, {self.event.date_from.year} 00:00",
+            "date_range": f"{self.event.date_from.strftime('%a')}, Dec. 26, {self.event.date_from.year} 00:00",
             "frontpage_text": "",
             "location": "",
             "currency": "EUR",
+            "currency_places": 2,
             "show_variations_expanded": False,
             "display_net_prices": False,
             "use_native_spinners": False,
@@ -180,13 +187,14 @@ class WidgetCartTest(CartTestMixin, TestCase):
                 {
                     "items": [
                         {
-                            "require_voucher": False,
+                            "current_unavailability_reason": None,
                             "order_min": None,
                             "max_price": None,
-                            "price": {"gross": "23.00", "net": "19.33", "tax": "3.67", "name": "", "rate": "19.00", "includes_mixed_tax_rate": False},
+                            "price": {"gross": "23.00", "net": "19.33", "tax": "3.67", "name": "", "rate": "19", "includes_mixed_tax_rate": False},
+                            "suggested_price": {"gross": "23.00", "net": "19.33", "tax": "3.67", "name": "", "rate": "19", "includes_mixed_tax_rate": False},
                             "picture": None,
                             "picture_fullsize": None,
-                            "has_variations": 0,
+                            "has_variations": False,
                             "allow_waitinglist": True,
                             "mandatory_priced_addons": False,
                             "description": None,
@@ -200,13 +208,14 @@ class WidgetCartTest(CartTestMixin, TestCase):
                             "order_max": 4
                         },
                         {
-                            "require_voucher": False,
+                            "current_unavailability_reason": None,
                             "order_min": None,
                             "max_price": "14.00",
                             "price": None,
+                            "suggested_price": None,
                             "picture": None,
                             "picture_fullsize": None,
-                            "has_variations": 4,
+                            "has_variations": True,
                             "allow_waitinglist": True,
                             "mandatory_priced_addons": False,
                             "description": None,
@@ -218,20 +227,26 @@ class WidgetCartTest(CartTestMixin, TestCase):
                                     "id": self.shirt_red.pk,
                                     'original_price': None,
                                     "price": {"gross": "14.00", "net": "11.76", "tax": "2.24", "name": "",
-                                              "rate": "19.00", "includes_mixed_tax_rate": False},
+                                              "rate": "19", "includes_mixed_tax_rate": False},
+                                    "suggested_price": {"gross": "14.00", "net": "11.76", "tax": "2.24", "name": "",
+                                                        "rate": "19", "includes_mixed_tax_rate": False},
                                     "description": None,
                                     "avail": [100, None],
-                                    "order_max": 2
+                                    "order_max": 2,
+                                    "current_unavailability_reason": None,
                                 },
                                 {
                                     "value": "Blue",
                                     "id": self.shirt_blue.pk,
                                     'original_price': None,
                                     "price": {"gross": "12.00", "net": "10.08", "tax": "1.92", "name": "",
-                                              "rate": "19.00", "includes_mixed_tax_rate": False},
+                                              "rate": "19", "includes_mixed_tax_rate": False},
+                                    "suggested_price": {"gross": "12.00", "net": "10.08", "tax": "1.92", "name": "",
+                                                        "rate": "19", "includes_mixed_tax_rate": False},
                                     "description": None,
                                     "avail": [100, None],
-                                    "order_max": 2
+                                    "order_max": 2,
+                                    "current_unavailability_reason": None,
                                 }
                             ],
                             "id": self.shirt.pk,
@@ -261,14 +276,16 @@ class WidgetCartTest(CartTestMixin, TestCase):
             {
                 "items": [
                     {
-                        "require_voucher": False,
+                        "current_unavailability_reason": None,
                         "order_min": None,
                         "max_price": None,
-                        "price": {"gross": "23.00", "net": "19.33", "tax": "3.67", "name": "", "rate": "19.00",
+                        "price": {"gross": "23.00", "net": "19.33", "tax": "3.67", "name": "", "rate": "19",
                                   "includes_mixed_tax_rate": False},
+                        "suggested_price": {"gross": "23.00", "net": "19.33", "tax": "3.67", "name": "", "rate": "19",
+                                            "includes_mixed_tax_rate": False},
                         "picture": None,
                         "picture_fullsize": None,
-                        "has_variations": 0,
+                        "has_variations": False,
                         "allow_waitinglist": True,
                         "mandatory_priced_addons": False,
                         "description": None,
@@ -308,13 +325,14 @@ class WidgetCartTest(CartTestMixin, TestCase):
             {
                 "items": [
                     {
-                        "require_voucher": False,
+                        "current_unavailability_reason": None,
                         "order_min": None,
                         "max_price": "14.00",
                         "price": None,
+                        "suggested_price": None,
                         "picture": None,
                         "picture_fullsize": None,
-                        "has_variations": 4,
+                        "has_variations": True,
                         "allow_waitinglist": True,
                         "mandatory_priced_addons": False,
                         "description": None,
@@ -326,10 +344,13 @@ class WidgetCartTest(CartTestMixin, TestCase):
                                 "id": self.shirt_red.pk,
                                 'original_price': None,
                                 "price": {"gross": "14.00", "net": "11.76", "tax": "2.24", "name": "",
-                                          "rate": "19.00", "includes_mixed_tax_rate": False},
+                                          "rate": "19", "includes_mixed_tax_rate": False},
+                                "suggested_price": {"gross": "14.00", "net": "11.76", "tax": "2.24", "name": "",
+                                                    "rate": "19", "includes_mixed_tax_rate": False},
                                 "description": None,
                                 "avail": [100, None],
-                                "order_max": 2
+                                "order_max": 2,
+                                "current_unavailability_reason": None,
                             }
                         ],
                         "id": self.shirt.pk,
@@ -347,16 +368,19 @@ class WidgetCartTest(CartTestMixin, TestCase):
 
     def test_product_list_view_with_voucher(self):
         with scopes_disabled():
-            self.event.vouchers.create(item=self.ticket, code="ABCDE")
+            self.event.vouchers.create(item=self.ticket, code="ABCDE", max_usages=1)
         response = self.client.get('/%s/%s/widget/product_list?voucher=ABCDE' % (self.orga.slug, self.event.slug))
         assert response['Access-Control-Allow-Origin'] == '*'
         data = json.loads(response.content.decode())
         assert data == {
+            "target_url": "http://example.com/ccc/30c3/",
+            "subevent": None,
             "name": "30C3",
-            "date_range": f"Dec. 26, {self.event.date_from.year} 00:00",
+            "date_range": f"{self.event.date_from.strftime('%a')}, Dec. 26, {self.event.date_from.year} 00:00",
             "frontpage_text": "",
             "location": "",
             "currency": "EUR",
+            "currency_places": 2,
             "show_variations_expanded": False,
             "display_net_prices": False,
             "use_native_spinners": False,
@@ -370,13 +394,14 @@ class WidgetCartTest(CartTestMixin, TestCase):
                 {
                     "items": [
                         {
-                            "require_voucher": False,
+                            "current_unavailability_reason": None,
                             "order_min": None,
                             "max_price": None,
-                            "price": {"gross": "23.00", "net": "19.33", "tax": "3.67", "name": "", "rate": "19.00", "includes_mixed_tax_rate": False},
+                            "price": {"gross": "23.00", "net": "19.33", "tax": "3.67", "name": "", "rate": "19", "includes_mixed_tax_rate": False},
+                            "suggested_price": {"gross": "23.00", "net": "19.33", "tax": "3.67", "name": "", "rate": "19", "includes_mixed_tax_rate": False},
                             "picture": None,
                             "picture_fullsize": None,
-                            "has_variations": 0,
+                            "has_variations": False,
                             "allow_waitinglist": True,
                             "mandatory_priced_addons": False,
                             "description": None,
@@ -387,7 +412,7 @@ class WidgetCartTest(CartTestMixin, TestCase):
                             "free_price": False,
                             "original_price": None,
                             "name": "Early-bird ticket",
-                            "order_max": 4
+                            "order_max": 1
                         },
                     ],
                     "description": None,
@@ -403,17 +428,20 @@ class WidgetCartTest(CartTestMixin, TestCase):
 
     def test_product_list_view_with_voucher_variation_through_quota(self):
         with scopes_disabled():
-            self.event.vouchers.create(quota=self.quota_shirts, code="ABCDE")
+            self.event.vouchers.create(quota=self.quota_shirts, code="ABCDE", max_usages=1)
             self.quota_shirts.variations.remove(self.shirt_blue)
         response = self.client.get('/%s/%s/widget/product_list?voucher=ABCDE' % (self.orga.slug, self.event.slug))
         assert response['Access-Control-Allow-Origin'] == '*'
         data = json.loads(response.content.decode())
         assert data == {
+            "target_url": "http://example.com/ccc/30c3/",
+            "subevent": None,
             "name": "30C3",
-            "date_range": f"Dec. 26, {self.event.date_from.year} 00:00",
+            "date_range": f"{self.event.date_from.strftime('%a')}, Dec. 26, {self.event.date_from.year} 00:00",
             "frontpage_text": "",
             "location": "",
             "currency": "EUR",
+            "currency_places": 2,
             "show_variations_expanded": False,
             "display_net_prices": False,
             "use_native_spinners": False,
@@ -432,13 +460,14 @@ class WidgetCartTest(CartTestMixin, TestCase):
                             'picture': None,
                             "picture_fullsize": None,
                             'description': None,
-                            'has_variations': 2,
+                            'has_variations': True,
                             "allow_waitinglist": True,
                             "mandatory_priced_addons": False,
-                            'require_voucher': False,
+                            'current_unavailability_reason': None,
                             'order_min': None,
                             'order_max': None,
                             'price': None,
+                            'suggested_price': None,
                             'min_price': '14.00',
                             'max_price': '14.00',
                             'free_price': False,
@@ -448,18 +477,27 @@ class WidgetCartTest(CartTestMixin, TestCase):
                                 {
                                     'id': self.shirt_red.pk,
                                     'value': 'Red',
-                                    'order_max': 2,
+                                    'order_max': 1,
                                     'description': None,
                                     'original_price': None,
                                     'price': {
                                         'gross': '14.00',
                                         'net': '11.76',
                                         'tax': '2.24',
-                                        'rate': '19.00',
+                                        'rate': '19',
                                         'name': '',
                                         'includes_mixed_tax_rate': False
                                     },
-                                    'avail': [100, None]
+                                    'suggested_price': {
+                                        'gross': '14.00',
+                                        'net': '11.76',
+                                        'tax': '2.24',
+                                        'rate': '19',
+                                        'name': '',
+                                        'includes_mixed_tax_rate': False
+                                    },
+                                    'avail': [100, None],
+                                    'current_unavailability_reason': None,
                                 },
                             ]
                         }
@@ -482,11 +520,14 @@ class WidgetCartTest(CartTestMixin, TestCase):
         assert response['Access-Control-Allow-Origin'] == '*'
         data = json.loads(response.content.decode())
         assert data == {
+            "target_url": "http://example.com/ccc/30c3/",
+            "subevent": None,
             "name": "30C3",
-            "date_range": f"Dec. 26, {self.event.date_from.year} 00:00",
+            "date_range": f"{self.event.date_from.strftime('%a')}, Dec. 26, {self.event.date_from.year} 00:00",
             "frontpage_text": "",
             "location": "",
             "currency": "EUR",
+            "currency_places": 2,
             'poweredby': '<a href="https://pretix.eu" target="_blank" rel="noopener">ticketing powered by pretix</a>',
             "show_variations_expanded": False,
             "display_net_prices": False,
@@ -505,34 +546,34 @@ class WidgetCartTest(CartTestMixin, TestCase):
 
     @override_settings(COMPRESS_PRECOMPILERS=settings.COMPRESS_PRECOMPILERS_ORIGINAL)
     def test_css_customized(self):
-        response = self.client.get('/%s/%s/widget/v1.css' % (self.orga.slug, self.event.slug))
+        response = self.client.get('/%s/%s/widget/v2.css' % (self.orga.slug, self.event.slug))
         c = b"".join(response.streaming_content).decode()
-        assert '#7f5a91' in c
+        assert '#8E44B3' in c
         assert '#33c33c' not in c
         assert '#34c34c' not in c
 
         self.orga.settings.primary_color = "#33c33c"
-        regenerate_organizer_css.apply(args=(self.orga.pk,))
-        response = self.client.get('/%s/%s/widget/v1.css' % (self.orga.slug, self.event.slug))
+        self.orga.cache.clear()
+        response = self.client.get('/%s/%s/widget/v2.css' % (self.orga.slug, self.event.slug))
         c = b"".join(response.streaming_content).decode()
-        assert '#7f5a91' not in c
+        assert '#8E44B3' not in c
         assert '#33c33c' in c
         assert '#34c34c' not in c
 
         self.event.settings.primary_color = "#34c34c"
-        regenerate_css.apply(args=(self.event.pk,))
-        response = self.client.get('/%s/%s/widget/v1.css' % (self.orga.slug, self.event.slug))
+        self.event.cache.clear()
+        response = self.client.get('/%s/%s/widget/v2.css' % (self.orga.slug, self.event.slug))
         c = b"".join(response.streaming_content).decode()
-        assert '#7f5a91' not in c
+        assert '#8E44B3' not in c
         assert '#33c33c' not in c
         assert '#34c34c' in c
 
     def test_js_localized(self):
-        response = self.client.get('/widget/v1.en.js')
+        response = self.client.get('/widget/v2.en.js')
         c = response.content.decode()
         assert '%m/%d/%Y' in c
         assert '%d.%m.%Y' not in c
-        response = self.client.get('/widget/v1.de.js')
+        response = self.client.get('/widget/v2.de.js')
         c = response.content.decode()
         assert '%m/%d/%Y' not in c
         assert '%d.%m.%Y' in c
@@ -564,7 +605,7 @@ class WidgetCartTest(CartTestMixin, TestCase):
             "net": "19.52",
             "tax": "3.48",
             "name": "MIXED!",
-            "rate": "19.00",
+            "rate": "19",
             "includes_mixed_tax_rate": True
         }
 
@@ -584,14 +625,15 @@ class WidgetCartTest(CartTestMixin, TestCase):
             data = json.loads(response.content.decode())
             assert data == {
                 'list_type': 'list',
+                'meta_filter_fields': [],
                 'name': '30C3',
                 'frontpage_text': '',
                 'poweredby': '<a href="https://pretix.eu" target="_blank" rel="noopener">ticketing powered by pretix</a>',
                 'has_more_events': False,
                 'events': [
-                    {'name': 'Present', 'date_range': 'Jan. 1, 2019 11:00', 'availability': {'color': 'none', 'text': '', 'reason': 'unknown'},
+                    {'name': 'Present', 'date_range': 'Tue, Jan. 1, 2019 11:00', 'availability': {'color': 'none', 'text': 'More info', 'reason': 'unknown'},
                      'event_url': 'http://example.com/ccc/30c3/', 'subevent': se1.pk, 'location': ''},
-                    {'name': 'Future', 'date_range': 'Jan. 4, 2019 11:00', 'availability': {'color': 'none', 'text': '', 'reason': 'unknown'},
+                    {'name': 'Future', 'date_range': 'Fri, Jan. 4, 2019 11:00', 'availability': {'color': 'none', 'text': 'More info', 'reason': 'unknown'},
                      'event_url': 'http://example.com/ccc/30c3/', 'subevent': se2.pk, 'location': ''}
                 ]
             }
@@ -612,6 +654,7 @@ class WidgetCartTest(CartTestMixin, TestCase):
             data = json.loads(response.content.decode())
             assert data == {
                 'list_type': 'calendar',
+                'meta_filter_fields': [],
                 'date': '2019-01-01',
                 'name': '30C3',
                 'frontpage_text': '',
@@ -620,16 +663,16 @@ class WidgetCartTest(CartTestMixin, TestCase):
                     [
                         None,
                         {'day': 1, 'date': '2019-01-01', 'events': [
-                            {'name': 'Present', 'time': '11:00', 'continued': False, 'date_range': 'Jan. 1, 2019 11:00',
+                            {'name': 'Present', 'time': '11:00', 'continued': False, 'date_range': 'Tue, Jan. 1, 2019 11:00',
                              'location': '',
-                             'availability': {'color': 'none', 'text': '', 'reason': 'unknown'},
+                             'availability': {'color': 'none', 'text': 'More info', 'reason': 'unknown'},
                              'event_url': 'http://example.com/ccc/30c3/', 'subevent': se1.pk}]},
                         {'day': 2, 'date': '2019-01-02', 'events': []},
                         {'day': 3, 'date': '2019-01-03', 'events': []},
                         {'day': 4, 'date': '2019-01-04', 'events': [
-                            {'name': 'Future', 'time': '11:00', 'continued': False, 'date_range': 'Jan. 4, 2019 11:00',
+                            {'name': 'Future', 'time': '11:00', 'continued': False, 'date_range': 'Fri, Jan. 4, 2019 11:00',
                              'location': '',
-                             'availability': {'color': 'none', 'text': '', 'reason': 'unknown'},
+                             'availability': {'color': 'none', 'text': 'More info', 'reason': 'unknown'},
                              'event_url': 'http://example.com/ccc/30c3/', 'subevent': se2.pk}]},
                         {'day': 5, 'date': '2019-01-05', 'events': []},
                         {'day': 6, 'date': '2019-01-06', 'events': []}
@@ -687,26 +730,27 @@ class WidgetCartTest(CartTestMixin, TestCase):
             data = json.loads(response.content.decode())
             assert data == {
                 'list_type': 'week',
+                'meta_filter_fields': [],
                 'name': '30C3',
                 'frontpage_text': '',
                 'week': [2019, 1],
                 'poweredby': '<a href="https://pretix.eu" target="_blank" rel="noopener">ticketing powered by pretix</a>',
                 'days': [
-                    {'day_formatted': 'Mon, Dec 31st', 'date': '2018-12-31', 'events': [], 'today': False},
-                    {'day_formatted': 'Tue, Jan 1st', 'date': '2019-01-01', 'events': [
-                        {'name': 'Present', 'time': '11:00', 'continued': False, 'date_range': 'Jan. 1, 2019 11:00',
+                    {'day_formatted': 'Mon, Dec 31', 'date': '2018-12-31', 'events': [], 'today': False},
+                    {'day_formatted': 'Tue, Jan 1', 'date': '2019-01-01', 'events': [
+                        {'name': 'Present', 'time': '11:00', 'continued': False, 'date_range': 'Tue, Jan. 1, 2019 11:00',
                          'location': '',
-                         'availability': {'color': 'none', 'text': '', 'reason': 'unknown'},
+                         'availability': {'color': 'none', 'text': 'More info', 'reason': 'unknown'},
                          'event_url': 'http://example.com/ccc/30c3/', 'subevent': se1.pk}], 'today': True},
-                    {'day_formatted': 'Wed, Jan 2nd', 'date': '2019-01-02', 'events': [], 'today': False},
-                    {'day_formatted': 'Thu, Jan 3rd', 'date': '2019-01-03', 'events': [], 'today': False},
-                    {'day_formatted': 'Fri, Jan 4th', 'date': '2019-01-04', 'events': [
-                        {'name': 'Future', 'time': '11:00', 'continued': False, 'date_range': 'Jan. 4, 2019 11:00',
+                    {'day_formatted': 'Wed, Jan 2', 'date': '2019-01-02', 'events': [], 'today': False},
+                    {'day_formatted': 'Thu, Jan 3', 'date': '2019-01-03', 'events': [], 'today': False},
+                    {'day_formatted': 'Fri, Jan 4', 'date': '2019-01-04', 'events': [
+                        {'name': 'Future', 'time': '11:00', 'continued': False, 'date_range': 'Fri, Jan. 4, 2019 11:00',
                          'location': '',
-                         'availability': {'color': 'none', 'text': '', 'reason': 'unknown'},
+                         'availability': {'color': 'none', 'text': 'More info', 'reason': 'unknown'},
                          'event_url': 'http://example.com/ccc/30c3/', 'subevent': se2.pk}], 'today': False},
-                    {'day_formatted': 'Sat, Jan 5th', 'date': '2019-01-05', 'events': [], 'today': False},
-                    {'day_formatted': 'Sun, Jan 6th', 'date': '2019-01-06', 'events': [], 'today': False}
+                    {'day_formatted': 'Sat, Jan 5', 'date': '2019-01-05', 'events': [], 'today': False},
+                    {'day_formatted': 'Sun, Jan 6', 'date': '2019-01-06', 'events': [], 'today': False}
                 ],
             }
 
@@ -733,23 +777,86 @@ class WidgetCartTest(CartTestMixin, TestCase):
                 'poweredby': '<a href="https://pretix.eu" target="_blank" rel="noopener">ticketing powered by pretix</a>',
                 'events': [
                     {'availability': {'color': 'none', 'text': 'Event series'},
-                     'date_range': 'Dec. 29, 2018 – Jan. 4, 2019',
+                     'date_range': 'Jan. 1 – 4, 2019',
                      'event_url': 'http://example.com/ccc/30c3/',
                      'location': '',
                      'name': '30C3'},
-                    {'availability': {'color': 'none', 'text': '', 'reason': 'unknown'},
-                     'date_range': 'Jan. 1, 2019 10:00',
+                    {'availability': {'color': 'none', 'text': 'More info', 'reason': 'unknown'},
+                     'date_range': 'Tue, Jan. 1, 2019 10:00',
                      'location': '',
                      'event_url': 'http://example.com/ccc/present/',
                      'name': 'Present'},
-                    {'availability': {'color': 'none', 'text': '', 'reason': 'unknown'},
-                     'date_range': 'Jan. 4, 2019 10:00',
+                    {'availability': {'color': 'none', 'text': 'More info', 'reason': 'unknown'},
+                     'date_range': 'Fri, Jan. 4, 2019 10:00',
                      'location': '',
                      'event_url': 'http://example.com/ccc/future/',
                      'name': 'Future'}
                 ],
-                'list_type': 'list'
+                'list_type': 'list',
+                'meta_filter_fields': [],
             }
+
+    def test_event_list_filtersets_from_allowed_values(self):
+        self.event.has_subevents = True
+        self.event.settings.timezone = 'Europe/Berlin'
+        self.event.save()
+        with freeze_time("2019-01-01 10:00:00"):
+            with scopes_disabled():
+                self.orga.meta_properties.create(
+                    name="Language",
+                    default="EN",
+                    filter_public=True,
+                    choices=[
+                        {"key": "EN", "label": "English"},
+                        {"key": "DE", "label": "German"},
+                    ]
+                )
+
+            response = self.client.get('/%s/widget/product_list' % (self.orga.slug,))
+            data = json.loads(response.content.decode())
+            assert data["meta_filter_fields"] == [
+                {
+                    "choices": [["", "-- all --"], ["EN", "English"], ["DE", "German"]],
+                    "key": "attr[Language]",
+                    "label": "Language"
+                }
+            ]
+
+    def test_event_list_filtersets_from_existing_values(self):
+        self.event.has_subevents = True
+        self.event.settings.timezone = 'Europe/Berlin'
+        self.event.save()
+        with freeze_time("2019-01-01 10:00:00"):
+            with scopes_disabled():
+                p = self.orga.meta_properties.create(
+                    name="Language",
+                    default="DE",
+                    filter_public=True,
+                )
+                e = self.orga.events.create(name="Future", live=True, is_public=True, slug='future', date_from=now() + datetime.timedelta(days=3))
+                se = self.event.subevents.create(name="Future", active=True, date_from=now() + datetime.timedelta(days=3))
+                e.meta_values.create(property=p, value="EN")
+                se.meta_values.create(property=p, value="DE")
+
+            response = self.client.get('/%s/widget/product_list' % (self.orga.slug,))
+            data = json.loads(response.content.decode())
+            assert data["meta_filter_fields"] == [
+                {
+                    "choices": [["", "-- all --"], ["DE", "DE"], ["EN", "EN"]],
+                    "key": "attr[Language]",
+                    "label": "Language"
+                }
+            ]
+
+            response = self.client.get('/%s/%s/widget/product_list' % (self.orga.slug, self.event.slug))
+            data = json.loads(response.content.decode())
+            assert data["meta_filter_fields"] == [
+                {
+                    "choices": [["", "-- all --"], ["DE", "DE"]],
+                    "key": "attr[Language]",
+                    "label": "Language"
+                }
+            ]
 
     def test_event_calendar(self):
         self.event.has_subevents = True
@@ -773,22 +880,23 @@ class WidgetCartTest(CartTestMixin, TestCase):
             assert data == {
                 'date': '2019-01-01',
                 'list_type': 'calendar',
+                'meta_filter_fields': [],
                 'poweredby': '<a href="https://pretix.eu" target="_blank" rel="noopener">ticketing powered by pretix</a>',
                 'weeks': [
                     [None,
                      {'date': '2019-01-01',
                       'day': 1,
-                      'events': [{'availability': {'color': 'none', 'text': '', 'reason': 'unknown'},
+                      'events': [{'availability': {'color': 'none', 'text': 'More info', 'reason': 'unknown'},
                                   'continued': False,
-                                  'date_range': 'Jan. 1, 2019 10:00',
+                                  'date_range': 'Tue, Jan. 1, 2019 10:00',
                                   'event_url': 'http://example.com/ccc/present/',
                                   'name': 'Present',
                                   'location': '',
                                   'subevent': None,
                                   'time': '10:00'},
-                                 {'availability': {'color': 'none', 'text': '', 'reason': 'unknown'},
+                                 {'availability': {'color': 'none', 'text': 'More info', 'reason': 'unknown'},
                                   'continued': False,
-                                  'date_range': 'Jan. 1, 2019 11:00',
+                                  'date_range': 'Tue, Jan. 1, 2019 11:00',
                                   'event_url': 'http://example.com/ccc/30c3/',
                                   'name': 'Present',
                                   'location': '',
@@ -798,17 +906,17 @@ class WidgetCartTest(CartTestMixin, TestCase):
                      {'date': '2019-01-03', 'day': 3, 'events': []},
                      {'date': '2019-01-04',
                       'day': 4,
-                      'events': [{'availability': {'color': 'none', 'text': '', 'reason': 'unknown'},
+                      'events': [{'availability': {'color': 'none', 'text': 'More info', 'reason': 'unknown'},
                                   'continued': False,
-                                  'date_range': 'Jan. 4, 2019 10:00',
+                                  'date_range': 'Fri, Jan. 4, 2019 10:00',
                                   'event_url': 'http://example.com/ccc/future/',
                                   'name': 'Future',
                                   'location': '',
                                   'subevent': None,
                                   'time': '10:00'},
-                                 {'availability': {'color': 'none', 'text': '', 'reason': 'unknown'},
+                                 {'availability': {'color': 'none', 'text': 'More info', 'reason': 'unknown'},
                                   'continued': False,
-                                  'date_range': 'Jan. 4, 2019 11:00',
+                                  'date_range': 'Fri, Jan. 4, 2019 11:00',
                                   'event_url': 'http://example.com/ccc/30c3/',
                                   'name': 'Future',
                                   'location': '',

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -31,29 +31,32 @@ from django.utils.translation import gettext_lazy as _
 from paypalhttp import HttpResponse
 
 from pretix.base.forms import SecretKeySettingsField
-from pretix.base.middleware import _merge_csp, _parse_csp, _render_csp
+from pretix.base.middleware import add_to_response_csp
 from pretix.base.settings import settings_hierarkey
 from pretix.base.signals import (
     logentry_display, register_global_settings, register_payment_providers,
 )
 from pretix.control.signals import nav_organizer
 from pretix.plugins.stripe.forms import StripeKeyValidator
-from pretix.plugins.stripe.payment import StripeMethod
 from pretix.presale.signals import html_head, process_response
 
 
 @receiver(register_payment_providers, dispatch_uid="payment_stripe")
 def register_payment_provider(sender, **kwargs):
     from .payment import (
-        StripeAlipay, StripeBancontact, StripeCC, StripeEPS, StripeGiropay,
-        StripeIdeal, StripeMultibanco, StripePrzelewy24, StripeSEPADirectDebit,
-        StripeSettingsHolder, StripeSofort, StripeWeChatPay,
+        StripeAffirm, StripeAlipay, StripeBancontact, StripeCC, StripeEPS,
+        StripeGiropay, StripeIdeal, StripeKlarna, StripeMobilePay,
+        StripeMultibanco, StripePayByBank, StripePayPal, StripePromptPay,
+        StripePrzelewy24, StripeRevolutPay, StripeSEPADirectDebit,
+        StripeSettingsHolder, StripeSofort, StripeSwish, StripeTwint,
+        StripeWeChatPay, StripeWero,
     )
 
     return [
         StripeSettingsHolder, StripeCC, StripeGiropay, StripeIdeal, StripeAlipay, StripeBancontact,
-        StripeSofort, StripeEPS, StripeMultibanco, StripePrzelewy24, StripeWeChatPay,
-        StripeSEPADirectDebit,
+        StripeSofort, StripeEPS, StripeMultibanco, StripePayByBank, StripePrzelewy24, StripePromptPay, StripeRevolutPay,
+        StripeWeChatPay, StripeSEPADirectDebit, StripeAffirm, StripeKlarna, StripePayPal, StripeSwish,
+        StripeTwint, StripeMobilePay, StripeWero
     ]
 
 
@@ -187,6 +190,8 @@ def nav_o(sender, request, organizer, **kwargs):
 
 @receiver(signal=process_response, dispatch_uid="stripe_middleware_resp")
 def signal_process_response(sender, request: HttpRequest, response: HttpResponse, **kwargs):
+    from pretix.plugins.stripe.payment import StripeMethod
+
     provider = StripeMethod(sender)
     url = resolve(request.path_info)
 
@@ -196,21 +201,10 @@ def signal_process_response(sender, request: HttpRequest, response: HttpResponse
             (url.url_name == "event.checkout" and url.kwargs['step'] == "payment") or
             (url.namespace == "plugins:stripe" and url.url_name in ["sca", "sca.return"])
     ):
-        if 'Content-Security-Policy' in response:
-            h = _parse_csp(response['Content-Security-Policy'])
-        else:
-            h = {}
-
-        # https://stripe.com/docs/security/guide#content-security-policy
-        csps = {
+        add_to_response_csp(response, {
             'connect-src': ['https://api.stripe.com'],
             'frame-src': ['https://js.stripe.com', 'https://hooks.stripe.com'],
             'script-src': ['https://js.stripe.com'],
-        }
-
-        _merge_csp(h, csps)
-
-        if h:
-            response['Content-Security-Policy'] = _render_csp(h)
+        })
 
     return response

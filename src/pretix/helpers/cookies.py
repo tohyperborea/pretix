@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -19,7 +19,9 @@
 # You should have received a copy of the GNU Affero General Public License along with this program.  If not, see
 # <https://www.gnu.org/licenses/>.
 #
+import itertools
 import re
+from http.cookies import Morsel
 
 from django.conf import settings
 
@@ -44,6 +46,43 @@ def set_cookie_without_samesite(request, response, key, *args, **kwargs):
         # This will only work on secure cookies as well
         # https://www.chromestatus.com/feature/5633521622188032
         response.cookies[key]['secure'] = is_secure
+        # CHIPS
+        response.cookies[key]['Partitioned'] = True
+
+
+def thoroughly_delete_cookie(response, cookie_name, **kwargs):
+    """ Deletes different possible versions of a cookie (SameSite, Partitioned) """
+    properties = {"SameSite": ["", 'None'], "Partitioned": ["", True]}
+    for i, values in enumerate(itertools.product(*properties.values())):
+        m = Morsel()
+        m.set(cookie_name, '', '')
+        m.update(kwargs)
+        m.update(zip(properties.keys(), values))
+        m['expires'] = "Thu, 01 Jan 1970 00:00:00 GMT"
+
+        response.cookies[f'___DELETECOOKIE__{i}___{cookie_name}'] = m
+
+    # Make sure settings a cookie afterwards will add a new item in the dictionary, placing
+    # it below our deletion headers.
+    response.cookies.pop(cookie_name, None)
+
+
+def get_all_values_of_cookie(cookie_header, cookie_name):
+    # like django.http.cookie.parse_cookie, but returns all values of duplicated cookies instead of only the last
+    values = list()
+    if not cookie_header:
+        return values
+    for chunk in cookie_header.split(";"):
+        if "=" in chunk:
+            key, val = chunk.split("=", 1)
+        else:
+            # Assume an empty name per
+            # https://bugzilla.mozilla.org/show_bug.cgi?id=169091
+            key, val = "", chunk
+        key, val = key.strip(), val.strip()
+        if key == cookie_name:
+            values.append(val)
+    return values
 
 
 # Based on https://www.chromium.org/updates/same-site/incompatible-clients

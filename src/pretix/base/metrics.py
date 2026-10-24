@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -268,7 +268,10 @@ def metric_values():
             dkey = key.decode("utf-8")
             splitted = dkey.split("{", 2)
             value = float(value.decode("utf-8"))
-            metrics[splitted[0]]["{" + splitted[1]] = value
+            if len(splitted) == 1:
+                metrics[splitted[0]][""] = value
+            else:
+                metrics[splitted[0]]["{" + splitted[1]] = value
 
     # Aliases
     aliases = {
@@ -279,10 +282,12 @@ def metric_values():
 
     # Throwaway metrics
     exact_tables = [
-        Order, OrderPosition, Invoice, Event, Organizer
+        Order, Invoice, Event, Organizer
     ]
     for m in apps.get_models():  # Count all models
-        if any(issubclass(m, p) for p in exact_tables):
+        if issubclass(m, OrderPosition):
+            metrics['pretix_model_instances']['{model="%s"}' % m._meta] = m.all.count()
+        elif any(issubclass(m, p) for p in exact_tables):
             metrics['pretix_model_instances']['{model="%s"}' % m._meta] = m.objects.count()
         else:
             metrics['pretix_model_instances']['{model="%s"}' % m._meta] = estimate_count_fast(m)
@@ -291,14 +296,28 @@ def metric_values():
         channel = app.broker_connection().channel()
         if hasattr(channel, 'client') and channel.client is not None:
             client = channel.client
+            priority_steps = settings.CELERY_BROKER_TRANSPORT_OPTIONS.get("priority_steps", [0])
+            sep = settings.CELERY_BROKER_TRANSPORT_OPTIONS.get("sep", ":")
+
             for q in settings.CELERY_TASK_QUEUES:
-                llen = client.llen(q.name)
-                lfirst = client.lindex(q.name, -1)
-                metrics['pretix_celery_tasks_queued_count']['{queue="%s"}' % q.name] = llen
-                if lfirst:
-                    ldata = json.loads(lfirst)
-                    dt = time.time() - ldata.get('created', 0)
-                    metrics['pretix_celery_tasks_queued_age_seconds']['{queue="%s"}' % q.name] = dt
+                queue_lengths = []
+                queue_delays = []
+                for prio in priority_steps:
+                    if prio:
+                        qname = f"{q.name}{sep}{prio}"
+                    else:
+                        qname = q.name
+                    queue_length = client.llen(qname)
+                    queue_lengths.append(queue_length)
+                    oldest_queue_item = client.lindex(qname, -1)
+                    if oldest_queue_item:
+                        ldata = json.loads(oldest_queue_item)
+                        oldest_item_age = time.time() - ldata.get('created', 0)
+                        queue_delays.append(oldest_item_age)
+
+                metrics['pretix_celery_tasks_queued_count']['{queue="%s"}' % q.name] = sum(queue_lengths)
+                if queue_delays:
+                    metrics['pretix_celery_tasks_queued_age_seconds']['{queue="%s"}' % q.name] = max(queue_delays)
                 else:
                     metrics['pretix_celery_tasks_queued_age_seconds']['{queue="%s"}' % q.name] = 0
 
@@ -314,3 +333,5 @@ pretix_task_runs_total = Counter("pretix_task_runs_total", "Total calls to a cel
                                  ["task_name", "status"])
 pretix_task_duration_seconds = Histogram("pretix_task_duration_seconds", "Call time of a celery task",
                                          ["task_name"])
+pretix_successful_logins = Counter("pretix_logins_successful", "Successful logins", [])
+pretix_failed_logins = Counter("pretix_logins_failed", "Failed logins", ["reason"])

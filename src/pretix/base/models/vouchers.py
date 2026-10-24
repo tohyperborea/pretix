@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -32,8 +32,10 @@
 # Unless required by applicable law or agreed to in writing, software distributed under the Apache License 2.0 is
 # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations under the License.
-
+import datetime
+from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Union
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -174,6 +176,9 @@ class Voucher(LoggedModel):
         ('percent', _('Reduce product price by (%)')),
     )
 
+    created = models.DateTimeField(
+        auto_now_add=True,
+    )
     event = models.ForeignKey(
         Event,
         on_delete=models.CASCADE,
@@ -236,7 +241,7 @@ class Voucher(LoggedModel):
         )
     )
     price_mode = models.CharField(
-        verbose_name=_("Price mode"),
+        verbose_name=_("Price effect"),
         max_length=100,
         choices=PRICE_MODES,
         default='none'
@@ -251,7 +256,8 @@ class Voucher(LoggedModel):
         null=True, blank=True,
         on_delete=models.PROTECT,  # We use a fake version of SET_NULL in Item.delete()
         help_text=_(
-            "This product is added to the user's cart if the voucher is redeemed."
+            "This product is added to the user's cart if the voucher is redeemed. Instead of a specific product, you "
+            "can also select a quota. In this case, all products assigned to this quota can be selected."
         )
     )
     variation = models.ForeignKey(
@@ -350,9 +356,6 @@ class Voucher(LoggedModel):
                                         'variations.'))
             if variation and not item.variations.filter(pk=variation.pk).exists():
                 raise ValidationError(_('This variation does not belong to this product.'))
-            if item.has_variations and not variation and data.get('block_quota'):
-                raise ValidationError(_('You can only block quota if you specify a specific product variation. '
-                                        'Otherwise it might be unclear which quotas to block.'))
             if item.category and item.category.is_addon:
                 raise ValidationError(_('It is currently not possible to create vouchers for add-on products.'))
         elif block_quota:
@@ -372,10 +375,11 @@ class Voucher(LoggedModel):
                     'redeemed': redeemed
                 }
             )
-        if data.get('max_usages', 1) < data.get('min_usages', 1):
-            raise ValidationError(
-                _('The maximum number of usages may not be lower than the minimum number of usages.'),
-            )
+        if data.get('min_usages') is not None:
+            if data.get('max_usages', 1) < data.get('min_usages', 1):
+                raise ValidationError(
+                    _('The maximum number of usages may not be lower than the minimum number of usages.'),
+                )
 
     @staticmethod
     def clean_subevent(data, event):
@@ -419,19 +423,33 @@ class Voucher(LoggedModel):
         return False
 
     @staticmethod
-    def clean_quota_get_ignored(old_instance):
-        quotas = set()
-        was_valid = old_instance and (
-            old_instance.valid_until is None or old_instance.valid_until >= now()
-        )
-        if old_instance and old_instance.block_quota and was_valid:
-            if old_instance.quota:
-                quotas.add(old_instance.quota)
-            elif old_instance.variation:
-                quotas |= set(old_instance.variation.quotas.filter(subevent=old_instance.subevent))
-            elif old_instance.item:
-                quotas |= set(old_instance.item.quotas.filter(subevent=old_instance.subevent))
-        return quotas
+    def get_affected_quotas(quota, item, variation, subevent):
+        if quota:
+            return {quota}
+        elif item and variation:
+            return set(variation.quotas.filter(subevent=subevent))
+        elif item and not item.has_variations:
+            return set(item.quotas.filter(subevent=subevent))
+        elif item and item.has_variations:
+            return set(
+                Quota.objects.filter(
+                    pk__in=Quota.variations.through.objects.filter(
+                        itemvariation__item=item,
+                        quota__subevent=subevent,
+                    ).values('quota_id')
+                )
+            )
+        else:
+            return set()
+
+    @staticmethod
+    def clean_quota_get_ignored(voucher_data: Union["VoucherBulkData", "Voucher"]):
+        if voucher_data:
+            valid = voucher_data.valid_until is None or voucher_data.valid_until >= now()
+            if valid and voucher_data.block_quota and voucher_data.max_usages > voucher_data.redeemed:
+                return Voucher.get_affected_quotas(voucher_data.quota, voucher_data.item, voucher_data.variation, voucher_data.subevent)
+
+        return set()
 
     @staticmethod
     def clean_quota_check(data, cnt, old_instance, event, quota, item, variation):
@@ -443,16 +461,8 @@ class Voucher(LoggedModel):
         if event.has_subevents and data.get('block_quota') and not data.get('subevent'):
             raise ValidationError(_('If you want this voucher to block quota, you need to select a specific date.'))
 
-        if quota:
-            new_quotas = {quota}
-        elif item and item.has_variations and not variation:
-            raise ValidationError(_('You can only block quota if you specify a specific product variation. '
-                                    'Otherwise it might be unclear which quotas to block.'))
-        elif item and variation:
-            new_quotas = set(variation.quotas.filter(subevent=data.get('subevent')))
-        elif item and not item.has_variations:
-            new_quotas = set(item.quotas.filter(subevent=data.get('subevent')))
-        else:
+        new_quotas = Voucher.get_affected_quotas(quota, item, variation, data.get('subevent'))
+        if not new_quotas:
             raise ValidationError(_('You need to select a specific product or quota if this voucher should reserve '
                                     'tickets.'))
 
@@ -553,6 +563,8 @@ class Voucher(LoggedModel):
         """
         return not self.is_fully_redeemed() and not self.is_expired()
 
+    # Sideburn: not in upstream pretix (SID-95). Lets callers tell a used-up voucher apart from an
+    # expired one, which upstream reports as "expired".
     def is_fully_redeemed(self):
         return self.redeemed >= self.max_usages
 
@@ -609,7 +621,7 @@ class Voucher(LoggedModel):
         return max(1, self.min_usages - self.redeemed)
 
     @classmethod
-    def annotate_budget_used_orders(cls, qs):
+    def annotate_budget_used(cls, qs):
         opq = OrderPosition.objects.filter(
             voucher_id=OuterRef('pk'),
             voucher_budget_use__isnull=False,
@@ -618,7 +630,7 @@ class Voucher(LoggedModel):
                 Order.STATUS_PENDING
             ]
         ).order_by().values('voucher_id').annotate(s=Sum('voucher_budget_use')).values('s')
-        return qs.annotate(budget_used_orders=Coalesce(Subquery(opq, output_field=models.DecimalField(max_digits=13, decimal_places=2)), Decimal('0.00')))
+        return qs.annotate(budget_used=Coalesce(Subquery(opq, output_field=models.DecimalField(max_digits=13, decimal_places=2)), Decimal('0.00')))
 
     def budget_used(self):
         ops = OrderPosition.objects.filter(
@@ -630,3 +642,16 @@ class Voucher(LoggedModel):
             ]
         ).aggregate(s=Sum('voucher_budget_use'))['s'] or Decimal('0.00')
         return ops
+
+
+@dataclass
+class VoucherBulkData:
+    item: object
+    variation: object
+    quota: object
+    block_quota: bool
+    valid_until: datetime.datetime
+    subevent: object
+    redeemed: int
+    max_usages: int
+    allow_ignore_quota: bool
