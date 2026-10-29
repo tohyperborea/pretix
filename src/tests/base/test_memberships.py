@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -26,6 +26,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.utils.timezone import now
 from django_scopes import scope
 from freezegun import freeze_time
@@ -47,7 +48,7 @@ TZ = ZoneInfo('Europe/Berlin')
 
 @pytest.fixture(scope='function')
 def event():
-    o = Organizer.objects.create(name='Dummy', slug='dummy')
+    o = Organizer.objects.create(name='Dummy', slug='dummy', plugins='pretix.plugins.banktransfer')
     o.settings.customer_accounts = True
     event = Event.objects.create(
         organizer=o, name='Dummy', slug='dummy',
@@ -180,6 +181,7 @@ def test_validate_membership_not_required(event, customer, membership, granting_
             customer,
             [
                 CartPosition(
+                    event=event,
                     item=granting_ticket,
                     used_membership=membership,
                 )
@@ -198,6 +200,7 @@ def test_validate_membership_required(event, customer, membership, requiring_tic
             customer,
             [
                 CartPosition(
+                    event=event,
                     item=requiring_ticket,
                 )
             ],
@@ -208,13 +211,15 @@ def test_validate_membership_required(event, customer, membership, requiring_tic
     assert "requires an active" in str(excinfo.value)
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
+@transaction.atomic
 def test_validate_membership_ensure_locking(event, customer, membership, requiring_ticket, membership_type, django_assert_num_queries):
     with django_assert_num_queries(4) as captured:
         validate_memberships_in_order(
             customer,
             [
                 CartPosition(
+                    event=event,
                     item=requiring_ticket,
                     used_membership=membership,
                 )
@@ -236,6 +241,7 @@ def test_validate_membership_canceled(event, customer, membership, requiring_tic
             customer,
             [
                 CartPosition(
+                    event=event,
                     item=requiring_ticket,
                     used_membership=membership
                 )
@@ -257,6 +263,7 @@ def test_validate_membership_test_mode(event, customer, membership, requiring_ti
             customer,
             [
                 CartPosition(
+                    event=event,
                     item=requiring_ticket,
                     used_membership=membership
                 )
@@ -274,6 +281,7 @@ def test_validate_membership_test_mode(event, customer, membership, requiring_ti
             customer,
             [
                 CartPosition(
+                    event=event,
                     item=requiring_ticket,
                     used_membership=membership
                 )
@@ -294,6 +302,7 @@ def test_validate_membership_wrong_customer(event, customer, membership, requiri
             customer2,
             [
                 CartPosition(
+                    event=event,
                     item=requiring_ticket,
                     used_membership=membership
                 )
@@ -315,6 +324,7 @@ def test_validate_membership_wrong_date(event, customer, membership, requiring_t
             customer,
             [
                 CartPosition(
+                    event=event,
                     item=requiring_ticket,
                     used_membership=membership
                 )
@@ -334,6 +344,7 @@ def test_validate_membership_wrong_type(event, customer, membership, requiring_t
             customer,
             [
                 CartPosition(
+                    event=event,
                     item=requiring_ticket,
                     used_membership=membership
                 )
@@ -357,6 +368,7 @@ def test_validate_membership_max_usages(event, customer, membership, requiring_t
         datetime=now() - timedelta(days=3),
         expires=now() + timedelta(days=11),
         total=Decimal("23"),
+        sales_channel=event.organizer.sales_channels.get(identifier="web"),
     )
     OrderPosition.objects.create(
         order=o1,
@@ -372,6 +384,7 @@ def test_validate_membership_max_usages(event, customer, membership, requiring_t
             customer,
             [
                 CartPosition(
+                    event=event,
                     item=requiring_ticket,
                     used_membership=membership
                 )
@@ -387,6 +400,7 @@ def test_validate_membership_max_usages(event, customer, membership, requiring_t
         customer,
         [
             CartPosition(
+                event=event,
                 item=requiring_ticket,
                 used_membership=membership
             )
@@ -401,10 +415,12 @@ def test_validate_membership_max_usages(event, customer, membership, requiring_t
             customer,
             [
                 CartPosition(
+                    event=event,
                     item=requiring_ticket,
                     used_membership=membership
                 ),
                 CartPosition(
+                    event=event,
                     item=requiring_ticket,
                     used_membership=membership
                 ),
@@ -433,6 +449,7 @@ def test_validate_membership_parallel(event, customer, membership, subevent, req
         datetime=now() - timedelta(days=3),
         expires=now() + timedelta(days=11),
         total=Decimal("23"),
+        sales_channel=event.organizer.sales_channels.get(identifier="web"),
     )
     OrderPosition.objects.create(
         order=o1,
@@ -449,6 +466,7 @@ def test_validate_membership_parallel(event, customer, membership, subevent, req
             customer,
             [
                 CartPosition(
+                    event=event,
                     item=requiring_ticket,
                     used_membership=membership,
                     subevent=subevent
@@ -464,6 +482,7 @@ def test_validate_membership_parallel(event, customer, membership, subevent, req
         customer,
         [
             CartPosition(
+                event=event,
                 item=requiring_ticket,
                 used_membership=membership,
                 subevent=se2
@@ -479,11 +498,13 @@ def test_validate_membership_parallel(event, customer, membership, subevent, req
             customer,
             [
                 CartPosition(
+                    event=event,
                     item=requiring_ticket,
                     used_membership=membership,
                     subevent=se2
                 ),
                 CartPosition(
+                    event=event,
                     item=requiring_ticket,
                     used_membership=membership,
                     subevent=se2
@@ -501,6 +522,7 @@ def test_validate_membership_parallel(event, customer, membership, subevent, req
         customer,
         [
             CartPosition(
+                event=event,
                 item=requiring_ticket,
                 used_membership=membership,
                 subevent=subevent
@@ -513,13 +535,223 @@ def test_validate_membership_parallel(event, customer, membership, subevent, req
 
 
 @pytest.mark.django_db
+def test_validate_membership_parallel_validity_dynamic(event, customer, membership, requiring_ticket, membership_type):
+    requiring_ticket.validity_mode = Item.VALIDITY_MODE_DYNAMIC
+    requiring_ticket.validity_dynamic_start_choice = False
+    requiring_ticket.validity_dynamic_duration_days = 1
+    requiring_ticket.save()
+
+    membership_type.allow_parallel_usage = False
+    membership_type.save()
+    membership.date_end = now() + timedelta(days=900)
+    membership.save()
+
+    o1 = Order.objects.create(
+        status=Order.STATUS_PENDING,
+        event=event,
+        email='admin@localhost',
+        datetime=now() - timedelta(days=3),
+        expires=now() + timedelta(days=11),
+        total=Decimal("23"),
+        sales_channel=event.organizer.sales_channels.get(identifier="web"),
+    )
+    OrderPosition.objects.create(
+        order=o1,
+        item=requiring_ticket,
+        used_membership=membership,
+        variation=None,
+        price=Decimal("23"),
+        attendee_name_parts={'full_name': "Peter"},
+        valid_from=now(),
+        valid_until=now().replace(hour=23, minute=59, second=59),
+    )
+
+    with pytest.raises(ValidationError) as excinfo:
+        validate_memberships_in_order(
+            customer,
+            [
+                CartPosition(
+                    event=event,
+                    item=requiring_ticket,
+                    used_membership=membership,
+                )
+            ],
+            event,
+            lock=False,
+            ignored_order=None
+        )
+    assert "different ticket that overlaps" in str(excinfo.value)
+
+    requiring_ticket.validity_dynamic_start_choice = True
+    requiring_ticket.save()
+    validate_memberships_in_order(
+        customer,
+        [
+            CartPosition(
+                event=event,
+                item=requiring_ticket,
+                used_membership=membership,
+            )
+        ],
+        event,
+        lock=False,
+        ignored_order=None,
+        valid_from_not_chosen=True
+    )
+
+    with pytest.raises(ValidationError) as excinfo:
+        validate_memberships_in_order(
+            customer,
+            [
+                CartPosition(
+                    event=event,
+                    item=requiring_ticket,
+                    used_membership=membership,
+                )
+            ],
+            event,
+            lock=False,
+            ignored_order=None,
+            valid_from_not_chosen=False
+        )
+    assert "different ticket that overlaps" in str(excinfo.value)
+
+    validate_memberships_in_order(
+        customer,
+        [
+            CartPosition(
+                event=event,
+                item=requiring_ticket,
+                used_membership=membership,
+                requested_valid_from=now() + timedelta(days=1)
+            )
+        ],
+        event,
+        lock=False,
+        ignored_order=None,
+    )
+
+    membership_type.allow_parallel_usage = True
+    membership_type.save()
+    validate_memberships_in_order(
+        customer,
+        [
+            CartPosition(
+                event=event,
+                item=requiring_ticket,
+                used_membership=membership,
+            )
+        ],
+        event,
+        lock=False,
+        ignored_order=None
+    )
+
+
+@pytest.mark.django_db
+def test_validate_membership_parallel_validity_fixed(event, customer, membership, requiring_ticket, membership_type):
+    event.date_from = datetime(2021, 1, 1, 0, 0, 0, 0, tzinfo=TZ)
+    event.save()
+    requiring_ticket.validity_mode = Item.VALIDITY_MODE_FIXED
+    requiring_ticket.validity_fixed_from = now().replace(hour=2, minute=20, second=0)
+    requiring_ticket.validity_fixed_until = now().replace(hour=6, minute=20, second=0)
+    requiring_ticket.save()
+
+    membership_type.allow_parallel_usage = False
+    membership_type.save()
+    membership.date_end = now() + timedelta(days=900)
+    membership.save()
+
+    o1 = Order.objects.create(
+        status=Order.STATUS_PENDING,
+        event=event,
+        email='admin@localhost',
+        datetime=now() - timedelta(days=3),
+        expires=now() + timedelta(days=11),
+        total=Decimal("23"),
+        sales_channel=event.organizer.sales_channels.get(identifier="web"),
+    )
+    OrderPosition.objects.create(
+        order=o1,
+        item=requiring_ticket,
+        used_membership=membership,
+        variation=None,
+        price=Decimal("23"),
+        attendee_name_parts={'full_name': "Peter"},
+        valid_from=now().replace(hour=2, minute=20, second=0),
+        valid_until=now().replace(hour=6, minute=20, second=0),
+    )
+
+    requiring_ticket.validity_fixed_from = now().replace(hour=5, minute=20, second=0)
+    requiring_ticket.validity_fixed_until = now().replace(hour=8, minute=20, second=0)
+    requiring_ticket.save()
+
+    with pytest.raises(ValidationError) as excinfo:
+        validate_memberships_in_order(
+            customer,
+            [
+                CartPosition(
+                    event=event,
+                    item=requiring_ticket,
+                    used_membership=membership,
+                )
+            ],
+            event,
+            lock=False,
+            ignored_order=None
+        )
+    assert "different ticket that overlaps" in str(excinfo.value)
+
+    requiring_ticket.validity_fixed_from = now().replace(hour=6, minute=20, second=1)
+    requiring_ticket.validity_fixed_until = now().replace(hour=8, minute=20, second=0)
+    requiring_ticket.save()
+
+    validate_memberships_in_order(
+        customer,
+        [
+            CartPosition(
+                event=event,
+                item=requiring_ticket,
+                used_membership=membership,
+            )
+        ],
+        event,
+        lock=False,
+        ignored_order=None,
+        valid_from_not_chosen=True
+    )
+
+    requiring_ticket.validity_fixed_from = now().replace(hour=0, minute=20, second=0)
+    requiring_ticket.validity_fixed_until = now().replace(hour=1, minute=20, second=0)
+    requiring_ticket.save()
+
+    validate_memberships_in_order(
+        customer,
+        [
+            CartPosition(
+                event=event,
+                item=requiring_ticket,
+                used_membership=membership,
+            )
+        ],
+        event,
+        lock=False,
+        ignored_order=None,
+        valid_from_not_chosen=True
+    )
+
+
+@pytest.mark.django_db
 def test_use_membership(event, customer, membership, requiring_ticket):
     cp1 = CartPosition.objects.create(
         item=requiring_ticket, price=23, expires=now() + timedelta(days=1), event=event, cart_id="123",
         used_membership=membership
     )
+    q = event.quotas.create(size=None, name="foo")
+    q.items.add(requiring_ticket)
     order = _create_order(event, email='dummy@example.org', positions=[cp1],
                           now_dt=now(),
+                          sales_channel=event.organizer.sales_channels.get(identifier="web"),
                           payment_requests=[{
                               "id": "test0",
                               "provider": "banktransfer",
@@ -539,6 +771,8 @@ def test_use_membership_invalid(event, customer, membership, requiring_ticket):
     membership.date_start -= timedelta(days=100)
     membership.date_end -= timedelta(days=100)
     membership.save()
+    q = event.quotas.create(size=None, name="foo")
+    q.items.add(requiring_ticket)
     cp1 = CartPosition.objects.create(
         item=requiring_ticket, price=23, expires=now() + timedelta(days=1), event=event, cart_id="123",
         used_membership=membership
@@ -567,6 +801,7 @@ def test_grant_when_paid_and_changed(event, customer, granting_ticket):
     q.items.add(granting_ticket)
     order = _create_order(event, email='dummy@example.org', positions=[cp1],
                           now_dt=now(),
+                          sales_channel=event.organizer.sales_channels.get(identifier="web"),
                           payment_requests=[{
                               "id": "test0",
                               "provider": "banktransfer",

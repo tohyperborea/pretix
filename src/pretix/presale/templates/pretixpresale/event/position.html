@@ -4,6 +4,7 @@
 {% load eventsignal %}
 {% load money %}
 {% load eventurl %}
+{% load wrap_in %}
 {% block title %}{% trans "Registration details" %}{% endblock %}
 {% block content %}
     <h2 class="h1">
@@ -29,6 +30,11 @@
         <div class="panel-heading">
             <h3 class="panel-title">
                 {% trans "Your items" %}
+                {% if position.can_modify_answers %}
+                    <a href="{% eventurl event "presale:event.order.position.modify" secret=position.web_secret position=position.positionid order=order.code %}" aria-label="{% trans "Change ordered items" %}" class="h6">
+                        <span class="fa fa-edit" aria-hidden="true"></span>{% trans "Change details" %}
+                    </a>
+                {% endif %}
             </h3>
         </div>
         <div class="panel-body">
@@ -43,7 +49,7 @@
         </div>
         <div class="panel-body">
             <p>
-                {% blocktrans trimmed with email="<strong>"|add:order.email|add:"</strong>"|safe %}
+                {% blocktrans trimmed with email=order.email|wrap_in:"strong" %}
                     This order is managed for you by {{ email }}. Please contact them for any questions regarding
                     payment, cancellation or changes to this order.
                 {% endblocktrans %}

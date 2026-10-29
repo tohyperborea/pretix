@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -43,15 +43,14 @@ from pretix.control.permissions import (
 )
 from pretix.helpers.models import modelcopy
 
-from ...base.channels import get_all_sales_channels
 from ...helpers.compat import CompatDeleteView
-from . import CreateView, PaginationMixin, UpdateView
+from . import CreateView, UpdateView
 
 
 class DiscountDelete(EventPermissionRequiredMixin, CompatDeleteView):
     model = Discount
     template_name = 'pretixcontrol/items/discount_delete.html'
-    permission = 'can_change_items'
+    permission = 'event.items:write'
     context_object_name = 'discount'
 
     def get_context_data(self, *args, **kwargs) -> dict:
@@ -97,7 +96,7 @@ class DiscountUpdate(EventPermissionRequiredMixin, UpdateView):
     model = Discount
     form_class = DiscountForm
     template_name = 'pretixcontrol/items/discount.html'
-    permission = 'can_change_items'
+    permission = 'event.items:write'
     context_object_name = 'discount'
 
     def get_object(self, queryset=None) -> Discount:
@@ -140,7 +139,7 @@ class DiscountCreate(EventPermissionRequiredMixin, CreateView):
     model = Discount
     form_class = DiscountForm
     template_name = 'pretixcontrol/items/discount.html'
-    permission = 'can_change_items'
+    permission = 'event.items:write'
     context_object_name = 'discount'
 
     def get_success_url(self) -> str:
@@ -164,6 +163,9 @@ class DiscountCreate(EventPermissionRequiredMixin, CreateView):
             i = modelcopy(self.copy_from)
             i.pk = None
             kwargs['instance'] = i
+            kwargs["initial"]["limit_sales_channels"] = self.copy_from.limit_sales_channels.all()
+            kwargs["initial"]["condition_limit_products"] = self.copy_from.condition_limit_products.all()
+            kwargs["initial"]["benefit_limit_products"] = self.copy_from.benefit_limit_products.all()
         else:
             kwargs['instance'] = Discount(event=self.request.event)
 
@@ -184,17 +186,20 @@ class DiscountCreate(EventPermissionRequiredMixin, CreateView):
         return super().form_invalid(form)
 
 
-class DiscountList(PaginationMixin, ListView):
+class DiscountList(ListView):
     model = Discount
     context_object_name = 'discounts'
     template_name = 'pretixcontrol/items/discounts.html'
 
     def get_queryset(self):
-        return self.request.event.discounts.prefetch_related('condition_limit_products')
+        return self.request.event.discounts.prefetch_related('condition_limit_products', 'limit_sales_channels')
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
-        ctx['sales_channels'] = get_all_sales_channels()
+        ctx['sales_channels'] = [
+            c for c in self.request.organizer.sales_channels.all()
+            if c.type_instance.discounts_supported
+        ]
         return ctx
 
 
@@ -225,7 +230,7 @@ def discount_move(request, discount, up=True):
     messages.success(request, _('The order of discounts has been updated.'))
 
 
-@event_permission_required("can_change_items")
+@event_permission_required("event.items:write")
 @require_http_methods(["POST"])
 def discount_move_up(request, organizer, event, discount):
     discount_move(request, discount, up=True)
@@ -234,7 +239,7 @@ def discount_move_up(request, organizer, event, discount):
                     event=request.event.slug)
 
 
-@event_permission_required("can_change_items")
+@event_permission_required("event.items:write")
 @require_http_methods(["POST"])
 def discount_move_down(request, organizer, event, discount):
     discount_move(request, discount, up=False)
@@ -244,7 +249,7 @@ def discount_move_down(request, organizer, event, discount):
 
 
 @transaction.atomic
-@event_permission_required("can_change_items")
+@event_permission_required("event.items:write")
 @require_http_methods(["POST"])
 def reorder_discounts(request, organizer, event):
     try:

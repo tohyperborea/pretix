@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -50,14 +50,13 @@ from django.contrib.staticfiles import finders
 from django.core.files import File
 from django.core.files.storage import default_storage
 from django.db import DataError, models
-from django.db.models import Case, Exists, OuterRef, Q, Subquery, When
+from django.db.models import Case, Exists, OuterRef, Q, Subquery, Value, When
 from django.db.models.functions import Cast, Coalesce
 from django.utils.timezone import make_aware
 from django.utils.translation import gettext as _, gettext_lazy, pgettext_lazy
 from pypdf import PageObject, PdfReader, PdfWriter, Transformation
-from pypdf.generic import RectangleObject
 from reportlab.lib import pagesizes
-from reportlab.lib.units import mm
+from reportlab.lib.units import inch, mm
 from reportlab.pdfgen import canvas
 
 from pretix.base.exporter import BaseExporter
@@ -125,6 +124,30 @@ OPTIONS = OrderedDict([
         'offsets': [pagesizes.landscape(pagesizes.A4)[0] / 4, pagesizes.landscape(pagesizes.A4)[1] / 2],
         'pagesize': pagesizes.landscape(pagesizes.A4),
     }),
+    ('avery_63x29', {
+        'name': 'Avery Zweckform 63.5 x 29.6 mm (L4784)',
+        'cols': 3,
+        'rows': 9,
+        'margins': [15.3 * mm, 7.15 * mm, 15.3 * mm, 7.15 * mm],
+        'offsets': [66.1 * mm, 29.6 * mm],
+        'pagesize': pagesizes.A4,
+    }),
+    ('avery_4inx3in', {
+        'name': 'Avery 4" x 3" (74459)',
+        'cols': 2,
+        'rows': 3,
+        'margins': [1 * inch, .25 * inch, 1 * inch, .25 * inch],
+        'offsets': [4 * inch, 3 * inch],
+        'pagesize': pagesizes.LETTER,
+    }),
+    ('avery_80x50', {
+        'name': 'Avery Zweckform 80 x 50 mm (L4785)',
+        'cols': 2,
+        'rows': 5,
+        'margins': [13.5 * mm, 17.5 * mm, 13.5 * mm, 17.5 * mm],
+        'offsets': [95 * mm, 55 * mm],
+        'pagesize': pagesizes.A4,
+    }),
     ('durable_54x90', {
         'name': 'DURABLE BADGEMAKER® 54 x 90 mm (1445-02)',
         'cols': 2,
@@ -154,7 +177,7 @@ OPTIONS = OrderedDict([
         'cols': 2,
         'rows': 6,
         'margins': [28.5 * mm, 30 * mm, 28.5 * mm, 30 * mm],
-        'offsets': [93 * mm, 60 * mm],
+        'offsets': [75 * mm, 40 * mm],
         'pagesize': pagesizes.A4,
     }),
     ('herma_50x80', {
@@ -171,6 +194,22 @@ OPTIONS = OrderedDict([
         'rows': 6,
         'margins': [13.5 * mm, 15 * mm, 13.5 * mm, 15 * mm],
         'offsets': [46 * mm, 46 * mm],
+        'pagesize': pagesizes.A4,
+    }),
+    ('herma_88.9x33.87', {
+        'name': 'HERMA 88,9 x 33,87 mm (4515)',
+        'cols': 2,
+        'rows': 8,
+        'margins': [13.03 * mm, 12.29 * mm, 13.03 * mm, 12.29 * mm],
+        'offsets': [96.52 * mm, 33.87 * mm],
+        'pagesize': pagesizes.A4,
+    }),
+    ('herma_90x60', {
+        'name': 'HERMA 90 x 60 mm (9012)',
+        'cols': 2,
+        'rows': 4,
+        'margins': [28.5 * mm, 10 * mm, 28.5 * mm, 10 * mm],
+        'offsets': [100 * mm, 60 * mm],
         'pagesize': pagesizes.A4,
     }),
     ('lyreco_70x36', {
@@ -206,15 +245,8 @@ def _render_nup_page(nup_pdf: PdfWriter, input_pages: PageObject, opt: dict) -> 
         di = i % badges_per_page
         tx = opt['margins'][3] + (di % opt['cols']) * opt['offsets'][0]
         ty = opt['margins'][2] + (opt['rows'] - 1 - (di // opt['cols'])) * opt['offsets'][1]
-        page.add_transformation(Transformation().translate(tx, ty))
-        page.mediabox = RectangleObject((
-            Decimal('%.5f' % (page.mediabox.left.as_numeric() + tx)),
-            Decimal('%.5f' % (page.mediabox.bottom.as_numeric() + ty)),
-            Decimal('%.5f' % (page.mediabox.right.as_numeric() + tx)),
-            Decimal('%.5f' % (page.mediabox.top.as_numeric() + ty))
-        ))
-        page.trimbox = page.mediabox
-        nup_page.merge_page(page)
+        page.trimbox = page.cropbox = page.mediabox
+        nup_page.merge_transformed_page(page, Transformation().translate(tx, ty))
     return nup_page
 
 
@@ -265,7 +297,7 @@ def _render_nup(input_files: List[str], num_pages: int, output_file: BytesIO, op
             pass
 
     try:
-        badges_pdf = PdfReader(input_files.pop())
+        badges_pdf = PdfReader(input_files.pop(0))
         offset = 0
         for i, chunk_indices in enumerate(_chunks(range(num_pages), badges_per_page * max_nup_pages)):
             chunk = []
@@ -274,7 +306,7 @@ def _render_nup(input_files: List[str], num_pages: int, output_file: BytesIO, op
                 # file has beforehand
                 if j - offset >= len(badges_pdf.pages):
                     offset += len(badges_pdf.pages)
-                    badges_pdf = PdfReader(input_files.pop())
+                    badges_pdf = PdfReader(input_files.pop(0))
                 chunk.append(badges_pdf.pages[j - offset])
             # Reset some internal state from pypdf. This will make it a little slower, but will prevent us from
             # running out of memory if we process a really large file.
@@ -438,14 +470,28 @@ class BadgeExporter(BaseExporter):
                  )),
                 ('date_from',
                  forms.DateField(
-                     label=_('Start date'),
+                     label=_('Start event date'),
                      widget=forms.DateInput(attrs={'class': 'datepickerfield'}),
                      required=False,
                      help_text=_('Only include tickets for dates on or after this date.')
                  )),
                 ('date_to',
                  forms.DateField(
-                     label=_('End date'),
+                     label=_('End event date'),
+                     widget=forms.DateInput(attrs={'class': 'datepickerfield'}),
+                     required=False,
+                     help_text=_('Only include tickets ordered on or before this date.')
+                 )),
+                ('order_date_from',
+                 forms.DateField(
+                     label=_('Start order date'),
+                     widget=forms.DateInput(attrs={'class': 'datepickerfield'}),
+                     required=False,
+                     help_text=_('Only include tickets ordered on or after this date.')
+                 )),
+                ('order_date_to',
+                 forms.DateField(
+                     label=_('End order date'),
                      widget=forms.DateInput(attrs={'class': 'datepickerfield'}),
                      required=False,
                      help_text=_('Only include tickets for dates on or before this date.')
@@ -455,7 +501,9 @@ class BadgeExporter(BaseExporter):
                      label=_('Sort by'),
                      choices=[
                          ('name', _('Attendee name')),
+                         ('company', _('Attendee company')),
                          ('code', _('Order code')),
+                         ('order_date', _('Order date')),
                          ('date', _('Event date')),
                      ] + ([
                          ('name:{}'.format(k), _('Attendee name: {part}').format(part=label))
@@ -508,10 +556,46 @@ class BadgeExporter(BaseExporter):
             ), self.event.timezone)
             qs = qs.filter(Q(subevent__date_from__lt=dt) | Q(subevent__isnull=True, order__event__date_from__lt=dt))
 
+        if form_data.get('order_date_from'):
+            if not isinstance(form_data.get('order_date_from'), date):
+                form_data['order_date_from'] = dateutil.parser.parse(form_data['order_date_from']).date()
+            df = make_aware(datetime.combine(
+                form_data['order_date_from'],
+                time(hour=0, minute=0, second=0)
+            ), self.event.timezone)
+            qs = qs.filter(order__datetime__gte=df)
+
+        if form_data.get('order_date_to'):
+            if not isinstance(form_data.get('order_date_to'), date):
+                form_data['order_date_to'] = dateutil.parser.parse(form_data['order_date_to']).date()
+            dt = make_aware(datetime.combine(
+                form_data['order_date_to'] + timedelta(days=1),
+                time(hour=0, minute=0, second=0)
+            ), self.event.timezone)
+            qs = qs.filter(order__datetime__lt=dt)
+
         if form_data.get('order_by') == 'name':
-            qs = qs.order_by('attendee_name_cached', 'order__code')
+            qs = qs.annotate(
+                resolved_name=Case(
+                    When(attendee_name_cached__ne='', then='attendee_name_cached'),
+                    When(addon_to__attendee_name_cached__isnull=False, addon_to__attendee_name_cached__ne='',
+                         then='addon_to__attendee_name_cached'),
+                    default=Value(""),
+                )
+            ).order_by('resolved_name', 'order__code')
+        elif form_data.get('order_by') == 'company':
+            qs = qs.annotate(
+                resolved_company=Case(
+                    When(company__ne='', then='company'),
+                    When(addon_to__company__isnull=False, addon_to__company__ne='',
+                         then='addon_to__company'),
+                    default=Value(""),
+                )
+            ).order_by('resolved_company', 'order__code')
         elif form_data.get('order_by') == 'code':
             qs = qs.order_by('order__code')
+        elif form_data.get('order_by') == 'order_date':
+            qs = qs.order_by('order__datetime')
         elif form_data.get('order_by') == 'date':
             qs = qs.annotate(ed=Coalesce('subevent__date_from', 'order__event__date_from')).order_by('ed', 'order__code')
         elif form_data.get('order_by', '').startswith('name:'):

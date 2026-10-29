@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -20,6 +20,7 @@
 # <https://www.gnu.org/licenses/>.
 #
 import django_filters
+from django.db import transaction
 from django_filters.rest_framework import DjangoFilterBackend, FilterSet
 from django_scopes import scopes_disabled
 from rest_framework import viewsets
@@ -31,6 +32,7 @@ from pretix.api.pagination import TotalOrderingFilter
 from pretix.api.serializers.waitinglist import WaitingListSerializer
 from pretix.base.models import WaitingListEntry
 from pretix.base.models.waitinglist import WaitingListException
+from pretix.base.signals import waitinglist_entry_created
 
 with scopes_disabled():
     class WaitingListFilter(FilterSet):
@@ -51,8 +53,8 @@ class WaitingListViewSet(viewsets.ModelViewSet):
     ordering = ('created', 'pk',)
     ordering_fields = ('id', 'created', 'email', 'item')
     filterset_class = WaitingListFilter
-    permission = 'can_view_orders'
-    write_permission = 'can_change_orders'
+    permission = 'event.orders:read'
+    write_permission = 'event.orders:write'
 
     def get_queryset(self):
         return self.request.event.waitinglistentries.all()
@@ -62,6 +64,7 @@ class WaitingListViewSet(viewsets.ModelViewSet):
         ctx['event'] = self.request.event
         return ctx
 
+    @transaction.atomic()
     def perform_create(self, serializer):
         serializer.save(event=self.request.event)
         serializer.instance.log_action(
@@ -69,16 +72,15 @@ class WaitingListViewSet(viewsets.ModelViewSet):
             user=self.request.user,
             auth=self.request.auth,
         )
-        try:
-            self.get_object().send_confirm(
-                user=self.request.user,
-                auth=self.request.auth,
-            )
-        except WaitingListException as e:
-            raise ValidationError(str(e))
-        else:
-            return Response(status=204)
+        # Sideburn: not in upstream pretix.
+        waitinglist_entry_created.send(
+            self.request.event,
+            entry=serializer.instance,
+            user=self.request.user,
+            auth=self.request.auth,
+        )
 
+    @transaction.atomic()
     def perform_update(self, serializer):
         if serializer.instance.voucher:
             raise PermissionDenied('This entry can not be changed as it has already been assigned a voucher.')
@@ -89,6 +91,7 @@ class WaitingListViewSet(viewsets.ModelViewSet):
             auth=self.request.auth,
         )
 
+    @transaction.atomic()
     def perform_destroy(self, instance):
         if instance.voucher:
             raise PermissionDenied('This entry can not be deleted as it has already been assigned a voucher.')

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -47,5 +47,5 @@ def escapejson(value):
 
 @keep_lazy(str, SafeText)
 def escapejson_attr(value):
-    """Hex encodes characters for use in a html attributw script."""
+    """Hex encodes characters for use in a html attribute."""
     return mark_safe(force_str(value).translate(_json_escapes_attr))

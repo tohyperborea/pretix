@@ -1,0 +1,87 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: pretix-sideburn-lottery\n"
+"Language: fr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=n > 1;\n"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/waitinglist.html
+msgid "How do tickets work for SideBurn?"
+msgstr "Comment fonctionnent les billets pour SideBurn ?"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/waitinglist.html
+msgid "Since demand for SideBurn tickets outnumbers supply,"
+msgstr "Étant donné que la demande de billets SideBurn dépasse l'offre,"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/waitinglist.html
+msgid ""
+"the first stage of getting a ticket is registering for the ticket lottery"
+msgstr ""
+"la première étape pour obtenir un billet consiste à s'inscrire à la loterie "
+"de billets"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/waitinglist.html
+msgid ""
+"The registrations for the general sale are drawn in a lottery, ensuring that "
+"everyone registered has an equal chance of being offered a ticket."
+msgstr ""
+"Les inscriptions à la vente générale sont mélangées dans une loterie "
+"garantissant que chaque inscrit a une chance égale de se voir offrir un "
+"billet."
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/waitinglist.html
+msgid ""
+"Available tickets are then offered in the order of the lottery, and "
+"registrants have three days to buy their available ticket before it’s added "
+"back to the pool and offered to the next in the list."
+msgstr ""
+"Les billets disponibles sont ensuite proposés dans l'ordre de la loterie, et "
+"les inscrits ont trois jours pour acheter leur billet disponible avant qu'il "
+"ne soit rajouté au groupe et offert et offert au suivant dans la liste."
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/waitinglist.html
+msgid ""
+"If you register for a ticket after sales are already in progress, you simply "
+"get added to the bottom of the list."
+msgstr ""
+"Si vous vous inscrivez pour un billet alors que les ventes sont déjà en "
+"cours, vous êtes simplement ajouté au bas de la liste."
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/waitinglist.html
+msgid "Register only once per person"
+msgstr "Inscrivez-vous une seule fois par personne"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/waitinglist.html
+msgid ""
+"Registering again with another email - or trying again with the same one - "
+"could disqualify you from the ticketing lottery!"
+msgstr ""
+"Vous inscrire à nouveau avec une autre adresse e-mail - ou réessayer avec la "
+"même - pourrait vous disqualifier de la loterie de billetterie !"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/sold_out_availability.html
+msgid "Register here"
+msgstr "Inscrivez-vous ici"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/checkout_waiver.html
+msgid "Before you proceed, please read the following documents"
+msgstr "Avant de continuer, veuillez lire les documents suivants"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/checkout_waiver.html
+msgid "Release of Waiver and Liability"
+msgstr "Libération de renonciation et de responsabilité"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/checkout_waiver.html
+msgid "SideBurn Code of Conduct"
+msgstr "Code de conduite SideBurn"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/checkout_waiver.html
+msgid ""
+"For each document, enter the confirmation words in the form below to show you"
+" agree."
+msgstr ""
+"Pour chaque document, saisissez les mots de confirmation dans le formulaire "
+"ci-dessous pour montrer que vous êtes d'accord."
+

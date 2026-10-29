@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -19,25 +19,29 @@
 # You should have received a copy of the GNU Affero General Public License along with this program.  If not, see
 # <https://www.gnu.org/licenses/>.
 #
-import hashlib
 import json
 import logging
 import urllib.parse
 from collections import OrderedDict
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from django import forms
 from django.conf import settings
 from django.contrib import messages
+from django.core.cache import cache
+from django.db import transaction
 from django.http import HttpRequest
 from django.template.loader import get_template
 from django.templatetags.static import static
 from django.urls import resolve, reverse
 from django.utils.crypto import get_random_string
+from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.utils.timezone import now
 from django.utils.translation import gettext as __, gettext_lazy as _
 from django_countries import countries
+from django_scopes import scopes_disabled
 from i18nfield.strings import LazyI18nString
 from paypalcheckoutsdk.orders import (
     OrdersCaptureRequest, OrdersCreateRequest, OrdersGetRequest,
@@ -47,13 +51,14 @@ from paypalcheckoutsdk.payments import CapturesRefundRequest, RefundsGetRequest
 from paypalhttp import HttpError
 
 from pretix.base.decimal import round_decimal
+from pretix.base.forms import SecretKeySettingsField
 from pretix.base.forms.questions import guess_country
 from pretix.base.models import Event, Order, OrderPayment, OrderRefund, Quota
 from pretix.base.payment import BasePaymentProvider, PaymentException
-from pretix.base.services.mail import SendMailException
 from pretix.base.settings import SettingsSandbox
-from pretix.helpers.urls import build_absolute_uri as build_global_uri
-from pretix.multidomain.urlreverse import build_absolute_uri, eventreverse
+from pretix.helpers import OF_SELF
+from pretix.helpers.urls import mainreverse_absolute
+from pretix.multidomain.urlreverse import eventreverse, eventreverse_absolute
 from pretix.plugins.paypal2.client.core.environment import (
     LiveEnvironment, SandboxEnvironment,
 )
@@ -63,7 +68,7 @@ from pretix.plugins.paypal2.client.core.paypal_http_client import (
 from pretix.plugins.paypal2.client.customer.partner_referral_create_request import (
     PartnerReferralCreateRequest,
 )
-from pretix.plugins.paypal.models import ReferencedPayPalObject
+from pretix.plugins.paypal2.models import ReferencedPayPalObject
 
 logger = logging.getLogger('pretix.plugins.paypal2')
 
@@ -104,15 +109,15 @@ class PaypalSettingsHolder(BasePaymentProvider):
                 ('client_id',
                  forms.CharField(
                      label=_('Client ID'),
-                     max_length=80,
                      min_length=80,
-                     help_text=_('<a target="_blank" rel="noopener" href="{docs_url}">{text}</a>').format(
+                     help_text=format_html(
+                         '<a target="_blank" rel="noopener" href="{docs_url}">{text}</a>',
                          text=_('Click here for a tutorial on how to obtain the required keys'),
                          docs_url='https://docs.pretix.eu/en/latest/user/payments/paypal.html'
                      )
                  )),
                 ('secret',
-                 forms.CharField(
+                 SecretKeySettingsField(
                      label=_('Secret'),
                      max_length=80,
                      min_length=80,
@@ -145,7 +150,7 @@ class PaypalSettingsHolder(BasePaymentProvider):
                  label=_('Alternative Payment Methods'),
                  help_text=_(
                      'In addition to payments through a PayPal account, you can also offer your customers the option '
-                     'to pay with credit cards and other, local payment methods such as SOFORT, giropay, iDEAL, and '
+                     'to pay with credit cards and other, local payment methods such as eps, iDEAL, and '
                      'many more - even when they do not have a PayPal account. Eligible payment methods will be '
                      'determined based on the shoppers location. For German merchants, this is the direct successor '
                      'of PayPal Plus.'
@@ -184,6 +189,31 @@ class PaypalSettingsHolder(BasePaymentProvider):
                  widget=forms.CheckboxInput(
                      attrs={
                          'data-checkbox-dependency': '#id_payment_paypal_method_apm',
+                     }
+                 )
+             )),
+            ('allow_retries_during_compliance_hold',
+             forms.BooleanField(
+                 label=_('Allow further payments during compliance hold'),
+                 help_text=_(
+                     'PayPals fraud prevention might block processing of individual payments for a considerable amount '
+                     'of time. The payment is marked as "pending" during this time window. You can allow your customers to '
+                     'start another payment attempts during that window. This might result in them being charged twice if the '
+                     'original payment is approved.'
+                 ),
+                 required=False
+             )),
+            ('timeout_payment_during_compliance_hold',
+             forms.IntegerField(
+                 label=_('Timeout further payment attempts'),
+                 help_text=_(
+                     'Time duration in minutes after which another payment attempt is possible, while the last payment is '
+                     'still under investigation.'
+                 ),
+                 required=False,
+                 widget=forms.NumberInput(
+                     attrs={
+                         'data-checkbox-dependency': '#id_payment_paypal_allow_retries_during_compliance_hold',
                      }
                  )
              )),
@@ -260,7 +290,7 @@ class PaypalSettingsHolder(BasePaymentProvider):
             settings_content = "<div class='alert alert-info'>%s<br /><code>%s</code></div>" % (
                 _('Please configure a PayPal Webhook to the following endpoint in order to automatically cancel orders '
                   'when payments are refunded externally.'),
-                build_global_uri('plugins:paypal2:webhook')
+                mainreverse_absolute('plugins:paypal2:webhook')
             )
 
         if self.event.currency not in SUPPORTED_CURRENCIES:
@@ -317,7 +347,7 @@ class PaypalSettingsHolder(BasePaymentProvider):
                 ],
                 "partner_config_override": {
                     "partner_logo_url": urllib.parse.urljoin(settings.SITE_URL, static('pretixbase/img/pretix-logo.svg')),
-                    "return_url": build_global_uri('plugins:paypal2:isu.return', kwargs={
+                    "return_url": mainreverse_absolute('plugins:paypal2:isu.return', kwargs={
                         'organizer': self.event.organizer.slug,
                         'event': self.event.slug,
                     })
@@ -424,12 +454,25 @@ class PaypalMethod(BasePaymentProvider):
                     kwargs[key] = request.resolver_match.kwargs[key]
             return kwargs
 
+        @scopes_disabled()
+        def count_known_failures():
+            return OrderPayment.objects.filter(
+                provider="paypal", info__contains="RESOURCE_NOT_FOUND", created__gt=now() - timedelta(hours=2)
+            ).count()
+
+        known_issue_failures = cache.get_or_set(
+            'paypal2_known_issue_failures',
+            count_known_failures,
+            600
+        )
+
         template = get_template('pretixplugins/paypal2/checkout_payment_form.html')
         ctx = {
             'request': request,
             'event': self.event,
             'settings': self.settings,
             'method': self.method,
+            'known_issue': known_issue_failures > 1,
             'xhr': eventreverse(self.event, 'plugins:paypal2:xhr', kwargs=build_kwargs())
         }
         return template.render(ctx)
@@ -445,8 +488,13 @@ class PaypalMethod(BasePaymentProvider):
                 req = OrdersGetRequest(paypal_order_id)
                 response = self.client.execute(req)
             except IOError as e:
-                messages.warning(request, _('We had trouble communicating with PayPal'))
-                logger.exception('PayPal OrdersGetRequest: {}'.format(str(e)))
+                if "RESOURCE_NOT_FOUND" in str(e):
+                    messages.warning(request, _('Your payment has failed due to a known issue within PayPal. Please try '
+                                                'again, there is a high chance of the payment succeeding on a second '
+                                                'or third attempt. You can also try other payment methods, if available.'))
+                else:
+                    messages.warning(request, _('We had trouble communicating with PayPal'))
+                logger.exception('PayPal OrdersGetRequest({}): {}'.format(paypal_order_id, str(e)))
                 return False
             else:
                 if response.result.status == 'APPROVED':
@@ -491,8 +539,16 @@ class PaypalMethod(BasePaymentProvider):
             'XPF': 0,
         }))
 
-    @property
-    def abort_pending_allowed(self):
+    def _payment_abort_pending_allowed(self, payment) -> bool:
+        if not self.settings.get('allow_retries_during_compliance_hold', as_type=bool, default=True):
+            return False
+
+        if payment.info_data.get('create_time', False):
+            create_time = datetime.fromisoformat(payment.info_data['create_time'])
+            duration = self.settings.get('timeout_payment_during_compliance_hold', as_type=int, default=10)
+            if datetime.now(tz=timezone.utc) - create_time > timedelta(minutes=duration):
+                return True
+
         return False
 
     def _create_paypal_order(self, request, payment=None, cart_total=None):
@@ -502,10 +558,13 @@ class PaypalMethod(BasePaymentProvider):
             kwargs['cart_namespace'] = request.resolver_match.kwargs['cart_namespace']
 
         # ISU
-        if request.event.settings.payment_paypal_isu_merchant_id:
-            payee = {
-                "merchant_id": request.event.settings.payment_paypal_isu_merchant_id,
-            }
+        if self.settings.connect_client_id and self.settings.connect_secret_key and not self.settings.secret:
+            if request.event.settings.payment_paypal_isu_merchant_id:
+                payee = {
+                    "merchant_id": request.event.settings.payment_paypal_isu_merchant_id,
+                }
+            else:
+                raise PaymentException('Payment method misconfigured')
         # Manual API integration
         else:
             payee = {}
@@ -539,7 +598,7 @@ class PaypalMethod(BasePaymentProvider):
             )
             request.session['payment_paypal_payment'] = None
         else:
-            pass
+            return None
 
         try:
             paymentreq = OrdersCreateRequest()
@@ -560,13 +619,21 @@ class PaypalMethod(BasePaymentProvider):
                     'locale': request.LANGUAGE_CODE.split('-')[0],
                     'shipping_preference': 'NO_SHIPPING',  # 'SET_PROVIDED_ADDRESS',  # Do not set on non-ship order?
                     'user_action': 'CONTINUE',
-                    'return_url': build_absolute_uri(request.event, 'plugins:paypal2:return', kwargs=kwargs),
-                    'cancel_url': build_absolute_uri(request.event, 'plugins:paypal2:abort', kwargs=kwargs),
+                    'return_url': eventreverse_absolute(request.event, 'plugins:paypal2:return', kwargs=kwargs),
+                    'cancel_url': eventreverse_absolute(request.event, 'plugins:paypal2:abort', kwargs=kwargs),
                 },
             })
             response = self.client.execute(paymentreq)
+
+            if payment:
+                ReferencedPayPalObject.objects.get_or_create(order=payment.order, payment=payment, reference=response.result.id)
         except IOError as e:
-            messages.error(request, _('We had trouble communicating with PayPal'))
+            if "RESOURCE_NOT_FOUND" in str(e):
+                messages.error(request, _('Your payment has failed due to a known issue within PayPal. Please try '
+                                          'again, there is a high chance of the payment succeeding on a second '
+                                          'or third attempt. You can also try other payment methods, if available.'))
+            else:
+                messages.error(request, _('We had trouble communicating with PayPal'))
             logger.exception('PayPal OrdersCreateRequest: {}'.format(str(e)))
         else:
             if response.result.status not in ('CREATED', 'PAYER_ACTION_REQUIRED'):
@@ -592,7 +659,27 @@ class PaypalMethod(BasePaymentProvider):
         }
         return template.render(ctx)
 
+    # We are wrapping the actual _execute_payment() here, since PaymentExceptions
+    # within the atomic transaction would rollback any changes to the payment-object,
+    # this throwing away any logentries and payment.fail()
     def execute_payment(self, request: HttpRequest, payment: OrderPayment):
+        ex = None
+        with transaction.atomic():
+            try:
+                return self._execute_payment(request, payment)
+            except PaymentException as e:
+                ex = e
+        if ex:
+            raise ex
+
+        return False
+
+    def _execute_payment(self, request: HttpRequest, payment: OrderPayment):
+        payment = OrderPayment.objects.select_for_update(of=OF_SELF).get(pk=payment.pk)
+        if payment.state == OrderPayment.PAYMENT_STATE_CONFIRMED:
+            # payment is already confirmed; possible return-view/webhook race-condition
+            return
+
         try:
             if request.session.get('payment_paypal_oid', '') == '':
                 raise PaymentException(_('We were unable to process your payment. See below for details on how to '
@@ -602,20 +689,30 @@ class PaypalMethod(BasePaymentProvider):
                 if not self.settings.isu_merchant_id:
                     raise PaymentException('Payment method misconfigured')
             self.init_api()
+            paypal_oid = request.session.get('payment_paypal_oid')
             try:
-                req = OrdersGetRequest(request.session.get('payment_paypal_oid'))
+                req = OrdersGetRequest(paypal_oid)
                 response = self.client.execute(req)
             except IOError as e:
-                logger.exception('PayPal OrdersGetRequest: {}'.format(str(e)))
+                logger.exception('PayPal OrdersGetRequest({}): {}'.format(paypal_oid, str(e)))
                 payment.fail(info={
                     "error": {
                         "name": "IOError",
                         "message": str(e),
+                        "order_id": paypal_oid,
                     }
                 })
+                if "RESOURCE_NOT_FOUND" in str(e):
+                    raise PaymentException(_('Your payment has failed due to a known issue within PayPal. Please try '
+                                             'again, there is a high chance of the payment succeeding on a second '
+                                             'or third attempt. You can also try other payment methods, if available.'))
                 raise PaymentException(_('We had trouble communicating with PayPal'))
             else:
                 pp_captured_order = response.result
+                payment.info = json.dumps(pp_captured_order.dict())
+                if pp_captured_order.status == 'APPROVED':
+                    payment.state = OrderPayment.PAYMENT_STATE_PENDING
+                payment.save()
 
             try:
                 ReferencedPayPalObject.objects.get_or_create(order=payment.order, payment=payment, reference=pp_captured_order.id)
@@ -651,7 +748,7 @@ class PaypalMethod(BasePaymentProvider):
                         description = '{prefix}{orderstring}{postfix}'.format(
                             prefix='{} '.format(self.settings.prefix) if self.settings.prefix else '',
                             orderstring=__('Order {order} for {event}').format(
-                                event=request.event.name,
+                                event=self.event.name,
                                 order=payment.order.code
                             ),
                             postfix=' {}'.format(self.settings.postfix) if self.settings.postfix else ''
@@ -671,14 +768,21 @@ class PaypalMethod(BasePaymentProvider):
                         ])
                         self.client.execute(patchreq)
                     except IOError as e:
-                        messages.error(request, _('We had trouble communicating with PayPal'))
+                        if "RESOURCE_NOT_FOUND" in str(e):
+                            messages.error(request,
+                                           _('Your payment has failed due to a known issue within PayPal. Please try '
+                                             'again, there is a high chance of the payment succeeding on a second '
+                                             'or third attempt. You can also try other payment methods, if available.'))
+                        else:
+                            messages.error(request, _('We had trouble communicating with PayPal'))
                         payment.fail(info={
                             "error": {
                                 "name": "IOError",
                                 "message": str(e),
-                            }
+                            },
+                            "order_id": paypal_oid,
                         })
-                        logger.exception('PayPal OrdersPatchRequest: {}'.format(str(e)))
+                        logger.exception('PayPal OrdersPatchRequest({}): {}'.format(paypal_oid, str(e)))
                         return
 
                 try:
@@ -704,18 +808,28 @@ class PaypalMethod(BasePaymentProvider):
                         pass
 
                     payment.fail(info={**pp_captured_order.dict(), "error": error}, log_data=error)
-                    logger.exception('PayPal OrdersCaptureRequest: {}'.format(str(e)))
+                    logger.exception('PayPal OrdersCaptureRequest({}): {}'.format(pp_captured_order.id, str(e)))
                     raise PaymentException(text)
                 except IOError as e:
                     payment.fail(info={**pp_captured_order.dict(), "error": {"message": str(e)}}, log_data={"error": str(e)})
-                    logger.exception('PayPal OrdersCaptureRequest: {}'.format(str(e)))
-                    raise PaymentException(
-                        _('We were unable to process your payment. See below for details on how to proceed.')
-                    )
+                    logger.exception('PayPal OrdersCaptureRequest({}): {}'.format(pp_captured_order.id, str(e)))
+                    if "RESOURCE_NOT_FOUND" in str(e):
+                        raise PaymentException(
+                            _('Your payment has failed due to a known issue within PayPal. Please try '
+                              'again, there is a high chance of the payment succeeding on a second '
+                              'or third attempt. You can also try other payment methods, if available.')
+                        )
+                    else:
+                        raise PaymentException(_('We were unable to process your payment. See below for details on how to proceed.'))
                 else:
                     pp_captured_order = response.result
 
-                for purchaseunit in pp_captured_order.purchase_units:
+            payment.refresh_from_db()
+
+            any_captures = False
+            all_captures_completed = True
+            for purchaseunit in pp_captured_order.purchase_units:
+                if hasattr(purchaseunit, 'payments'):
                     for capture in purchaseunit.payments.captures:
                         try:
                             ReferencedPayPalObject.objects.get_or_create(order=payment.order, payment=payment, reference=capture.id)
@@ -723,52 +837,83 @@ class PaypalMethod(BasePaymentProvider):
                             pass
 
                         if capture.status != 'COMPLETED':
-                            messages.warning(request, _('PayPal has not yet approved the payment. We will inform you as '
-                                                        'soon as the payment completed.'))
-                            payment.info = json.dumps(pp_captured_order.dict())
-                            payment.state = OrderPayment.PAYMENT_STATE_PENDING
-                            payment.save()
-                            return
+                            all_captures_completed = False
+                        else:
+                            any_captures = True
 
-            payment.refresh_from_db()
-
-            if pp_captured_order.status != 'COMPLETED':
-                payment.fail(info=pp_captured_order.dict())
-                logger.error('Invalid state: %s' % repr(pp_captured_order.dict()))
-                raise PaymentException(
-                    _('We were unable to process your payment. See below for details on how to proceed.')
-                )
-
-            if payment.state == OrderPayment.PAYMENT_STATE_CONFIRMED:
-                logger.warning('PayPal success event even though order is already marked as paid')
-                return
-
-            try:
+            # Payment has at least one capture, but it is not yet completed
+            if any_captures and not all_captures_completed:
+                messages.warning(request, _('PayPal has not yet approved the payment. We will inform you as '
+                                            'soon as the payment completed.'))
                 payment.info = json.dumps(pp_captured_order.dict())
-                payment.save(update_fields=['info'])
-                payment.confirm()
-            except Quota.QuotaExceededException as e:
-                raise PaymentException(str(e))
+                payment.state = OrderPayment.PAYMENT_STATE_PENDING
+                payment.save()
+                return
+            # Payment has at least one capture and all captures are completed
+            elif any_captures and all_captures_completed:
+                if pp_captured_order.status != 'COMPLETED':
+                    payment.fail(info=pp_captured_order.dict())
+                    logger.error('Invalid state: %s' % repr(pp_captured_order.dict()))
+                    raise PaymentException(
+                        _('We were unable to process your payment. See below for details on how to proceed.')
+                    )
 
-            except SendMailException:
-                messages.warning(request, _('There was an error sending the confirmation mail.'))
+                if payment.state == OrderPayment.PAYMENT_STATE_CONFIRMED:
+                    logger.warning('PayPal success event even though order is already marked as paid')
+                    return
+
+                try:
+                    payment.info = json.dumps(pp_captured_order.dict())
+                    payment.save(update_fields=['info'])
+                    payment.confirm()
+                    self.log_payment_duration(payment)
+                except Quota.QuotaExceededException as e:
+                    raise PaymentException(str(e))
+            # Payment has not any captures yet - so it's probably in created status
+            else:
+                return
         finally:
             if 'payment_paypal_oid' in request.session:
                 del request.session['payment_paypal_oid']
 
-    def payment_pending_render(self, request, payment) -> str:
-        retry = True
+    @staticmethod
+    def log_payment_duration(payment: OrderPayment):
         try:
-            if (
-                    payment.info
-                    and payment.info_data['purchase_units'][0]['payments']['captures'][0]['status'] == 'pending'
-            ):
-                retry = False
-        except (KeyError, IndexError):
+            capture = payment.info_data["purchase_units"][0]["payments"]["captures"][0]
+            create_time: str | None = capture["create_time"]
+            update_time: str | None = capture["update_time"]
+        except (KeyError, IndexError, TypeError):
+            create_time = None
+            update_time = None
+
+        if create_time is not None and update_time is not None:
+            duration = datetime.fromisoformat(update_time) - datetime.fromisoformat(create_time)
+            logger.info('{}: {} - paypal payment processing time'.format(str(payment.global_id), str(duration)))
+
+    def payment_pending_render(self, request, payment) -> str:
+        stuck_in_compliance = False
+        retry = self._payment_abort_pending_allowed(payment)
+        try:
+            for purchase_unit in payment.info_data['purchase_units']:
+                for capture in purchase_unit['payments']['captures']:
+                    if capture['status'] == "PENDING":
+                        stuck_in_compliance = True
+        except KeyError:
             pass
+
+        try:
+            if payment.info_data.get('status') == "APPROVED":
+                stuck_in_compliance = True
+        except (KeyError):
+            pass
+
+        error = payment.info_data.get("error", {})
+        is_known_issue = error.get("name") == "RESOURCE_NOT_FOUND" or "RESOURCE_NOT_FOUND" in (error.get("message") or "")
+
         template = get_template('pretixplugins/paypal2/pending.html')
         ctx = {'request': request, 'event': self.event, 'settings': self.settings,
-               'retry': retry, 'order': payment.order}
+               'stuck_in_compliance': stuck_in_compliance, 'retry': retry, 'order': payment.order,
+               'is_known_issue': is_known_issue}
         return template.render(ctx)
 
     def matching_id(self, payment: OrderPayment):
@@ -855,50 +1000,55 @@ class PaypalMethod(BasePaymentProvider):
 
     def execute_refund(self, refund: OrderRefund):
         self.init_api()
+        with transaction.atomic():
+            # Lock payment that we are creating refund for to prevent race condition with incoming webhook
+            OrderPayment.objects.select_for_update(of=OF_SELF).get(pk=refund.payment_id)
+            try:
+                pp_payment = None
+                payment_info_data = None
+                # Legacy PayPal - get up to date info data first
+                if "purchase_units" not in refund.payment.info_data:
+                    req = OrdersGetRequest(refund.payment.info_data['cart'])
+                    response = self.client.execute(req)
+                    payment_info_data = response.result.dict()
+                else:
+                    payment_info_data = refund.payment.info_data
 
-        try:
-            pp_payment = None
-            payment_info_data = None
-            # Legacy PayPal - get up to date info data first
-            if "purchase_units" not in refund.payment.info_data:
-                req = OrdersGetRequest(refund.payment.info_data['cart'])
-                response = self.client.execute(req)
-                payment_info_data = response.result.dict()
-            else:
-                payment_info_data = refund.payment.info_data
-
-            for res in payment_info_data['purchase_units'][0]['payments']['captures']:
-                if res['status'] in ['COMPLETED', 'PARTIALLY_REFUNDED']:
-                    pp_payment = res['id']
-                    break
-
-            if not pp_payment:
-                req = OrdersGetRequest(payment_info_data['id'])
-                response = self.client.execute(req)
-                for res in response.result.purchase_units[0].payments.captures:
+                for res in payment_info_data['purchase_units'][0]['payments']['captures']:
                     if res['status'] in ['COMPLETED', 'PARTIALLY_REFUNDED']:
-                        pp_payment = res.id
+                        pp_payment = res['id']
                         break
 
-            req = CapturesRefundRequest(pp_payment)
-            req.request_body({
-                "amount": {
-                    "value": self.format_price(refund.amount),
-                    "currency_code": refund.order.event.currency
-                }
-            })
-            response = self.client.execute(req)
-        except IOError as e:
-            refund.order.log_action('pretix.event.order.refund.failed', {
-                'local_id': refund.local_id,
-                'provider': refund.provider,
-                'error': str(e)
-            })
-            logger.error('execute_refund: {}'.format(str(e)))
-            raise PaymentException(_('Refunding the amount via PayPal failed: {}').format(str(e)))
+                if not pp_payment:
+                    req = OrdersGetRequest(payment_info_data['id'])
+                    response = self.client.execute(req)
+                    for res in response.result.purchase_units[0].payments.captures:
+                        if res['status'] in ['COMPLETED', 'PARTIALLY_REFUNDED']:
+                            pp_payment = res.id
+                            break
 
-        refund.info = json.dumps(response.result.dict())
-        refund.save(update_fields=['info'])
+                req = CapturesRefundRequest(pp_payment)
+                req.request_body({
+                    "amount": {
+                        "value": self.format_price(refund.amount),
+                        "currency_code": refund.order.event.currency
+                    }
+                })
+                response = self.client.execute(req)
+            except KeyError:
+                raise PaymentException(_('Refunding the amount via PayPal failed: The original payment does not contain '
+                                         'the required information to issue an automated refund.'))
+            except IOError as e:
+                refund.order.log_action('pretix.event.order.refund.failed', {
+                    'local_id': refund.local_id,
+                    'provider': refund.provider,
+                    'error': str(e)
+                })
+                logger.error('execute_refund: {}'.format(str(e)))
+                raise PaymentException(_('Refunding the amount via PayPal failed: {}').format(str(e)))
+
+            refund.info = json.dumps(response.result.dict())
+            refund.save(update_fields=['info'])
 
         req = RefundsGetRequest(response.result.id)
         response = self.client.execute(req)
@@ -929,8 +1079,16 @@ class PaypalMethod(BasePaymentProvider):
                 req = OrdersGetRequest(paypal_order_id)
                 response = self.client.execute(req)
             except IOError as e:
-                messages.warning(request, _('We had trouble communicating with PayPal'))
-                logger.exception('PayPal OrdersGetRequest: {}'.format(str(e)))
+                if "RESOURCE_NOT_FOUND" in str(e):
+                    messages.warning(
+                        request,
+                        _('Your payment has failed due to a known issue within PayPal. Please try '
+                          'again, there is a high chance of the payment succeeding on a second '
+                          'or third attempt. You can also try other payment methods, if available.')
+                    )
+                else:
+                    messages.warning(request, _('We had trouble communicating with PayPal'))
+                logger.exception('PayPal OrdersGetRequest({}): {}'.format(paypal_order_id, str(e)))
                 return False
             else:
                 if response.result.status == 'APPROVED':
@@ -1034,11 +1192,13 @@ class PaypalAPM(PaypalMethod):
         payment.save(update_fields=["provider"])
 
         paypal_order = self._create_paypal_order(request, payment, None)
+        if not paypal_order:
+            raise PaymentException(_('We had trouble communicating with PayPal'))
         payment.info = json.dumps(paypal_order.dict())
         payment.save(update_fields=['info'])
 
         return eventreverse(self.event, 'plugins:paypal2:pay', kwargs={
             'order': payment.order.code,
             'payment': payment.pk,
-            'hash': hashlib.sha1(payment.order.secret.lower().encode()).hexdigest(),
+            'hash': payment.order.tagged_secret('plugins:paypal2:pay'),
         })

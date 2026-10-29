@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -19,42 +19,18 @@
 # You should have received a copy of the GNU Affero General Public License along with this program.  If not, see
 # <https://www.gnu.org/licenses/>.
 #
-from django import forms
+from django.conf import settings
 from django.http import QueryDict
+from pytz import common_timezones
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
+from pretix.api.serializers.forms import form_field_to_serializer_field
 from pretix.base.exporter import OrganizerLevelExportMixin
-from pretix.base.timeframes import DateFrameField, SerializerDateFrameField
-
-
-class FormFieldWrapperField(serializers.Field):
-    def __init__(self, *args, **kwargs):
-        self.form_field = kwargs.pop('form_field')
-        super().__init__(*args, **kwargs)
-
-    def to_representation(self, value):
-        return self.form_field.widget.format_value(value)
-
-    def to_internal_value(self, data):
-        d = self.form_field.widget.value_from_datadict({'name': data}, {}, 'name')
-        d = self.form_field.clean(d)
-        return d
-
-
-simple_mappings = (
-    (forms.DateField, serializers.DateField, ()),
-    (forms.TimeField, serializers.TimeField, ()),
-    (forms.SplitDateTimeField, serializers.DateTimeField, ()),
-    (forms.DateTimeField, serializers.DateTimeField, ()),
-    (forms.DecimalField, serializers.DecimalField, ('max_digits', 'decimal_places', 'min_value', 'max_value')),
-    (forms.FloatField, serializers.FloatField, ()),
-    (forms.IntegerField, serializers.IntegerField, ()),
-    (forms.EmailField, serializers.EmailField, ()),
-    (forms.UUIDField, serializers.UUIDField, ()),
-    (forms.URLField, serializers.URLField, ()),
-    (forms.BooleanField, serializers.BooleanField, ()),
+from pretix.base.models import (
+    Event, ScheduledEventExport, ScheduledOrganizerExport,
 )
+from pretix.base.timeframes import SerializerDateFrameField
 
 
 class SerializerDescriptionField(serializers.Field):
@@ -78,80 +54,30 @@ class ExporterSerializer(serializers.Serializer):
     input_parameters = SerializerDescriptionField(source='_serializer')
 
 
-class PrimaryKeyRelatedField(serializers.PrimaryKeyRelatedField):
-    def to_representation(self, value):
-        if isinstance(value, int):
-            return value
-        return super().to_representation(value)
-
-
 class JobRunSerializer(serializers.Serializer):
     def __init__(self, *args, **kwargs):
-        ex = kwargs.pop('exporter')
-        events = kwargs.pop('events', None)
+        ex = self.ex = kwargs.pop('exporter')
         super().__init__(*args, **kwargs)
-        if events is not None and not isinstance(ex, OrganizerLevelExportMixin):
-            self.fields["events"] = serializers.SlugRelatedField(
-                queryset=events,
+        if ex.is_multievent and not isinstance(ex, OrganizerLevelExportMixin):
+            self.fields["all_events"] = serializers.BooleanField(
                 required=False,
-                allow_empty=False,
+            )
+            self.fields["events"] = serializers.SlugRelatedField(
+                queryset=ex.events,
+                required=False,
+                allow_empty=True,
                 slug_field='slug',
                 many=True
             )
         for k, v in ex.export_form_fields.items():
-            for m_from, m_to, m_kwargs in simple_mappings:
-                if isinstance(v, m_from):
-                    self.fields[k] = m_to(
-                        required=v.required,
-                        allow_null=not v.required,
-                        validators=v.validators,
-                        **{kwarg: getattr(v, kwargs, None) for kwarg in m_kwargs}
-                    )
-                    break
+            self.fields[k] = form_field_to_serializer_field(v)
 
-            if isinstance(v, forms.NullBooleanField):
-                self.fields[k] = serializers.BooleanField(
-                    required=v.required,
-                    allow_null=True,
-                    validators=v.validators,
-                )
-            if isinstance(v, forms.ModelMultipleChoiceField):
-                self.fields[k] = PrimaryKeyRelatedField(
-                    queryset=v.queryset,
-                    required=v.required,
-                    allow_empty=not v.required,
-                    validators=v.validators,
-                    many=True
-                )
-            elif isinstance(v, forms.ModelChoiceField):
-                self.fields[k] = PrimaryKeyRelatedField(
-                    queryset=v.queryset,
-                    required=v.required,
-                    allow_null=not v.required,
-                    validators=v.validators,
-                )
-            elif isinstance(v, forms.MultipleChoiceField):
-                self.fields[k] = serializers.MultipleChoiceField(
-                    choices=v.choices,
-                    required=v.required,
-                    allow_empty=not v.required,
-                    validators=v.validators,
-                )
-            elif isinstance(v, forms.ChoiceField):
-                self.fields[k] = serializers.ChoiceField(
-                    choices=v.choices,
-                    required=v.required,
-                    allow_null=not v.required,
-                    validators=v.validators,
-                )
-            elif isinstance(v, DateFrameField):
-                self.fields[k] = SerializerDateFrameField(
-                    required=v.required,
-                    allow_null=not v.required,
-                    validators=v.validators,
-                )
-            else:
-                self.fields[k] = FormFieldWrapperField(form_field=v, required=v.required, allow_null=not v.required)
+    def to_representation(self, instance):
+        # Translate between events as a list of slugs (API) and list of ints (database)
+        if self.ex.is_multievent and not isinstance(self.ex, OrganizerLevelExportMixin) and "events" in instance and isinstance(instance["events"], list):
+            instance["events"] = [e for e in self.ex.events.filter(pk__in=instance["events"])]
+        instance = super().to_representation(instance)
+        return instance
 
     def to_internal_value(self, data):
         if isinstance(data, QueryDict):
@@ -180,6 +106,14 @@ class JobRunSerializer(serializers.Serializer):
                 data[fk] = f'{d_from.isoformat() if d_from else ""}/{d_to.isoformat() if d_to else ""}'
 
         data = super().to_internal_value(data)
+
+        # Translate between events as a list of slugs (API) and list of ints (database)
+        if self.ex.is_multievent and not isinstance(self.ex, OrganizerLevelExportMixin) and "events" in data and isinstance(data["events"], list):
+            if data["events"] and isinstance(data["events"][0], Event):
+                data["events"] = [e.pk for e in data["events"]]
+            elif data["events"] and isinstance(data["events"][0], str):
+                data["events"] = [e.pk for e in self.ex.events.filter(slug__in=data["events"]).only("pk")]
+
         return data
 
     def is_valid(self, raise_exception=False):
@@ -197,3 +131,105 @@ class JobRunSerializer(serializers.Serializer):
             raise ValidationError(self.errors)
 
         return not bool(self._errors)
+
+
+class ExportFormDataField(serializers.Field):
+    def get_attribute(self, instance):
+        return (instance.export_identifier, instance.export_form_data)
+
+    def to_representation(self, value):
+        export_identifier, export_form_data = value
+        exporter = self.context['exporters'].get(export_identifier)
+        if exporter:
+            return JobRunSerializer(exporter=exporter).to_representation(export_form_data)
+        else:
+            return export_form_data
+
+    def get_value(self, dictionary):
+        return dictionary
+
+    def to_internal_value(self, data):
+        if "export_form_data" in data:
+            identifier = data.get('export_identifier', self.parent.instance.export_identifier if self.parent.instance else None)
+            exporter = self.context['exporters'].get(identifier)
+            if exporter:
+                return JobRunSerializer(exporter=exporter).to_internal_value(data["export_form_data"])
+            else:
+                return data['export_form_data']
+
+
+class ScheduledExportSerializer(serializers.ModelSerializer):
+    schedule_next_run = serializers.DateTimeField(read_only=True)
+    export_identifier = serializers.ChoiceField(choices=[])
+    locale = serializers.ChoiceField(choices=settings.LANGUAGES, default='en')
+    owner = serializers.SlugRelatedField(slug_field='email', read_only=True)
+    error_counter = serializers.IntegerField(read_only=True)
+    export_form_data = ExportFormDataField()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['export_identifier'].choices = [(e, e) for e in self.context['exporters']]
+
+    def validate_mail_additional_recipients(self, value):
+        d = value.replace(' ', '')
+        if len(d.split(',')) > 25:
+            raise ValidationError('Please enter less than 25 recipients.')
+        return d
+
+    def validate_mail_additional_recipients_cc(self, value):
+        d = value.replace(' ', '')
+        if len(d.split(',')) > 25:
+            raise ValidationError('Please enter less than 25 recipients.')
+        return d
+
+    def validate_mail_additional_recipients_bcc(self, value):
+        d = value.replace(' ', '')
+        if len(d.split(',')) > 25:
+            raise ValidationError('Please enter less than 25 recipients.')
+        return d
+
+
+class ScheduledEventExportSerializer(ScheduledExportSerializer):
+
+    class Meta:
+        model = ScheduledEventExport
+        fields = [
+            'id',
+            'owner',
+            'export_identifier',
+            'export_form_data',
+            'locale',
+            'mail_additional_recipients',
+            'mail_additional_recipients_cc',
+            'mail_additional_recipients_bcc',
+            'mail_subject',
+            'mail_template',
+            'schedule_rrule',
+            'schedule_rrule_time',
+            'schedule_next_run',
+            'error_counter',
+        ]
+
+
+class ScheduledOrganizerExportSerializer(ScheduledExportSerializer):
+    timezone = serializers.ChoiceField(default=settings.TIME_ZONE, choices=[(a, a) for a in common_timezones])
+
+    class Meta:
+        model = ScheduledOrganizerExport
+        fields = [
+            'id',
+            'owner',
+            'export_identifier',
+            'export_form_data',
+            'locale',
+            'mail_additional_recipients',
+            'mail_additional_recipients_cc',
+            'mail_additional_recipients_bcc',
+            'mail_subject',
+            'mail_template',
+            'schedule_rrule',
+            'schedule_rrule_time',
+            'schedule_next_run',
+            'timezone',
+            'error_counter',
+        ]

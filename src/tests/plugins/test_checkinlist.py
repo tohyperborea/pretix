@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -51,7 +51,8 @@ def event():
             code='FOO', event=event, email='dummy@dummy.test', phone="+498912345678",
             status=Order.STATUS_PAID,
             datetime=datetime.datetime(2019, 2, 22, 14, 0, 0, tzinfo=datetime.timezone.utc), expires=now() + datetime.timedelta(days=10),
-            total=33, locale='en'
+            total=33, locale='en',
+            sales_channel=event.organizer.sales_channels.get(identifier="web"),
         )
         item_ticket = Item.objects.create(event=event, name="Ticket", default_price=23, admission=True)
         OrderPosition.objects.create(
@@ -89,13 +90,13 @@ def test_csv_simple(event):
     })
     assert clean(content.decode()) == clean(""""Order code","Attendee name","Attendee name: Title","Attendee name:
  First name","Attendee name: Middle name","Attendee name: Family name","Product","Price","Checked in","Checked out","Automatically
- checked in","Secret","E-mail","Phone number","Company","Voucher code","Order date","Order time","Requires special attention",
-"Comment","Seat ID","Seat name","Seat zone","Seat row","Seat number","Blocked","Valid from","Valid until","Address","ZIP code",
+ checked in","Secret","Email","Phone number","Company","Voucher code","Order date","Order time","Requires special attention",
+"Comment","Check-in text","Seat ID","Seat name","Seat zone","Seat row","Seat number","Blocked","Valid from","Valid until","Address","ZIP code",
 "City","Country","State"
 "FOO","Mr Peter A Jones","Mr","Peter","A","Jones","Ticket","23.00","","","No","hutjztuxhkbtwnesv2suqv26k6ttytxx",
-"dummy@dummy.test","'+498912345678","","","2019-02-22","14:00:00","No","","","","","","","","","","","","","",""
+"dummy@dummy.test","'+498912345678","","","2019-02-22","14:00:00","No","","","","","","","","","","","","","","",""
 "FOO","Mrs Andrea J Zulu","Mrs","Andrea","J","Zulu","Ticket","13.00","","","No","ggsngqtnmhx74jswjngw3fk8pfwz2a7k",
-"dummy@dummy.test","'+498912345678","","","2019-02-22","14:00:00","No","","","","","","","","","","","","","",""
+"dummy@dummy.test","'+498912345678","","","2019-02-22","14:00:00","No","","","","","","","","","","","","","","",""
 """)
 
 
@@ -111,13 +112,13 @@ def test_csv_order_by_name_parts(event):  # noqa
     })
     assert clean(content.decode()) == clean(""""Order code","Attendee name","Attendee name: Title",
 "Attendee name: First name","Attendee name: Middle name","Attendee name: Family name","Product","Price",
-"Checked in","Checked out","Automatically checked in","Secret","E-mail","Phone number","Company","Voucher code","Order date","Order time","Requires special
- attention","Comment","Seat ID","Seat name","Seat zone","Seat row","Seat number","Blocked","Valid from","Valid until",
+"Checked in","Checked out","Automatically checked in","Secret","Email","Phone number","Company","Voucher code","Order date","Order time","Requires special
+ attention","Comment","Check-in text","Seat ID","Seat name","Seat zone","Seat row","Seat number","Blocked","Valid from","Valid until",
 "Address","ZIP code","City","Country","State"
 "FOO","Mrs Andrea J Zulu","Mrs","Andrea","J","Zulu","Ticket","13.00","","","No","ggsngqtnmhx74jswjngw3fk8pfwz2a7k",
-"dummy@dummy.test","'+498912345678","","","2019-02-22","14:00:00","No","","","","","","","","","","","","","",""
+"dummy@dummy.test","'+498912345678","","","2019-02-22","14:00:00","No","","","","","","","","","","","","","","",""
 "FOO","Mr Peter A Jones","Mr","Peter","A","Jones","Ticket","23.00","","","No","hutjztuxhkbtwnesv2suqv26k6ttytxx",
-"dummy@dummy.test","'+498912345678","","","2019-02-22","14:00:00","No","","","","","","","","","","","","","",""
+"dummy@dummy.test","'+498912345678","","","2019-02-22","14:00:00","No","","","","","","","","","","","","","","",""
 """)
     c = CSVCheckinList(event, organizer=event.organizer)
     _, _, content = c.render({
@@ -129,13 +130,13 @@ def test_csv_order_by_name_parts(event):  # noqa
     })
     assert clean(content.decode()) == clean(""""Order code","Attendee name","Attendee name: Title",
 "Attendee name: First name","Attendee name: Middle name","Attendee name: Family name","Product","Price",
-"Checked in","Checked out","Automatically checked in","Secret","E-mail","Phone number","Company","Voucher code","Order date","Order time","Requires special
- attention","Comment","Seat ID","Seat name","Seat zone","Seat row","Seat number","Blocked","Valid from","Valid until",
+"Checked in","Checked out","Automatically checked in","Secret","Email","Phone number","Company","Voucher code","Order date","Order time","Requires special
+ attention","Comment","Check-in text","Seat ID","Seat name","Seat zone","Seat row","Seat number","Blocked","Valid from","Valid until",
 "Address","ZIP code","City","Country","State"
 "FOO","Mr Peter A Jones","Mr","Peter","A","Jones","Ticket","23.00","","","No","hutjztuxhkbtwnesv2suqv26k6ttytxx",
-"dummy@dummy.test","'+498912345678","","","2019-02-22","14:00:00","No","","","","","","","","","","","","","",""
+"dummy@dummy.test","'+498912345678","","","2019-02-22","14:00:00","No","","","","","","","","","","","","","","",""
 "FOO","Mrs Andrea J Zulu","Mrs","Andrea","J","Zulu","Ticket","13.00","","","No","ggsngqtnmhx74jswjngw3fk8pfwz2a7k",
-"dummy@dummy.test","'+498912345678","","","2019-02-22","14:00:00","No","","","","","","","","","","","","","",""
+"dummy@dummy.test","'+498912345678","","","2019-02-22","14:00:00","No","","","","","","","","","","","","","","",""
 """)
 
 
@@ -150,7 +151,8 @@ def test_csv_order_by_inherited_name_parts(event):  # noqa
             code='BAR', event=event, email='dummy@dummy.test', phone='+498912345678',
             status=Order.STATUS_PAID,
             datetime=datetime.datetime(2019, 2, 22, 14, 0, 0, tzinfo=datetime.timezone.utc), expires=now() + datetime.timedelta(days=10),
-            total=33, locale='en'
+            total=33, locale='en',
+            sales_channel=event.organizer.sales_channels.get(identifier="web"),
         )
         OrderPosition.objects.create(
             order=order2,
@@ -181,13 +183,13 @@ def test_csv_order_by_inherited_name_parts(event):  # noqa
     })
     assert clean(content.decode()) == clean(""""Order code","Attendee name","Attendee name: Title",
 "Attendee name: First name","Attendee name: Middle name","Attendee name: Family name","Product","Price",
-"Checked in","Checked out","Automatically checked in","Secret","E-mail","Phone number","Company","Voucher code","Order date","Order time","Requires special
- attention","Comment","Seat ID","Seat name","Seat zone","Seat row","Seat number","Blocked","Valid from","Valid until",
+"Checked in","Checked out","Automatically checked in","Secret","Email","Phone number","Company","Voucher code","Order date","Order time","Requires special
+ attention","Comment","Check-in text","Seat ID","Seat name","Seat zone","Seat row","Seat number","Blocked","Valid from","Valid until",
 "Address","ZIP code","City","Country","State"
 "BAR","Mr Albert J Zulu","Mr","Albert","J","Zulu","Ticket","23.00","","","No","hutjztuxhkbtwnesv2suqv26k6ttytyy",
-"dummy@dummy.test","'+498912345678","BARCORP","","2019-02-22","14:00:00","No","","","","","","","","","","","","","",""
+"dummy@dummy.test","'+498912345678","BARCORP","","2019-02-22","14:00:00","No","","","","","","","","","","","","","","",""
 "FOO","Mr Paul A Jones","Mr","Paul","A","Jones","Ticket","23.00","","","No","hutjztuxhkbtwnesv2suqv26k6ttytxx",
-"dummy@dummy.test","'+498912345678","FOOCORP","","2019-02-22","14:00:00","No","","","","","","","","","","","","","",""
+"dummy@dummy.test","'+498912345678","FOOCORP","","2019-02-22","14:00:00","No","","","","","","","","","","","","","","",""
 """)
     c = CSVCheckinList(event, organizer=event.organizer)
     _, _, content = c.render({
@@ -199,13 +201,13 @@ def test_csv_order_by_inherited_name_parts(event):  # noqa
     })
     assert clean(content.decode()) == clean(""""Order code","Attendee name","Attendee name: Title",
 "Attendee name: First name","Attendee name: Middle name","Attendee name: Family name","Product","Price",
-"Checked in","Checked out","Automatically checked in","Secret","E-mail","Phone number","Company","Voucher code","Order date","Order time","Requires special
- attention","Comment","Seat ID","Seat name","Seat zone","Seat row","Seat number","Blocked","Valid from","Valid until",
+"Checked in","Checked out","Automatically checked in","Secret","Email","Phone number","Company","Voucher code","Order date","Order time","Requires special
+ attention","Comment","Check-in text","Seat ID","Seat name","Seat zone","Seat row","Seat number","Blocked","Valid from","Valid until",
 "Address","ZIP code","City","Country","State"
 "BAR","Mr Albert J Zulu","Mr","Albert","J","Zulu","Ticket","23.00","","","No","hutjztuxhkbtwnesv2suqv26k6ttytyy",
-"dummy@dummy.test","'+498912345678","BARCORP","","2019-02-22","14:00:00","No","","","","","","","","","","","","","",""
+"dummy@dummy.test","'+498912345678","BARCORP","","2019-02-22","14:00:00","No","","","","","","","","","","","","","","",""
 "FOO","Mr Paul A Jones","Mr","Paul","A","Jones","Ticket","23.00","","","No","hutjztuxhkbtwnesv2suqv26k6ttytxx",
-"dummy@dummy.test","'+498912345678","FOOCORP","","2019-02-22","14:00:00","No","","","","","","","","","","","","","",""
+"dummy@dummy.test","'+498912345678","FOOCORP","","2019-02-22","14:00:00","No","","","","","","","","","","","","","","",""
 """)
     c = CSVCheckinList(event, organizer=event.organizer)
     _, _, content = c.render({
@@ -217,11 +219,56 @@ def test_csv_order_by_inherited_name_parts(event):  # noqa
     })
     assert clean(content.decode()) == clean(""""Order code","Attendee name","Attendee name: Title",
 "Attendee name: First name","Attendee name: Middle name","Attendee name: Family name","Product","Price",
-"Checked in","Checked out","Automatically checked in","Secret","E-mail","Phone number","Company","Voucher code","Order date","Order time","Requires special
- attention","Comment","Seat ID","Seat name","Seat zone","Seat row","Seat number","Blocked","Valid from","Valid until",
+"Checked in","Checked out","Automatically checked in","Secret","Email","Phone number","Company","Voucher code","Order date","Order time","Requires special
+ attention","Comment","Check-in text","Seat ID","Seat name","Seat zone","Seat row","Seat number","Blocked","Valid from","Valid until",
 "Address","ZIP code","City","Country","State"
 "FOO","Mr Paul A Jones","Mr","Paul","A","Jones","Ticket","23.00","","","No","hutjztuxhkbtwnesv2suqv26k6ttytxx",
-"dummy@dummy.test","'+498912345678","FOOCORP","","2019-02-22","14:00:00","No","","","","","","","","","","","","","",""
+"dummy@dummy.test","'+498912345678","FOOCORP","","2019-02-22","14:00:00","No","","","","","","","","","","","","","","",""
 "BAR","Mr Albert J Zulu","Mr","Albert","J","Zulu","Ticket","23.00","","","No","hutjztuxhkbtwnesv2suqv26k6ttytyy",
-"dummy@dummy.test","'+498912345678","BARCORP","","2019-02-22","14:00:00","No","","","","","","","","","","","","","",""
+"dummy@dummy.test","'+498912345678","BARCORP","","2019-02-22","14:00:00","No","","","","","","","","","","","","","","",""
+""")
+
+
+@pytest.mark.django_db
+def test_csv_order_by_orderdatetime(event):
+    order1 = event.orders.first()
+    order1.checkin_text = 'meow'
+    order1.save()
+    order2 = Order.objects.create(
+        code='FOO2', event=event, email='dummy@dummy.test', phone="+498912345678",
+        status=Order.STATUS_PAID,
+        datetime=datetime.datetime(2019, 2, 22, 22, 0, 0, tzinfo=datetime.timezone.utc),
+        expires=now() + datetime.timedelta(days=10),
+        total=33, locale='en', checkin_text='beep',
+        sales_channel=event.organizer.sales_channels.get(identifier="web"),
+    )
+    item_ticket = Item.objects.create(event=event, name="Ticket2", default_price=23, admission=True, checkin_text='boop')
+    OrderPosition.objects.create(
+        order=order2,
+        item=item_ticket,
+        variation=None,
+        price=Decimal("23"),
+        attendee_name_parts={"title": "Mx", "given_name": "Alex", "middle_name": "F", "family_name": "Nord"},
+        secret='asdfasdfasdfasdfasdfasdfasfdasdf'
+    )
+
+    c = CSVCheckinList(event, organizer=event.organizer)
+    _, _, content = c.render({
+        'list': event.checkin_lists.first().pk,
+        'secrets': True,
+        'sort': 'order_datetime',
+        '_format': 'default',
+        'questions': []
+    })
+    assert clean(content.decode()) == clean(""""Order code","Attendee name","Attendee name: Title","Attendee name:
+ First name","Attendee name: Middle name","Attendee name: Family name","Product","Price","Checked in","Checked out","Automatically
+ checked in","Secret","Email","Phone number","Company","Voucher code","Order date","Order time","Requires special attention",
+"Comment","Check-in text","Seat ID","Seat name","Seat zone","Seat row","Seat number","Blocked","Valid from","Valid until","Address","ZIP code",
+"City","Country","State"
+"FOO2","Mx Alex F Nord","Mx","Alex","F","Nord","Ticket2","23.00","","","No","asdfasdfasdfasdfasdfasdfasfdasdf",
+"dummy@dummy.test","'+498912345678","","","2019-02-22","22:00:00","No","","beep\nboop","","","","","","","","","","","","",""
+"FOO","Mr Peter A Jones","Mr","Peter","A","Jones","Ticket","23.00","","","No","hutjztuxhkbtwnesv2suqv26k6ttytxx",
+"dummy@dummy.test","'+498912345678","","","2019-02-22","14:00:00","No","","meow","","","","","","","","","","","","",""
+"FOO","Mrs Andrea J Zulu","Mrs","Andrea","J","Zulu","Ticket","13.00","","","No","ggsngqtnmhx74jswjngw3fk8pfwz2a7k",
+"dummy@dummy.test","'+498912345678","","","2019-02-22","14:00:00","No","","meow","","","","","","","","","","","","",""
 """)

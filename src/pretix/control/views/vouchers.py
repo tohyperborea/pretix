@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -40,9 +40,11 @@ import bleach
 from defusedcsv import csv
 from django.conf import settings
 from django.contrib import messages
-from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.exceptions import (
+    BadRequest, PermissionDenied, ValidationError,
+)
 from django.db import connection, transaction
-from django.db.models import Exists, OuterRef, Sum
+from django.db.models import Count, Exists, OuterRef, Sum
 from django.http import (
     Http404, HttpResponse, HttpResponseBadRequest, HttpResponseRedirect,
     JsonResponse,
@@ -51,59 +53,84 @@ from django.shortcuts import redirect, render
 from django.urls import resolve, reverse
 from django.utils.functional import cached_property
 from django.utils.html import format_html
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.safestring import mark_safe
 from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
 from django.views.generic import (
-    CreateView, ListView, TemplateView, UpdateView, View,
+    CreateView, FormView, ListView, TemplateView, UpdateView, View,
 )
 from django_scopes import scopes_disabled
 
-from pretix.base.email import get_available_placeholders
 from pretix.base.models import (
     CartPosition, LogEntry, Voucher, WaitingListEntry,
 )
 from pretix.base.models.vouchers import generate_codes
+from pretix.base.permissions import AnyPermissionOf
+from pretix.base.services.mail import prefix_subject
+from pretix.base.services.placeholders import get_sample_context
 from pretix.base.services.vouchers import vouchers_send
 from pretix.base.templatetags.rich_text import markdown_compile_email
 from pretix.base.views.tasks import AsyncFormView
 from pretix.control.forms.filter import VoucherFilterForm, VoucherTagFilterForm
-from pretix.control.forms.vouchers import VoucherBulkForm, VoucherForm
+from pretix.control.forms.vouchers import (
+    VoucherBulkEditForm, VoucherBulkForm, VoucherForm,
+)
 from pretix.control.permissions import EventPermissionRequiredMixin
 from pretix.control.signals import voucher_form_class
 from pretix.control.views import PaginationMixin
 from pretix.helpers.compat import CompatDeleteView
-from pretix.helpers.format import format_map
+from pretix.helpers.format import SafeFormatter, format_map
 from pretix.helpers.models import modelcopy
-from pretix.multidomain.urlreverse import build_absolute_uri
+from pretix.multidomain.urlreverse import eventreverse_absolute
 
 
-class VoucherList(PaginationMixin, EventPermissionRequiredMixin, ListView):
-    model = Voucher
-    context_object_name = 'vouchers'
-    template_name = 'pretixcontrol/vouchers/index.html'
-    permission = 'can_view_vouchers'
+class VoucherQueryMixin:
+
+    @cached_property
+    def request_data(self):
+        if self.request.method == "POST":
+            return self.request.POST
+        return self.request.GET
 
     @scopes_disabled()  # we have an event check here, and we can save some performance on subqueries
     def get_queryset(self):
-        qs = Voucher.annotate_budget_used_orders(self.request.event.vouchers.exclude(
+        qs = self.request.event.vouchers.exclude(
             Exists(WaitingListEntry.objects.filter(voucher_id=OuterRef('pk')))
-        ).select_related(
-            'item', 'variation', 'seat'
-        ))
-        if self.filter_form.is_valid():
-            qs = self.filter_form.filter_qs(qs)
+        )
+        if 'voucher' in self.request_data and '__ALL' not in self.request_data:
+            qs = qs.filter(
+                id__in=self.request_data.getlist('voucher')
+            )
+        elif self.request.method == 'GET' or '__ALL' in self.request_data:
+            if self.filter_form.is_valid():
+                qs = self.filter_form.filter_qs(qs)
+        else:
+            raise BadRequest("No vouchers selected")
 
         return qs
+
+    @cached_property
+    def filter_form(self):
+        return VoucherFilterForm(data=self.request_data, prefix='filter', event=self.request.event)
+
+
+class VoucherList(VoucherQueryMixin, PaginationMixin, EventPermissionRequiredMixin, ListView):
+    model = Voucher
+    context_object_name = 'vouchers'
+    template_name = 'pretixcontrol/vouchers/index.html'
+    permission = 'event.vouchers:read'
+
+    @scopes_disabled()  # we have an event check here, and we can save some performance on subqueries
+    def get_queryset(self):
+        return Voucher.annotate_budget_used(super().get_queryset().select_related(
+            'item', 'variation', 'seat'
+        ))
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx['filter_form'] = self.filter_form
         return ctx
-
-    @cached_property
-    def filter_form(self):
-        return VoucherFilterForm(data=self.request.GET, event=self.request.event)
 
     def get(self, request, *args, **kwargs):
         if request.GET.get("download", "") == "yes":
@@ -117,7 +144,7 @@ class VoucherList(PaginationMixin, EventPermissionRequiredMixin, ListView):
         headers = [
             _('Voucher code'), _('Valid until'), _('Product'), _('Reserve quota'), _('Bypass quota'),
             _('Price effect'), _('Value'), _('Tag'), _('Redeemed'), _('Maximum usages'), _('Seat'),
-            _('Comment')
+            _('Comment'), _('Budget'), _('Budget used')
         ]
         writer.writerow(headers)
 
@@ -130,7 +157,7 @@ class VoucherList(PaginationMixin, EventPermissionRequiredMixin, ListView):
             elif v.quota:
                 prod = _('Any product in quota "{quota}"').format(quota=str(v.quota.name))
             else:
-                prod = _('Any product')
+                prod = ""
             row = [
                 v.code,
                 v.valid_until.isoformat() if v.valid_until else "",
@@ -143,7 +170,9 @@ class VoucherList(PaginationMixin, EventPermissionRequiredMixin, ListView):
                 str(v.redeemed),
                 str(v.max_usages),
                 str(v.seat) if v.seat else "",
-                str(v.comment) if v.comment else ""
+                str(v.comment) if v.comment else "",
+                str(v.budget) if v.budget is not None else "",
+                str(v.budget_used) if v.budget is not None else "",
             ]
             writer.writerow(row)
 
@@ -154,7 +183,7 @@ class VoucherList(PaginationMixin, EventPermissionRequiredMixin, ListView):
 
 class VoucherTags(EventPermissionRequiredMixin, TemplateView):
     template_name = 'pretixcontrol/vouchers/tags.html'
-    permission = 'can_view_vouchers'
+    permission = 'event.vouchers:read'
 
     def get_queryset(self):
         qs = self.request.event.vouchers.order_by('tag').filter(
@@ -195,7 +224,7 @@ class VoucherTags(EventPermissionRequiredMixin, TemplateView):
 class VoucherDeleteCarts(EventPermissionRequiredMixin, CompatDeleteView):
     model = Voucher
     template_name = 'pretixcontrol/vouchers/delete_carts.html'
-    permission = 'can_change_vouchers'
+    permission = 'event.vouchers:write'
     context_object_name = 'voucher'
 
     def get_object(self, queryset=None) -> Voucher:
@@ -227,7 +256,7 @@ class VoucherDeleteCarts(EventPermissionRequiredMixin, CompatDeleteView):
 class VoucherDelete(EventPermissionRequiredMixin, CompatDeleteView):
     model = Voucher
     template_name = 'pretixcontrol/vouchers/delete.html'
-    permission = 'can_change_vouchers'
+    permission = 'event.vouchers:write'
     context_object_name = 'voucher'
 
     def get_object(self, queryset=None) -> Voucher:
@@ -269,7 +298,7 @@ class VoucherDelete(EventPermissionRequiredMixin, CompatDeleteView):
 class VoucherUpdate(EventPermissionRequiredMixin, UpdateView):
     model = Voucher
     template_name = 'pretixcontrol/vouchers/detail.html'
-    permission = ('can_change_vouchers', 'can_view_vouchers')
+    permission = AnyPermissionOf('event.vouchers:write', 'event.vouchers:read')
     context_object_name = 'voucher'
 
     def form_invalid(self, form):
@@ -285,11 +314,17 @@ class VoucherUpdate(EventPermissionRequiredMixin, UpdateView):
 
     def get_form(self, form_class=None):
         form = super().get_form(form_class)
-        if not self.request.user.has_event_permission(self.request.organizer, self.request.event, 'can_change_vouchers',
+        if not self.request.user.has_event_permission(self.request.organizer, self.request.event, 'event.vouchers:write',
                                                       request=self.request):
             for f in form.fields.values():
                 f.disabled = True
         return form
+
+    def get_form_kwargs(self):
+        return {
+            **super().get_form_kwargs(),
+            "event": self.request.event,
+        }
 
     def get_object(self, queryset=None) -> VoucherForm:
         url = resolve(self.request.path_info)
@@ -312,12 +347,14 @@ class VoucherUpdate(EventPermissionRequiredMixin, UpdateView):
 
     @transaction.atomic
     def post(self, request, *args, **kwargs):
-        if not request.user.has_event_permission(request.organizer, request.event, 'can_change_vouchers',
+        if not request.user.has_event_permission(request.organizer, request.event, 'event.vouchers:write',
                                                  request=request):
             raise PermissionDenied()
         return super().post(request, *args, **kwargs)
 
     def get_success_url(self) -> str:
+        if "next" in self.request.GET and url_has_allowed_host_and_scheme(self.request.GET.get("next"), allowed_hosts=None):
+            return self.request.GET.get("next")
         return reverse('control:event.vouchers', kwargs={
             'organizer': self.request.event.organizer.slug,
             'event': self.request.event.slug,
@@ -336,14 +373,14 @@ class VoucherUpdate(EventPermissionRequiredMixin, UpdateView):
         }
         if self.object.subevent_id:
             url_params['subevent'] = self.object.subevent_id
-        ctx['url'] = build_absolute_uri(self.request.event, "presale:event.redeem") + "?" + urlencode(url_params)
+        ctx['url'] = eventreverse_absolute(self.request.event, "presale:event.redeem") + "?" + urlencode(url_params)
         return ctx
 
 
 class VoucherCreate(EventPermissionRequiredMixin, CreateView):
     model = Voucher
     template_name = 'pretixcontrol/vouchers/detail.html'
-    permission = 'can_change_vouchers'
+    permission = 'event.vouchers:write'
     context_object_name = 'voucher'
 
     def form_invalid(self, form):
@@ -379,7 +416,7 @@ class VoucherCreate(EventPermissionRequiredMixin, CreateView):
         messages.success(self.request, mark_safe(_('The new voucher has been created: {code}').format(
             code=format_html('<a href="{url}">{code}</a>', url=url, code=self.object.code)
         )))
-        form.instance.log_action('pretix.voucher.added', data=dict(form.cleaned_data), user=self.request.user)
+        form.instance.log_action('pretix.voucher.added', data={**dict(form.cleaned_data), "source": "control"}, user=self.request.user)
         return ret
 
     @transaction.atomic
@@ -388,7 +425,7 @@ class VoucherCreate(EventPermissionRequiredMixin, CreateView):
 
 
 class VoucherGo(EventPermissionRequiredMixin, View):
-    permission = 'can_view_vouchers'
+    permission = 'event.vouchers:read'
 
     def get_voucher(self, code):
         return Voucher.objects.get(code__iexact=code, event=self.request.event)
@@ -407,7 +444,7 @@ class VoucherGo(EventPermissionRequiredMixin, View):
 class VoucherBulkCreate(EventPermissionRequiredMixin, AsyncFormView):
     model = Voucher
     template_name = 'pretixcontrol/vouchers/bulk.html'
-    permission = 'can_change_vouchers'
+    permission = 'event.vouchers:write'
     context_object_name = 'voucher'
     atomic_execute = True
 
@@ -474,9 +511,9 @@ class VoucherBulkCreate(EventPermissionRequiredMixin, AsyncFormView):
                 data['bulk'] = True
                 del data['codes']
                 log_entries.append(
-                    v.log_action('pretix.voucher.added', data=data, user=self.request.user, save=False)
+                    v.log_action('pretix.voucher.added', data={**data, "source": "control_bulk"}, user=self.request.user, save=False)
                 )
-            LogEntry.objects.bulk_create(log_entries)
+            LogEntry.bulk_create_and_postprocess(log_entries)
             form.post_bulk_save(batch_vouchers)
             batch_vouchers.clear()
             set_progress(len(voucherids) / total_num * (50. if form.cleaned_data['send'] else 100.))
@@ -539,7 +576,7 @@ class VoucherBulkCreate(EventPermissionRequiredMixin, AsyncFormView):
 
 
 class VoucherBulkMailPreview(EventPermissionRequiredMixin, View):
-    permission = 'can_change_vouchers'
+    permission = 'event.vouchers:write'
 
     # return the origin text if key is missing in dict
     class SafeDict(dict):
@@ -548,22 +585,10 @@ class VoucherBulkMailPreview(EventPermissionRequiredMixin, View):
 
     # get all supported placeholders with dummy values
     def placeholders(self, item):
-        ctx = {}
         base_ctx = ['event', 'name']
         if item == 'send_message':
             base_ctx += ['voucher_list']
-        for p in get_available_placeholders(self.request.event, base_ctx).values():
-            s = str(p.render_sample(self.request.event))
-            if s.strip().startswith('* ') or s.startswith('  '):
-                ctx[p.identifier] = '<div class="placeholder" title="{}">{}</div>'.format(
-                    _('This value will be replaced based on dynamic parameters.'),
-                    markdown_compile_email(s)
-                )
-            else:
-                ctx[p.identifier] = '<span class="placeholder" title="{}">{}</span>'.format(
-                    _('This value will be replaced based on dynamic parameters.'),
-                    s
-                )
+        ctx = get_sample_context(self.request.event, base_ctx)
         return self.SafeDict(ctx)
 
     def post(self, request, *args, **kwargs):
@@ -572,11 +597,16 @@ class VoucherBulkMailPreview(EventPermissionRequiredMixin, View):
             return HttpResponseBadRequest(_('invalid item'))
         msgs = {}
         if "subject" in preview_item:
-            msgs["all"] = format_map(bleach.clean(request.POST.get(preview_item, "")), self.placeholders(preview_item))
-        else:
-            msgs["all"] = markdown_compile_email(
-                format_map(request.POST.get(preview_item), self.placeholders(preview_item))
+            msgs["all"] = prefix_subject(
+                self.request.event,
+                format_map(bleach.clean(request.POST.get(preview_item, "")), self.placeholders(preview_item)),
+                highlight=True
             )
+        else:
+            placeholders = self.placeholders(preview_item)
+            msgs["all"] = format_map(markdown_compile_email(
+                format_map(request.POST.get(preview_item), placeholders)
+            ), placeholders, mode=SafeFormatter.MODE_RICH_TO_HTML)
 
         return JsonResponse({
             'item': preview_item,
@@ -585,7 +615,7 @@ class VoucherBulkMailPreview(EventPermissionRequiredMixin, View):
 
 
 class VoucherRNG(EventPermissionRequiredMixin, View):
-    permission = 'can_change_vouchers'
+    permission = 'event.vouchers:write'
 
     def get(self, request, *args, **kwargs):
         try:
@@ -608,36 +638,40 @@ class VoucherRNG(EventPermissionRequiredMixin, View):
         })
 
 
-class VoucherBulkAction(EventPermissionRequiredMixin, View):
-    permission = 'can_change_vouchers'
-
-    @cached_property
-    def objects(self):
-        return self.request.event.vouchers.filter(
-            id__in=self.request.POST.getlist('voucher')
-        )
+class VoucherBulkAction(VoucherQueryMixin, EventPermissionRequiredMixin, View):
+    permission = 'event.vouchers:write'
 
     @transaction.atomic
     def post(self, request, *args, **kwargs):
         if request.POST.get('action') == 'delete':
             return render(request, 'pretixcontrol/vouchers/delete_bulk.html', {
-                'allowed': self.objects.filter(redeemed=0),
-                'forbidden': self.objects.exclude(redeemed=0),
+                'allowed': self.get_queryset().filter(redeemed=0),
+                'forbidden': self.get_queryset().exclude(redeemed=0),
             })
         elif request.POST.get('action') == 'delete_confirm':
-            for obj in self.objects:
+            log_entries = []
+            to_delete = []
+            to_update = []
+            for obj in self.get_queryset():
                 if obj.allow_delete():
-                    obj.log_action('pretix.voucher.deleted', user=self.request.user)
-                    CartPosition.objects.filter(addon_to__voucher=obj).delete()
-                    obj.cartposition_set.all().delete()
-                    obj.delete()
+                    log_entries.append(obj.log_action('pretix.voucher.deleted', user=self.request.user, save=False))
+                    to_delete.append(obj.pk)
                 else:
-                    obj.log_action('pretix.voucher.changed', user=self.request.user, data={
+                    log_entries.append(obj.log_action('pretix.voucher.changed', user=self.request.user, data={
                         'max_usages': min(obj.redeemed, obj.max_usages),
                         'bulk': True
-                    })
+                    }, save=False))
                     obj.max_usages = min(obj.redeemed, obj.max_usages)
-                    obj.save(update_fields=['max_usages'])
+                    to_update.append(obj)
+
+            if to_delete:
+                CartPosition.objects.filter(addon_to__voucher_id__in=to_delete).delete()
+                CartPosition.objects.filter(voucher_id__in=to_delete).delete()
+                Voucher.objects.filter(pk__in=to_delete).delete()
+            if to_update:
+                Voucher.objects.bulk_update(to_update, ['max_usages'])
+
+            LogEntry.bulk_create_and_postprocess(log_entries)
             messages.success(request, _('The selected vouchers have been deleted or disabled.'))
         return redirect(self.get_success_url())
 
@@ -646,3 +680,117 @@ class VoucherBulkAction(EventPermissionRequiredMixin, View):
             'organizer': self.request.event.organizer.slug,
             'event': self.request.event.slug,
         })
+
+
+class VoucherBulkUpdateView(VoucherQueryMixin, EventPermissionRequiredMixin, FormView):
+    template_name = 'pretixcontrol/vouchers/bulk_edit.html'
+    permission = 'event.vouchers:write'
+    context_object_name = 'vouchers'
+    form_class = VoucherBulkEditForm
+
+    def get_queryset(self):
+        return super().get_queryset().prefetch_related(None).order_by()
+
+    def get(self, request, *args, **kwargs):
+        return HttpResponse(status=405)
+
+    @cached_property
+    def is_submitted(self):
+        # Usually, django considers a form "bound" / "submitted" on every POST request. However, this view is always
+        # called with POST method, even if just to pass the selection of objects to work on, so we want to modify
+        # that behavior
+        return '_bulk' in self.request.POST
+
+    def get_form_kwargs(self):
+        initial = {}
+        mixed_values = set()
+        qs = self.get_queryset().annotate()
+
+        fields = (
+            'valid_until', 'block_quota', 'allow_ignore_quota', 'value', 'tag', 'comment', 'max_usages',
+            'min_usages', 'price_mode', 'subevent', 'show_hidden_items', 'all_addons_included', 'all_bundles_included',
+            'budget',
+        )
+        for f in fields:
+            existing_values = list(qs.order_by(f).values(f).annotate(c=Count('*')))
+            if len(existing_values) == 1:
+                initial[f] = existing_values[0][f]
+            elif len(existing_values) > 1:
+                mixed_values.add(f)
+                if f == "max_usages":
+                    initial[f] = 1
+                else:
+                    initial[f] = None
+
+        existing_values = list(qs.order_by("item", "variation", "quota").values("item", "variation", "quota").annotate(c=Count('*')))
+        if len(existing_values) == 1:
+            i = existing_values[0]
+            if i["quota"]:
+                initial["itemvar"] = f'q-{i["quota"]}'
+            elif i["variation"]:
+                initial["itemvar"] = f'{i["item"]}-{i["variation"]}'
+            elif i["item"]:
+                initial["itemvar"] = f'{i["item"]}'
+            else:
+                initial["itemvar"] = None
+        elif len(existing_values) > 1:
+            mixed_values.add("itemvar")
+            initial["itemvar"] = None
+
+        kwargs = super().get_form_kwargs()
+        kwargs['event'] = self.request.event
+        kwargs['prefix'] = 'bulkedit'
+        kwargs['initial'] = initial
+        kwargs['queryset'] = self.get_queryset()
+        kwargs['mixed_values'] = mixed_values
+        if not self.is_submitted:
+            kwargs['data'] = None
+            kwargs['files'] = None
+        return kwargs
+
+    def get_success_url(self):
+        return reverse('control:event.vouchers', kwargs={
+            'organizer': self.request.event.organizer.slug,
+            'event': self.request.event.slug,
+        })
+
+    def form_valid(self, form):
+        log_entries = []
+
+        # Main form
+        form.save()
+        data = {
+            k: v
+            for k, v in form.cleaned_data.items()
+            if k in form.changed_data
+        }
+        data['_raw_bulk_data'] = self.request.POST.dict()
+        for obj in self.get_queryset():
+            log_entries.append(
+                obj.log_action('pretix.voucher.changed', data=data, user=self.request.user, save=False)
+            )
+
+        LogEntry.bulk_create_and_postprocess(log_entries)
+
+        messages.success(self.request, _('Your changes have been saved.'))
+        return super().form_valid(form)
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx['vouchers'] = self.get_queryset()
+        ctx['bulk_selected'] = self.request.POST.getlist("_bulk")
+        return ctx
+
+    @transaction.atomic
+    def post(self, request, *args, **kwargs):
+        form = self.get_form()
+        is_valid = (
+            self.is_submitted and
+            form.is_valid()
+        )
+        if is_valid:
+            return self.form_valid(form)
+        else:
+            if self.is_submitted:
+                messages.error(self.request, _('We could not save your changes. See below for details.'))
+            return self.form_invalid(form)

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -47,6 +47,7 @@ from django.utils.formats import localize
 from django.utils.translation import gettext, gettext_lazy as _
 
 from pretix.base.models import Event
+from pretix.base.models.auth import PermissionHolder
 from pretix.helpers.safe_openpyxl import (  # NOQA: backwards compatibility for plugins using excel_safe
     SafeWorkbook, remove_invalid_excel_chars as excel_safe,
 )
@@ -59,11 +60,20 @@ class BaseExporter:
     This is the base class for all data exporters
     """
 
-    def __init__(self, event, organizer, progress_callback=lambda v: None):
+    def __init__(self, event, organizer, permission_holder: PermissionHolder=None, progress_callback=lambda v: None):
+        """
+        :param event: Event context, can also be a queryset of events for multi-event exports
+        :param organizer: Organizer context
+        :param user: The user who triggered the export (or None).
+        :param token: The API token that triggered the export (or None).
+        :param device: The device that triggered the export (or None)
+        :param progress_callback: Callback function with progress
+        """
         self.event = event
         self.organizer = organizer
         self.progress_callback = progress_callback
         self.is_multievent = isinstance(event, QuerySet)
+        self.permission_holder = permission_holder
         if isinstance(event, QuerySet):
             self.events = event
             self.event = None
@@ -72,6 +82,9 @@ class BaseExporter:
         else:
             self.events = Event.objects.filter(pk=event.pk)
             self.timezone = event.timezone
+
+        if hasattr(self, 'organizer_required_permission'):
+            raise TypeError("Deprecated attribute organizer_required_permission no longer supported.")
 
     def __str__(self):
         return self.identifier
@@ -104,6 +117,18 @@ class BaseExporter:
         If ``True``, this exporter will be highlighted.
         """
         return False
+
+    @property
+    def repeatable_read(self) -> bool:
+        """
+        If ``True``, this exporter will be run in a REPEATABLE READ transaction. This ensures consistent results for
+        all queries performed by the exporter, but creates a performance burden on the database server. We recommend to
+        disable this for exporters that take very long to run and do not rely on this behavior, such as export of lists
+        to CSV files.
+
+        Defaults to ``True`` for now, but default may change in future versions.
+        """
+        return True
 
     @property
     def identifier(self) -> str:
@@ -164,15 +189,30 @@ class BaseExporter:
         """
         return True
 
+    @classmethod
+    def get_required_event_permission(cls) -> Optional[str]:
+        """
+        The permission level required to use this exporter for events. For multi-event-exports, this will be used
+        to limit the selection of events. Will be ignored if the ``OrganizerLevelExportMixin`` mixin is used.
+        The default implementation returns ``"event.orders:read"``.
+        """
+        return 'event.orders:read'
+
 
 class OrganizerLevelExportMixin:
-    @property
-    def organizer_required_permission(self) -> str:
+    @classmethod
+    def get_required_event_permission(cls):
+        raise TypeError("required_event_permission may not be called on OrganizerLevelExportMixin")
+
+    @classmethod
+    def get_required_organizer_permission(cls) -> Optional[str]:
         """
-        The permission level required to use this exporter. Only useful for organizer-level exports,
-        not for event-level exports.
+        The permission level required to use this exporter. Must be set for organizer-level exports. Set to `None` to
+        allow everyone with any access to the organizer.
+
+        ``get_required_event_permission`` will be ignored on this class.
         """
-        return 'can_view_orders'
+        raise NotImplementedError()
 
 
 class ListExporter(BaseExporter):
@@ -207,10 +247,13 @@ class ListExporter(BaseExporter):
     def get_filename(self):
         return 'export'
 
+    def get_csv_encoding(self):
+        return 'utf-8'
+
     def _render_csv(self, form_data, output_file=None, **kwargs):
         if output_file:
             if 'b' in output_file.mode:
-                output_file = io.TextIOWrapper(output_file, encoding='utf-8', newline='')
+                output_file = io.TextIOWrapper(output_file, encoding=self.get_csv_encoding(), errors='replace', newline='')
             writer = csv.writer(output_file, **kwargs)
             total = 0
             counter = 0
@@ -246,7 +289,7 @@ class ListExporter(BaseExporter):
                     if counter % max(10, total // 100) == 0:
                         self.progress_callback(counter / total * 100)
                 writer.writerow(line)
-            return self.get_filename() + '.csv', 'text/csv', output.getvalue().encode("utf-8")
+            return self.get_filename() + '.csv', 'text/csv', output.getvalue().encode(self.get_csv_encoding(), errors='replace')
 
     def prepare_xlsx_sheet(self, ws):
         pass
@@ -256,7 +299,7 @@ class ListExporter(BaseExporter):
         ws = wb.create_sheet()
         self.prepare_xlsx_sheet(ws)
         try:
-            ws.title = str(self.verbose_name)
+            ws.title = str(self.verbose_name)[:30]
         except:
             pass
         total = 0
@@ -374,7 +417,7 @@ class MultiSheetListExporter(ListExporter):
         wb = SafeWorkbook(write_only=True)
         n_sheets = len(self.sheets)
         for i_sheet, (s, l) in enumerate(self.sheets):
-            ws = wb.create_sheet(str(l))
+            ws = wb.create_sheet(str(l)[:30])
             if hasattr(self, 'prepare_xlsx_sheet_' + s):
                 getattr(self, 'prepare_xlsx_sheet_' + s)(ws)
 

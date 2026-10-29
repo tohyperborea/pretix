@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -423,7 +423,7 @@ def resolve_timeframe_to_dates_inclusive(ref_dt, frame, timezone) -> Tuple[Optio
     raise ValueError(f"Invalid timeframe '{frame}'")
 
 
-def resolve_timeframe_to_datetime_start_inclusive_end_exclusive(ref_dt, frame, timezone) -> Tuple[Optional[date], Optional[date]]:
+def resolve_timeframe_to_datetime_start_inclusive_end_exclusive(ref_dt, frame, timezone) -> Tuple[Optional[datetime], Optional[datetime]]:
     """
     Given a serialized timeframe, evaluate it relative to `ref_dt` and return a tuple of datetimes
     where the first element ist the first possible datetime within the timeframe and the second

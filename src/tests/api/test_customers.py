@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -29,6 +29,7 @@ def customer(organizer, event):
     return organizer.customers.create(
         identifier="8WSAJCJ",
         email="foo@example.org",
+        phone="+493012345678",
         name_parts={"_legacy": "Foo"},
         name_cached="Foo",
         is_verified=False,
@@ -39,6 +40,7 @@ TEST_CUSTOMER_RES = {
     "identifier": "8WSAJCJ",
     "external_identifier": None,
     "email": "foo@example.org",
+    "phone": "+493012345678",
     "name": "Foo",
     "name_parts": {
         "_legacy": "Foo",

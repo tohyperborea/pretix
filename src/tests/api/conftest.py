@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -52,7 +52,7 @@ def client():
 @pytest.fixture
 @scopes_disabled()
 def organizer():
-    return Organizer.objects.create(name='Dummy', slug='dummy')
+    return Organizer.objects.create(name='Dummy', slug='dummy', plugins='pretix.plugins.banktransfer')
 
 
 @pytest.fixture
@@ -63,11 +63,20 @@ def meta_prop(organizer):
 
 @pytest.fixture
 @scopes_disabled()
+def meta_prop_choices(organizer):
+    return organizer.meta_properties.create(name="department", default="A", choices=[
+        {"key": "A", "label": {"en": "Group A"}},
+        {"key": "B", "label": {"en": "Group B"}},
+    ])
+
+
+@pytest.fixture
+@scopes_disabled()
 def event(organizer, meta_prop):
     e = Event.objects.create(
         organizer=organizer, name='Dummy', slug='dummy',
         date_from=datetime(2017, 12, 27, 10, 0, 0, tzinfo=timezone.utc),
-        plugins='pretix.plugins.banktransfer,pretix.plugins.ticketoutputpdf',
+        plugins='pretix.plugins.banktransfer,pretix.plugins.ticketoutputpdf,tests.testdummy',
         is_public=True
     )
     e.meta_values.create(property=meta_prop, value="Conference")
@@ -106,17 +115,8 @@ def team(organizer):
     return Team.objects.create(
         organizer=organizer,
         name="Test-Team",
-        can_change_teams=True,
-        can_manage_gift_cards=True,
-        can_change_items=True,
-        can_create_events=True,
-        can_change_event_settings=True,
-        can_change_vouchers=True,
-        can_view_vouchers=True,
-        can_change_orders=True,
-        can_manage_customers=True,
-        can_manage_reusable_media=True,
-        can_change_organizer_settings=True
+        all_event_permissions=True,
+        all_organizer_permissions=True,
     )
 
 
@@ -140,8 +140,9 @@ def user():
 @pytest.fixture
 @scopes_disabled()
 def user_client(client, team, user):
-    team.can_view_orders = True
-    team.can_view_vouchers = True
+    if not team.all_event_permissions:
+        team.limit_event_permissions["event.orders:read"] = True
+        team.limit_event_permissions["event.vouchers:read"] = True
     team.all_events = True
     team.save()
     team.members.add(user)
@@ -152,8 +153,9 @@ def user_client(client, team, user):
 @pytest.fixture
 @scopes_disabled()
 def token_client(client, team):
-    team.can_view_orders = True
-    team.can_view_vouchers = True
+    if not team.all_event_permissions:
+        team.limit_event_permissions["event.orders:read"] = True
+        team.limit_event_permissions["event.vouchers:read"] = True
     team.all_events = True
     team.save()
     t = team.tokens.create(name='Foo')
@@ -192,13 +194,13 @@ def subevent2(event2, meta_prop):
 @pytest.fixture
 @scopes_disabled()
 def taxrule(event):
-    return event.tax_rules.create(name="VAT", rate=19)
+    return event.tax_rules.create(name="VAT", rate=19, code="S/standard", default=True)
 
 
 @pytest.fixture
 @scopes_disabled()
 def taxrule0(event):
-    return event.tax_rules.create(name="VAT", rate=0)
+    return event.tax_rules.create(name="VAT", rate=0, code="E")
 
 
 @pytest.fixture
@@ -217,6 +219,19 @@ def item(event):
 @scopes_disabled()
 def membership_type(organizer):
     return organizer.membership_types.create(name='foo')
+
+
+@pytest.fixture
+def clist(event, item):
+    c = event.checkin_lists.create(name="Default", all_products=False)
+    c.limit_products.add(item)
+    return c
+
+
+@pytest.fixture
+def clist_all(event, item):
+    c = event.checkin_lists.create(name="Default", all_products=True)
+    return c
 
 
 utils.setup_databases = scopes_disabled()(utils.setup_databases)

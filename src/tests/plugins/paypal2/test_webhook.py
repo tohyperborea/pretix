@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -22,6 +22,7 @@
 import json
 from datetime import timedelta
 from decimal import Decimal
+from unittest.mock import MagicMock
 
 import pytest
 from django.utils.timezone import now
@@ -31,7 +32,7 @@ from paypalhttp.http_response import Result
 from pretix.base.models import (
     Event, Order, OrderPayment, OrderRefund, Organizer, Team, User,
 )
-from pretix.plugins.paypal.models import ReferencedPayPalObject
+from pretix.plugins.paypal2.models import ReferencedPayPalObject
 
 
 @pytest.fixture
@@ -42,7 +43,7 @@ def env():
         organizer=o, name='Dummy', slug='dummy', plugins='pretix.plugins.paypal2',
         date_from=now(), live=True
     )
-    t = Team.objects.create(organizer=event.organizer, can_view_orders=True, can_change_orders=True)
+    t = Team.objects.create(organizer=event.organizer, all_event_permissions=True)
     t.members.add(user)
     t.limit_events.add(event)
     o1 = Order.objects.create(
@@ -50,6 +51,7 @@ def env():
         status=Order.STATUS_PAID,
         datetime=now(), expires=now() + timedelta(days=10),
         total=Decimal('43.59'),
+        sales_channel=o.sales_channels.get(identifier="web"),
     )
     o1.payments.create(
         amount=o1.total,
@@ -242,6 +244,85 @@ def get_test_refund():
     }
 
 
+def get_test_order_review_pending():
+    return {'id': '806440346Y391300T',
+            'intent': 'CAPTURE',
+            'status': 'COMPLETED',
+            'purchase_units': [{'reference_id': 'default',
+                                'amount': {'currency_code': 'EUR', 'value': '43.59'},
+                                'payee': {'email_address': 'dummy-facilitator@dummy.dummy',
+                                          'merchant_id': 'G6R2B9YXADKWW'},
+                                'description': 'Order JWJGC for PayPal v2',
+                                'custom_id': 'Order PAYPALV2-JWJGC',
+                                'soft_descriptor': 'MARTINFACIL',
+                                'payments': {'captures': [{'id': '22A4162004478570J',
+                                                           'status': 'PENDING',
+                                                           'status_details': {
+                                                               'reason': 'PENDING_REVIEW'
+                                                           },
+                                                           'amount': {'currency_code': 'EUR', 'value': '43.59'},
+                                                           'final_capture': True,
+                                                           'disbursement_mode': 'INSTANT',
+                                                           'seller_protection': {'status': 'ELIGIBLE',
+                                                                                 'dispute_categories': [
+                                                                                     'ITEM_NOT_RECEIVED',
+                                                                                     'UNAUTHORIZED_TRANSACTION']},
+                                                           'seller_receivable_breakdown': {
+                                                               'gross_amount': {'currency_code': 'EUR',
+                                                                                'value': '43.59'},
+                                                               'paypal_fee': {'currency_code': 'EUR', 'value': '1.18'},
+                                                               'net_amount': {'currency_code': 'EUR',
+                                                                              'value': '42.41'}},
+                                                           'custom_id': 'Order PAYPALV2-JWJGC',
+                                                           'links': [{
+                                                               'href': 'https://api.sandbox.paypal.com/v2/payments/captures/22A4162004478570J',
+                                                               'rel': 'self',
+                                                               'method': 'GET'},
+                                                               {
+                                                                   'href': 'https://api.sandbox.paypal.com/v2/payments/captures/22A4162004478570J/refund',
+                                                                   'rel': 'refund',
+                                                                   'method': 'POST'},
+                                                               {
+                                                                   'href': 'https://api.sandbox.paypal.com/v2/checkout/orders/806440346Y391300T',
+                                                                   'rel': 'up',
+                                                                   'method': 'GET'}],
+                                                           'create_time': '2022-04-28T12:00:22Z',
+                                                           'update_time': '2022-04-28T12:00:22Z'}]}}],
+            'payer': {'name': {'given_name': 'test', 'surname': 'buyer'},
+                      'email_address': 'dummy@dummy.dummy',
+                      'payer_id': 'Q739JNKWH67HE',
+                      'address': {'country_code': 'DE'}},
+            'create_time': '2022-04-28T11:59:59Z',
+            'update_time': '2022-04-28T12:00:22Z',
+            'links': [{'href': 'https://api.sandbox.paypal.com/v2/checkout/orders/806440346Y391300T',
+                       'rel': 'self',
+                       'method': 'GET'}]}
+
+
+def get_test_empty_captures():
+    return {'id': '806440346Y391300T',
+            'intent': 'CAPTURE',
+            'status': 'COMPLETED',
+            'purchase_units': [{'reference_id': 'default',
+                                'amount': {'currency_code': 'EUR', 'value': '43.59'},
+                                'payee': {'email_address': 'dummy-facilitator@dummy.dummy',
+                                          'merchant_id': 'G6R2B9YXADKWW'},
+                                'description': 'Order JWJGC for PayPal v2',
+                                'custom_id': 'Order PAYPALV2-JWJGC',
+                                'soft_descriptor': 'MARTINFACIL',
+                                'payments': {'captures': []}
+                                }],
+            'payer': {'name': {'given_name': 'test', 'surname': 'buyer'},
+                      'email_address': 'dummy@dummy.dummy',
+                      'payer_id': 'Q739JNKWH67HE',
+                      'address': {'country_code': 'DE'}},
+            'create_time': '2022-04-28T11:59:59Z',
+            'update_time': '2022-04-28T12:00:22Z',
+            'links': [{'href': 'https://api.sandbox.paypal.com/v2/checkout/orders/806440346Y391300T',
+                       'rel': 'self',
+                       'method': 'GET'}]}
+
+
 class Object():
     pass
 
@@ -400,6 +481,100 @@ def test_webhook_all_good(env, client, monkeypatch):
 
 
 @pytest.mark.django_db
+def test_webhook_empty_captures(env, client, monkeypatch):
+    order = env[1]
+    with scopes_disabled():
+        p = order.payments.first()
+        p.state = OrderPayment.PAYMENT_STATE_PENDING
+        p.save()
+        order.status = Order.STATUS_PENDING
+        order.save()
+
+    pp_order = Result(get_test_empty_captures())
+    monkeypatch.setattr("paypalcheckoutsdk.orders.OrdersGetRequest", lambda *args: pp_order)
+    monkeypatch.setattr("pretix.plugins.paypal2.payment.PaypalMethod.init_api", init_api)
+
+    with scopes_disabled():
+        ReferencedPayPalObject.objects.create(order=order, payment=order.payments.first(),
+                                              reference="806440346Y391300T")
+
+    client.post('/_paypal/webhook/', json.dumps(
+        {
+            "id": "WH-4T867178D0574904F-7TT11736YU643990P",
+            "create_time": "2022-04-28T12:00:37.077Z",
+            "resource_type": "checkout-order",
+            "event_type": "CHECKOUT.ORDER.COMPLETED",
+            "summary": "Checkout Order Completed",
+            "resource": {
+                "update_time": "2022-04-28T12:00:22Z",
+                "create_time": "2022-04-28T11:59:59Z",
+                "purchase_units": [
+                    {
+                        "reference_id": "default",
+                        "amount": {
+                            "currency_code": "EUR",
+                            "value": "43.59"
+                        },
+                        "payee": {
+                            "email_address": "dummy-facilitator@dummy.dummy",
+                            "merchant_id": "G6R2B9YXADKWW"
+                        },
+                        "description": "Order JWJGC for PayPal v2",
+                        "custom_id": "Order PAYPALV2-JWJGC",
+                        "soft_descriptor": "MARTINFACIL",
+                        "payments": {
+                            "captures": []
+                        }
+                    }
+                ],
+                "links": [
+                    {
+                        "href": "https://api.sandbox.paypal.com/v2/checkout/orders/806440346Y391300T",
+                        "rel": "self",
+                        "method": "GET"
+                    }
+                ],
+                "id": "806440346Y391300T",
+                "intent": "CAPTURE",
+                "payer": {
+                    "name": {
+                        "given_name": "test",
+                        "surname": "buyer"
+                    },
+                    "email_address": "dummy@dummy.dummy",
+                    "payer_id": "Q739JNKWH67HE",
+                    "address": {
+                        "country_code": "DE"
+                    }
+                },
+                "status": "COMPLETED"
+            },
+            "status": "SUCCESS",
+            "links": [
+                {
+                    "href": "https://api.sandbox.paypal.com/v1/notifications/webhooks-events/WH-4T867178D0574904F-7TT11736YU643990P",
+                    "rel": "self",
+                    "method": "GET",
+                    "encType": "application/json"
+                },
+                {
+                    "href": "https://api.sandbox.paypal.com/v1/notifications/webhooks-events/WH-4T867178D0574904F-7TT11736YU643990P/resend",
+                    "rel": "resend",
+                    "method": "POST",
+                    "encType": "application/json"
+                }
+            ],
+            "event_version": "1.0",
+            "resource_version": "2.0"
+        }
+    ), content_type='application_json')
+
+    order = env[1]
+    order.refresh_from_db()
+    assert order.status == Order.STATUS_PENDING
+
+
+@pytest.mark.django_db
 def test_webhook_mark_paid(env, client, monkeypatch):
     order = env[1]
     order.status = Order.STATUS_PENDING
@@ -408,7 +583,8 @@ def test_webhook_mark_paid(env, client, monkeypatch):
         order.payments.update(state=OrderPayment.PAYMENT_STATE_PENDING)
 
     pp_order = Result(get_test_order())
-    monkeypatch.setattr("paypalcheckoutsdk.orders.OrdersGetRequest", lambda *args: pp_order)
+    mock_orders_get_request = MagicMock(return_value=pp_order)
+    monkeypatch.setattr("paypalcheckoutsdk.orders.OrdersGetRequest", mock_orders_get_request)
     monkeypatch.setattr("pretix.plugins.paypal2.payment.PaypalMethod.init_api", init_api)
     with scopes_disabled():
         ReferencedPayPalObject.objects.create(order=order, payment=order.payments.first(),
@@ -496,7 +672,7 @@ def test_webhook_mark_paid(env, client, monkeypatch):
             "resource_version": "2.0"
         }
     ), content_type='application_json')
-
+    mock_orders_get_request.assert_called_once_with('806440346Y391300T')
     order.refresh_from_db()
     assert order.status == Order.STATUS_PAID
 
@@ -687,3 +863,154 @@ def test_webhook_refund2(env, client, monkeypatch):
         assert r.payment == order.payments.first()
         assert r.state == OrderRefund.REFUND_STATE_EXTERNAL
         assert r.source == OrderRefund.REFUND_SOURCE_EXTERNAL
+
+
+@pytest.mark.django_db
+def test_webhook_pending_payment(env, client, monkeypatch):
+    order = env[1]
+    order.status = Order.STATUS_PENDING
+    order.save()
+    with scopes_disabled():
+        order.payments.update(state=OrderPayment.PAYMENT_STATE_CREATED)
+
+    pp_order = Result(get_test_order_review_pending())
+    mock_orders_get_request = MagicMock(return_value=pp_order)
+    monkeypatch.setattr("paypalcheckoutsdk.orders.OrdersGetRequest", mock_orders_get_request)
+    monkeypatch.setattr("pretix.plugins.paypal2.payment.PaypalMethod.init_api", init_api)
+    with scopes_disabled():
+        ReferencedPayPalObject.objects.create(order=order, payment=order.payments.first(),
+                                              reference="806440346Y391300T")
+
+        assert order.payments.first().state == OrderPayment.PAYMENT_STATE_CREATED
+
+    client.post('/_paypal/webhook/', json.dumps(
+        {
+            "id": "WH-0AH02875JL566842H-2AF03788XV8252724",
+            "create_time": "2022-04-28T12:00:37.077Z",
+            "resource_type": "capture",
+            "event_type": "PAYMENT.CAPTURE.PENDING",
+            "summary": "Payment pending for € 43.59 EUR",
+            "resource": {
+                "update_time": "2022-04-28T12:00:22Z",
+                "create_time": "2022-04-28T11:59:59Z",
+                "amount": {
+                    "currency_code": "EUR",
+                    "value": "43.59"
+                },
+                "custom_id": "Order PAYPALV2-JWJGC",
+                "final_capture": True,
+                "id": "22A4162004478570J",
+                "links": [
+                    {
+                        "href": "https://api.sandbox.paypal.com/v2/payments/captures/5M631111V9599860P",
+                        "method": "GET",
+                        "rel": "self"
+                    },
+                    {
+                        "href": "https://api.sandbox.paypal.com/v2/payments/captures/5M631111V9599860P/refund",
+                        "method": "POST",
+                        "rel": "refund"
+                    },
+                    {
+                        "href": "https://api.sandbox.paypal.com/v2/checkout/orders/806440346Y391300T",
+                        "method": "GET",
+                        "rel": "up"
+                    }
+                ],
+                "payee": {
+                    "email_address": "sb-ybfun52428692@business.example.com",
+                    "merchant_id": "DLM8QKDR3CFZW"
+                },
+                "seller_protection": {
+                    "status": "NOT_ELIGIBLE"
+                },
+                "status": "PENDING",
+                "status_details": {
+                    "reason": "PENDING_REVIEW"
+                },
+                "supplementary_data": {
+                    "related_ids": {
+                        "order_id": "9L827155WD164573M"
+                    }
+                }
+            },
+            "links": [
+                {
+                    "href": "https://api.sandbox.paypal.com/v1/notifications/webhooks-events/WH-0AH02875JL566842H-2AF03788XV8252724",
+                    "method": "GET",
+                    "rel": "self"
+                },
+                {
+                    "href": "https://api.sandbox.paypal.com/v1/notifications/webhooks-events/WH-0AH02875JL566842H-2AF03788XV8252724/resend",
+                    "method": "POST",
+                    "rel": "resend"
+                }
+            ],
+            "event_version": "1.0",
+            "resource_version": "2.0"
+        }
+    ), content_type='application_json')
+
+    order = env[1]
+    order.refresh_from_db()
+    with scopes_disabled():
+        assert order.payments.first().state == OrderPayment.PAYMENT_STATE_PENDING
+
+
+@pytest.mark.django_db
+def test_webhook_capture_declined(env, client, monkeypatch):
+    order = env[1]
+    order.status = Order.STATUS_PENDING
+    order.save()
+    with scopes_disabled():
+        order.payments.update(state=OrderPayment.PAYMENT_STATE_CREATED)
+
+    pp_order = Result(get_test_order_review_pending())
+    mock_orders_get_request = MagicMock(return_value=pp_order)
+    monkeypatch.setattr("paypalcheckoutsdk.orders.OrdersGetRequest", mock_orders_get_request)
+    monkeypatch.setattr("pretix.plugins.paypal2.payment.PaypalMethod.init_api", init_api)
+    with scopes_disabled():
+        ReferencedPayPalObject.objects.create(order=order, payment=order.payments.first(),
+                                              reference="806440346Y391300T")
+
+        assert order.payments.first().state == OrderPayment.PAYMENT_STATE_CREATED
+
+        client.post('/_paypal/webhook/', json.dumps(
+            {
+                "create_time": "2026-08-17T12:23:30.687Z",
+                "event_type": "PAYMENT.CAPTURE.DECLINED",
+                "event_version": "1.0",
+                "id": "WH-XXXXXXXXXXXX-XXXXXXXXX",
+                "links": [
+                    {
+                        "href": "https://api.paypal.com/v1/notifications/webhooks-events/WH-XXXXXXXXXXXX-XXXXXXXXX",
+                        "method": "GET",
+                        "rel": "self"
+                    },
+                    {
+                        "href": "https://api.paypal.com/v1/notifications/webhooks-events/WH-XXXXXXXXXXXX-XXXXXXXXX/resend",
+                        "method": "POST",
+                        "rel": "resend"
+                    }
+                ],
+                "resource": {
+                    "amount": {},
+                    "custom_id": "Order ABC-12345",
+                    "disbursement_mode": "INSTANT",
+                    "final_capture": True,
+                    "id": "806440346Y391300T",
+                    "payee": {},
+                    "seller_protection": {},
+                    "seller_receivable_breakdown": {},
+                    "status": "DECLINED",
+                    "supplementary_data": {}
+                },
+                "resource_type": "capture",
+                "resource_version": "2.0",
+                "summary": "A payment capture for € 30.0 EUR was declined."
+            }), content_type='application_json')
+
+        order = env[1]
+        order.refresh_from_db()
+        with scopes_disabled():
+            assert order.payments.first().state == OrderPayment.PAYMENT_STATE_FAILED

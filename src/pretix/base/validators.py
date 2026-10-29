@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -19,12 +19,16 @@
 # You should have received a copy of the GNU Affero General Public License along with this program.  If not, see
 # <https://www.gnu.org/licenses/>.
 #
-from dateutil.rrule import rrulestr
+import calendar
+
+from dateutil.rrule import DAILY, MONTHLY, WEEKLY, YEARLY, rrule, rrulestr
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.validators import validate_email
+from django.core.validators import RegexValidator, validate_email
 from django.utils.deconstruct import deconstructible
 from django.utils.translation import gettext_lazy as _
+
+from pretix.base.templatetags.rich_text import URL_RE
 
 # This file is based on an earlier version of pretix which was released under the Apache License 2.0. The full text of
 # the Apache License 2.0 can be obtained at <http://www.apache.org/licenses/LICENSE-2.0>.
@@ -40,7 +44,6 @@ from django.utils.translation import gettext_lazy as _
 
 
 class BanlistValidator:
-
     banlist = []
 
     def __call__(self, value):
@@ -55,7 +58,6 @@ class BanlistValidator:
 
 @deconstructible
 class EventSlugBanlistValidator(BanlistValidator):
-
     banlist = [
         'download',
         'healthcheck',
@@ -72,12 +74,13 @@ class EventSlugBanlistValidator(BanlistValidator):
         'widget',
         'customer',
         'account',
+        'lead',
+        'accessibility',
     ]
 
 
 @deconstructible
 class OrganizerSlugBanlistValidator(BanlistValidator):
-
     banlist = [
         'download',
         'healthcheck',
@@ -93,12 +96,13 @@ class OrganizerSlugBanlistValidator(BanlistValidator):
         'api',
         'csp_report',
         'widget',
+        'lead',
+        'scheduling',
     ]
 
 
 @deconstructible
 class EmailBanlistValidator(BanlistValidator):
-
     banlist = [
         settings.PRETIX_EMAIL_NONE_VALUE,
     ]
@@ -111,9 +115,73 @@ def multimail_validate(val):
     return s
 
 
+class RegexValidatorInverseMatchAndParam(RegexValidator):
+    inverse_match = True
+
+    def __call__(self, value):
+        regex_matches = self.regex.search(str(value))
+        if regex_matches:
+            raise ValidationError(
+                self.message,
+                code=self.code,
+                params={
+                    "value": value,
+                    "match": regex_matches.group(0) if regex_matches else "",
+                }
+            )
+
+
+class NoUrlValidator(RegexValidatorInverseMatchAndParam):
+    regex = URL_RE
+
+    def __init__(self, **kwargs):
+        if not kwargs.get("message"):
+            kwargs["message"] = _('You entered an URL, which is not allowed. Please remove %(match)s from your input.')
+        if not kwargs.get("code"):
+            kwargs["code"] = "contains_url"
+        super().__init__(**kwargs)
+
+
 class RRuleValidator:
+    def __init__(self, enforce_simple=False):
+        self.enforce_simple = enforce_simple
+
     def __call__(self, value):
         try:
-            rrulestr(value)
+            parsed = rrulestr(value)
         except Exception:
             raise ValidationError("Not a valid rrule.")
+
+        if self.enforce_simple:
+            # Validate that only things are used that we can represent in our UI for later editing
+
+            if not isinstance(parsed, rrule):
+                raise ValidationError("Only a single RRULE is allowed, no combination of rules.")
+
+            if parsed._freq not in (YEARLY, MONTHLY, WEEKLY, DAILY):
+                raise ValidationError("Unsupported FREQ value")
+            if parsed._wkst != calendar.firstweekday():
+                raise ValidationError("Unsupported WKST value")
+            if parsed._bysetpos:
+                if len(parsed._bysetpos) > 1:
+                    raise ValidationError("Only one BYSETPOS value allowed")
+                if parsed._freq == YEARLY and parsed._bysetpos not in (1, 2, 3, -1):
+                    raise ValidationError("BYSETPOS value not allowed, should be 1, 2, 3 or -1")
+                elif parsed._freq == MONTHLY and parsed._bysetpos not in (1, 2, 3, -1):
+                    raise ValidationError("BYSETPOS value not allowed, should be 1, 2, 3 or -1")
+                elif parsed._freq not in (YEARLY, MONTHLY):
+                    raise ValidationError("BYSETPOS not allowed for this FREQ")
+            if parsed._bymonthday:
+                raise ValidationError("BYMONTHDAY not supported")
+            if parsed._byyearday:
+                raise ValidationError("BYYEARDAY not supported")
+            if parsed._byeaster:
+                raise ValidationError("BYEASTER not supported")
+            if parsed._byweekno:
+                raise ValidationError("BYWEEKNO not supported")
+            if len(parsed._byhour) > 1 or set(parsed._byhour) != {parsed._dtstart.hour}:
+                raise ValidationError("BYHOUR not supported")
+            if len(parsed._byminute) > 1 or set(parsed._byminute) != {parsed._dtstart.minute}:
+                raise ValidationError("BYMINUTE not supported")
+            if len(parsed._bysecond) > 1 or set(parsed._bysecond) != {parsed._dtstart.second}:
+                raise ValidationError("BYSECOND not supported")

@@ -1,10 +1,16 @@
-@import "../../pretixbase/scss/_contrast.scss";
-
 h1, .h1,
 h2, .h2,
 h3, .h3 {
-  margin-top: 2.25 * $line-height-computed;
+  margin-top: 0.75 * $line-height-computed;
   margin-bottom: 0.75 * $line-height-computed;
+}
+
+.front-page, .item-category {
+  h1, .h1,
+  h2, .h2,
+  h3, .h3 {
+    margin-top: 2.25 * $line-height-computed;
+  }
 }
 
 .page-header {
@@ -37,11 +43,12 @@ h3, .h3 {
 .page-header-links > div.header-part {
   padding-top: 15px;
 
-  a:link, a:visited {
-    color: choose-contrast-color($body-bg, white, $link-color);
+  a {
+    color: var(--pretix-link-contrast-color);
+    outline-color: inherit;
   }
   a:active, a:hover, a:focus {
-    color: choose-contrast-color($body-bg, white, $link-hover-color);
+    color: var(--pretix-link-hover-contrast-color);
   }
 }
 
@@ -82,39 +89,35 @@ h2.content-header {
 }
 @media (min-width: $screen-sm-min) {
   .main-box {
-    @if ($body-bg != #FFFFFF) {
-      margin: 20px auto;
-      padding-left: 25px;
-      padding-right: 25px;
-      border-radius: $border-radius-large;
-    }
+    margin: calc(20px * var(--pretix-body-bg-white-0)) auto;
+    padding-left: calc(25px * var(--pretix-body-bg-white-0) + 15px * var(--pretix-body-bg-white-1));
+    padding-right: calc(25px * var(--pretix-body-bg-white-0) + 15px * var(--pretix-body-bg-white-1));
+    border-radius: calc(#{$border-radius-large} * var(--pretix-body-bg-white-0));
   }
   .page-header-links-outside {
-    @if ($body-bg != #FFFFFF) {
-      padding-left: 0;
-      padding-right: 0;
-    }
+    padding-left: calc(15px * var(--pretix-body-bg-white-1));
+    padding-right: calc(15px * var(--pretix-body-bg-white-1));
   }
   .page-header-links > div.header-part {
-    @if ($body-bg != #FFFFFF) {
-      padding: 10px 0;
-      margin-bottom: -20px;
-    }
+    padding-top: calc(10px * var(--pretix-body-bg-white-0) + 15px * var(--pretix-body-bg-white-1));
+    padding-bottom: calc(10px * var(--pretix-body-bg-white-0));
+    padding-left: 0;
+    padding-right: 0;
+    margin-bottom: calc(-20px * var(--pretix-body-bg-white-0));
+  }
+  .page-header-links-outside > div.header-part {
+    padding-bottom: calc(10px * var(--pretix-body-bg-white-0) + 15px * var(--pretix-body-bg-white-1));
   }
 
   .page-header.logo-large {
     margin-top: 0;
 
-    @if ($body-bg != #FFFFFF) {
-      margin-left: -25px;
-      margin-right: -25px;
-    }
+    margin-left: calc(-25px * var(--pretix-body-bg-white-0));
+    margin-right: calc(-25px * var(--pretix-body-bg-white-0));
 
     img {
-      @if ($body-bg != #FFFFFF) {
-        border-top-right-radius: $border-radius-large;
-        border-top-left-radius: $border-radius-large;
-      }
+      border-top-right-radius: calc(#{$border-radius-large} * var(--pretix-body-bg-white-0));
+      border-top-left-radius: calc(#{$border-radius-large} * var(--pretix-body-bg-white-0));
     }
   }
 
@@ -124,13 +127,11 @@ h2.content-header {
 }
 
 footer {
-  @if ($body-bg != #FFFFFF) {
-    padding-bottom: 0;
-  }
+  padding-bottom: calc(10px * var(--pretix-body-bg-white-1));
 }
 
 .label-success-warning {
-  @include label-variant($label-success-bg);
+  @include label-variant($label-success-bg, $label-success-bg-hover);
 
   padding-left: 2.5em;
   position: relative;

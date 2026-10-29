@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -20,6 +20,9 @@
 # <https://www.gnu.org/licenses/>.
 #
 import logging
+import re
+from collections import defaultdict
+from datetime import timedelta
 from importlib import import_module
 from zoneinfo import ZoneInfo
 
@@ -28,23 +31,29 @@ from celery import states
 from celery.result import AsyncResult
 from django.conf import settings
 from django.contrib import messages
-from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.exceptions import (
+    BadRequest, PermissionDenied, ValidationError,
+)
+from django.core.files.uploadedfile import UploadedFile
 from django.db import transaction
 from django.http import HttpResponse, JsonResponse, QueryDict
-from django.shortcuts import redirect, render
+from django.shortcuts import render
 from django.test import RequestFactory
 from django.utils import timezone, translation
-from django.utils.timezone import get_current_timezone
+from django.utils.datastructures import MultiValueDict
+from django.utils.timezone import get_current_timezone, now
 from django.utils.translation import get_language, gettext as _
 from django.views import View
 from django.views.generic import FormView
 from redis import ResponseError
 
-from pretix.base.models import User
+from pretix.base.models import CachedFile, User
 from pretix.base.services.tasks import ProfiledEventTask
 from pretix.celery_app import app
+from pretix.helpers.http import redirect_to_url
 
 logger = logging.getLogger('pretix.base.tasks')
+RE_ASYNC_ID = re.compile(r"^[a-zA-Z0-9\-]+$")
 
 
 class AsyncMixin:
@@ -61,7 +70,7 @@ class AsyncMixin:
     def get_check_url(self, task_id, ajax):
         return self.request.path + '?async_id=%s' % task_id + ('&ajax=1' if ajax else '')
 
-    def _ajax_response_data(self):
+    def _ajax_response_data(self, value):
         return {}
 
     def _return_ajax_result(self, res, timeout=.5):
@@ -78,7 +87,7 @@ class AsyncMixin:
                 logger.warning('Ignored ResponseError in AsyncResult.get()')
             except ConnectionError:
                 # Redis probably just restarted, let's just report not ready and retry next time
-                data = self._ajax_response_data()
+                data = self._ajax_response_data(None)
                 data.update({
                     'async_id': res.id,
                     'ready': False
@@ -86,7 +95,7 @@ class AsyncMixin:
                 return data
 
         state, info = res.state, res.info
-        data = self._ajax_response_data()
+        data = self._ajax_response_data(info)
         data.update({
             'async_id': res.id,
             'ready': ready,
@@ -95,23 +104,21 @@ class AsyncMixin:
         if ready:
             if state == states.SUCCESS and not isinstance(info, Exception):
                 smes = self.get_success_message(info)
-                if smes:
+                if smes and 'ajax_dont_redirect' not in self.request.GET and 'ajax_dont_redirect' not in self.request.POST:
                     messages.success(self.request, smes)
-                # TODO: Do not store message if the ajax client states that it will not redirect
-                # but handle the message itself
                 data.update({
                     'redirect': self.get_success_url(info),
                     'success': True,
-                    'message': str(self.get_success_message(info))
+                    'message': str(smes)
                 })
             else:
-                messages.error(self.request, self.get_error_message(info))
-                # TODO: Do not store message if the ajax client states that it will not redirect
-                # but handle the message itself
+                smes = self.get_error_message(info)
+                if smes and 'ajax_dont_redirect' not in self.request.GET and 'ajax_dont_redirect' not in self.request.POST:
+                    messages.error(self.request, smes)
                 data.update({
                     'redirect': self.get_error_url(),
                     'success': False,
-                    'message': str(self.get_error_message(info))
+                    'message': str(smes)
                 })
         elif state == 'PROGRESS':
             data.update({
@@ -126,6 +133,10 @@ class AsyncMixin:
         return data
 
     def get_result(self, request):
+        if not request.GET.get('async_id'):
+            raise BadRequest("No async_id given")
+        if not RE_ASYNC_ID.match(request.GET.get('async_id')):
+            raise BadRequest("Invalid async_id given")
         res = AsyncResult(request.GET.get('async_id'))
         if 'ajax' in self.request.GET:
             return JsonResponse(self._return_ajax_result(res, timeout=0.25))
@@ -135,7 +146,12 @@ class AsyncMixin:
                     return self.success(res.info)
                 else:
                     return self.error(res.info)
-            return render(request, 'pretixpresale/waiting.html')
+            state, info = res.state, res.info
+            return render(request, 'pretixpresale/waiting.html', {
+                'started': state in ('PROGRESS', 'STARTED'),
+                'percentage': info.get('value', 0) if isinstance(info, dict) else 0,
+                'steps': info.get('steps', []) if isinstance(info, dict) else None,
+            })
 
     def success(self, value):
         smes = self.get_success_message(value)
@@ -148,7 +164,7 @@ class AsyncMixin:
                 'redirect': self.get_success_url(value),
                 'message': str(self.get_success_message(value))
             })
-        return redirect(self.get_success_url(value))
+        return redirect_to_url(self.get_success_url(value))
 
     def error(self, exception):
         if isinstance(exception, PermissionDenied):
@@ -161,7 +177,7 @@ class AsyncMixin:
                 'redirect': self.get_error_url(),
                 'message': str(self.get_error_message(exception))
             })
-        return redirect(self.get_error_url())
+        return redirect_to_url(self.get_error_url())
 
     def get_error_message(self, exception):
         if isinstance(exception, dict) and exception['exc_type'] in self.known_errortypes:
@@ -199,10 +215,12 @@ class AsyncAction(AsyncMixin):
                     return self.success(res.info)
                 else:
                     return self.error(res.info)
-            return redirect(self.get_check_url(res.id, False))
+            return redirect_to_url(self.get_check_url(res.id, False))
 
     def get(self, request, *args, **kwargs):
         if 'async_id' in request.GET and settings.HAS_CELERY:
+            if not request.GET.get('async_id'):
+                raise BadRequest("No async_id given")
             return self.get_result(request)
         return self.http_method_not_allowed(request)
 
@@ -228,15 +246,39 @@ class AsyncFormView(AsyncMixin, FormView):
             )
 
     def __init_subclass__(cls):
+        class StoredUploadedFile(UploadedFile):
+            pass
+
         def async_execute(self, *, request_path, query_string, form_kwargs, locale, tz, url_kwargs=None, url_args=None,
                           organizer=None, event=None, user=None, session_key=None):
             view_instance = cls()
             form_kwargs['data'] = QueryDict(form_kwargs['data'])
+
+            if form_kwargs['files']:
+                for k, l in form_kwargs['files'].items():
+                    uploadedfiles = []
+                    for cfid in l:
+                        cf = CachedFile.objects.get(pk=cfid)
+                        uploadedfiles.append(StoredUploadedFile(
+                            file=cf.file,
+                            name=cf.filename,
+                            content_type=cf.type,
+                            size=cf.file.size,
+                            charset=None,
+                            content_type_extra=None,
+                        ))
+
+                    form_kwargs['files'][k] = uploadedfiles
+                form_kwargs['files'] = MultiValueDict(form_kwargs['files'])
+
             req = RequestFactory().post(
                 request_path + '?' + query_string,
                 data=form_kwargs['data'].urlencode(),
                 content_type='application/x-www-form-urlencoded'
             )
+            if form_kwargs['files']:
+                req._load_post_and_files()
+                req._files = form_kwargs['files']
             view_instance.request = req
             view_instance.kwargs = url_kwargs
             view_instance.args = url_args
@@ -287,8 +329,19 @@ class AsyncFormView(AsyncMixin, FormView):
         return super().get(request, *args, **kwargs)
 
     def form_valid(self, form):
-        if form.files:
-            raise TypeError('File upload currently not supported in AsyncFormView')
+        files = defaultdict(list)
+        if self.request.FILES:
+            for k, v in self.request.FILES.items():
+                cf = CachedFile.objects.create(
+                    expires=now() + timedelta(hours=2),
+                    date=now(),
+                    web_download=False,
+                    filename=v.name,
+                    type=v.content_type,
+                )
+                cf.file.save('uploaded_file.dat', v)
+                files[k].append(str(cf.pk))
+
         form_kwargs = {
             k: v for k, v in self.get_form_kwargs().items()
         }
@@ -299,6 +352,7 @@ class AsyncFormView(AsyncMixin, FormView):
                 form_kwargs['instance'] = None
         form_kwargs.setdefault('data', QueryDict())
         form_kwargs['data'] = form_kwargs['data'].urlencode()
+        form_kwargs['files'] = files
         form_kwargs['initial'] = {}
         form_kwargs.pop('event', None)
         kwargs = {
@@ -335,7 +389,7 @@ class AsyncFormView(AsyncMixin, FormView):
                     return self.success(res.info)
                 else:
                     return self.error(res.info)
-            return redirect(self.get_check_url(res.id, False))
+            return redirect_to_url(self.get_check_url(res.id, False))
 
 
 class AsyncPostView(AsyncMixin, View):
@@ -438,4 +492,4 @@ class AsyncPostView(AsyncMixin, View):
                     return self.success(res.info)
                 else:
                     return self.error(res.info)
-            return redirect(self.get_check_url(res.id, False))
+            return redirect_to_url(self.get_check_url(res.id, False))

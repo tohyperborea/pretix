@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -50,7 +50,6 @@ from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _, ngettext
 from django.views.generic import DeleteView, FormView, ListView, TemplateView
 
-from pretix.base.email import get_available_placeholders
 from pretix.base.i18n import LazyI18nString, language
 from pretix.base.models import Checkin, LogEntry, Order, OrderPosition
 from pretix.base.models.event import SubEvent
@@ -61,7 +60,10 @@ from pretix.plugins.sendmail.tasks import (
     send_mails_to_orders, send_mails_to_waitinglist,
 )
 
-from ...helpers.format import format_map
+from ...base.services.mail import prefix_subject
+from ...base.services.placeholders import get_sample_context
+from ...helpers.format import SafeFormatter, format_map
+from ...helpers.models import modelcopy
 from . import forms
 from .models import Rule, ScheduledMail
 
@@ -70,7 +72,7 @@ logger = logging.getLogger('pretix.plugins.sendmail')
 
 class IndexView(EventPermissionRequiredMixin, TemplateView):
     template_name = 'pretixplugins/sendmail/index.html'
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
 
     def get_context_data(self, **kwargs):
         from .signals import sendmail_view_classes
@@ -92,7 +94,7 @@ class IndexView(EventPermissionRequiredMixin, TemplateView):
 class BaseSenderView(EventPermissionRequiredMixin, FormView):
     # These parameters usually SHOULD NOT be overridden
     template_name = 'pretixplugins/sendmail/send_form.html'
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
 
     # These parameters MUST be overridden by subclasses
     form_fragment_name = None
@@ -155,6 +157,7 @@ class BaseSenderView(EventPermissionRequiredMixin, FormView):
         kwargs = super().get_form_kwargs()
         kwargs['event'] = self.request.event
         kwargs['context_parameters'] = self.context_parameters
+        kwargs['request'] = self.request
         if 'from_log' in self.request.GET:
             try:
                 from_log_id = self.request.GET.get('from_log')
@@ -188,17 +191,15 @@ class BaseSenderView(EventPermissionRequiredMixin, FormView):
         if self.request.POST.get("action") != "send":
             for l in self.request.event.settings.locales:
                 with language(l, self.request.event.settings.region):
-                    context_dict = {}
-                    for k, v in get_available_placeholders(self.request.event, self.context_parameters).items():
-                        context_dict[k] = '<span class="placeholder" title="{}">{}</span>'.format(
-                            _('This value will be replaced based on dynamic parameters.'),
-                            v.render_sample(self.request.event)
-                        )
-
-                    subject = bleach.clean(form.cleaned_data['subject'].localize(l), tags=[])
-                    preview_subject = format_map(subject, context_dict)
+                    context_dict = get_sample_context(self.request.event, self.context_parameters)
+                    subject = bleach.clean(form.cleaned_data['subject'].localize(l), tags=set())
+                    preview_subject = prefix_subject(self.request.event, format_map(subject, context_dict), highlight=True)
                     message = form.cleaned_data['message'].localize(l)
-                    preview_text = markdown_compile_email(format_map(message, context_dict))
+                    preview_text = format_map(
+                        markdown_compile_email(format_map(message, context_dict)),
+                        context_dict,
+                        mode=SafeFormatter.MODE_RICH_TO_HTML,
+                    )
 
                     self.output[l] = {
                         'subject': _('Subject: {subject}').format(subject=preview_subject),
@@ -354,9 +355,9 @@ class OrderSendView(BaseSenderView):
             statusq |= Q(status=Order.STATUS_PENDING, require_approval=False, valid_if_pending=True)
         orders = qs.filter(statusq)
 
-        opq = OrderPosition.objects.filter(
+        opq = OrderPosition.objects.with_scopes_disabled().filter(
             Q(item_id__in=[i.pk for i in form.cleaned_data.get('items')]) | Q(Exists(
-                OrderPosition.objects.filter(
+                OrderPosition.objects.with_scopes_disabled().filter(
                     addon_to_id=OuterRef('pk'),
                     item_id__in=[i.pk for i in form.cleaned_data.get('items')]
                 )
@@ -366,35 +367,43 @@ class OrderSendView(BaseSenderView):
         )
 
         if form.cleaned_data.get('filter_checkins'):
-            ql = []
+            ci_filter = Q(pk__in=[])  # return nothing
 
             if form.cleaned_data.get('not_checked_in'):
+                consider_tickets_used_lists = list(self.request.event.checkin_lists.filter(consider_tickets_used=True).values_list("id", flat=True))
+
                 opq = opq.alias(
                     any_checkins=Exists(
-                        Checkin.all.filter(
-                            Q(position_id=OuterRef('pk')) | Q(position__addon_to_id=OuterRef('pk')),
-                            successful=True
+                        Checkin.objects.with_scopes_disabled().filter(
+                            position_id=OuterRef('pk'),
+                            list_id__in=consider_tickets_used_lists,
+                        )
+                    ) | Exists(
+                        Checkin.objects.with_scopes_disabled().filter(
+                            position__addon_to_id=OuterRef('pk'),
+                            list_id__in=consider_tickets_used_lists,
                         )
                     )
                 )
-                ql.append(Q(any_checkins=False))
+                ci_filter |= Q(any_checkins=False)
+
             if form.cleaned_data.get('checkin_lists'):
                 opq = opq.alias(
                     matching_checkins=Exists(
-                        Checkin.all.filter(
-                            Q(position_id=OuterRef('pk')) | Q(position__addon_to_id=OuterRef('pk')),
+                        Checkin.objects.with_scopes_disabled().filter(
+                            position_id=OuterRef('pk'),
                             list_id__in=[i.pk for i in form.cleaned_data.get('checkin_lists', [])],
-                            successful=True
+                        )
+                    ) | Exists(
+                        Checkin.objects.with_scopes_disabled().filter(
+                            position__addon_to_id=OuterRef('pk'),
+                            list_id__in=[i.pk for i in form.cleaned_data.get('checkin_lists', [])],
                         )
                     )
                 )
-                ql.append(Q(matching_checkins=True))
-            if len(ql) == 2:
-                opq = opq.filter(ql[0] | ql[1])
-            elif ql:
-                opq = opq.filter(ql[0])
-            else:
-                opq = opq.none()
+                ci_filter |= Q(matching_checkins=True)
+
+            opq = opq.filter(ci_filter)
 
         if form.cleaned_data.get('subevent'):
             opq = opq.filter(subevent=form.cleaned_data.get('subevent'))
@@ -425,6 +434,9 @@ class OrderSendView(BaseSenderView):
         kwargs.update({
             'recipients': form.cleaned_data['recipients'],
             'items': [i.pk for i in form.cleaned_data.get('items')],
+            'subevent': form.cleaned_data['subevent'].pk if form.cleaned_data.get('subevent') else None,
+            'subevents_from': form.cleaned_data.get('subevents_from'),
+            'subevents_to': form.cleaned_data.get('subevents_to'),
             'not_checked_in': form.cleaned_data.get('not_checked_in'),
             'checkin_lists': [i.pk for i in form.cleaned_data.get('checkin_lists')],
             'filter_checkins': form.cleaned_data.get('filter_checkins'),
@@ -519,7 +531,7 @@ class WaitinglistSendView(BaseSenderView):
 
 class EmailHistoryView(EventPermissionRequiredMixin, ListView):
     template_name = 'pretixplugins/sendmail/history.html'
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
     model = LogEntry
     context_object_name = 'logs'
     paginate_by = 5
@@ -567,14 +579,28 @@ class EmailHistoryView(EventPermissionRequiredMixin, ListView):
 
 class CreateRule(EventPermissionRequiredMixin, CreateView):
     template_name = 'pretixplugins/sendmail/rule_create.html'
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
     form_class = forms.RuleForm
 
     model = Rule
 
+    @cached_property
+    def copy_from(self):
+        if self.request.GET.get("copy_from") and not getattr(self, 'object', None):
+            try:
+                return Rule.objects.get(pk=self.request.GET.get("copy_from"), event=self.request.event)
+            except Rule.DoesNotExist:
+                pass
+
     def get_form_kwargs(self):
         kwargs = super().get_form_kwargs()
         kwargs['event'] = self.request.event
+
+        if self.copy_from:
+            i = modelcopy(self.copy_from)
+            i.pk = None
+            i.redeemed = 0
+            kwargs["instance"] = i
         return kwargs
 
     def form_invalid(self, form):
@@ -582,31 +608,6 @@ class CreateRule(EventPermissionRequiredMixin, CreateView):
         return super().form_invalid(form)
 
     def form_valid(self, form):
-        self.output = {}
-
-        if self.request.POST.get("action") == "preview":
-            for l in self.request.event.settings.locales:
-                with language(l, self.request.event.settings.region):
-                    context_dict = {}
-                    for k, v in get_available_placeholders(self.request.event, ['event', 'order',
-                                                                                'position_or_address']).items():
-                        context_dict[k] = '<span class="placeholder" title="{}">{}</span>'.format(
-                            _('This value will be replaced based on dynamic parameters.'),
-                            v.render_sample(self.request.event)
-                        )
-
-                    subject = bleach.clean(form.cleaned_data['subject'].localize(l), tags=[])
-                    preview_subject = format_map(subject, context_dict)
-                    template = form.cleaned_data['template'].localize(l)
-                    preview_text = markdown_compile_email(format_map(template, context_dict))
-
-                    self.output[l] = {
-                        'subject': _('Subject: {subject}').format(subject=preview_subject),
-                        'html': preview_text,
-                    }
-
-            return self.get(self.request, *self.args, **self.kwargs)
-
         messages.success(self.request, _('Your rule has been created.'))
 
         form.instance.event = self.request.event
@@ -628,7 +629,7 @@ class UpdateRule(EventPermissionRequiredMixin, UpdateView):
     model = Rule
     form_class = forms.RuleForm
     template_name = 'pretixplugins/sendmail/rule_update.html'
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
 
     def get_object(self, queryset=None) -> Rule:
         return get_object_or_404(
@@ -664,17 +665,15 @@ class UpdateRule(EventPermissionRequiredMixin, UpdateView):
 
         for lang in self.request.event.settings.locales:
             with language(lang, self.request.event.settings.region):
-                placeholders = {}
-                for k, v in get_available_placeholders(self.request.event, ['event', 'order', 'position_or_address']).items():
-                    placeholders[k] = '<span class="placeholder" title="{}">{}</span>'.format(
-                        _('This value will be replaced based on dynamic parameters.'),
-                        v.render_sample(self.request.event)
-                    )
-
-                subject = bleach.clean(self.object.subject.localize(lang), tags=[])
-                preview_subject = format_map(subject, placeholders)
+                placeholders = get_sample_context(self.request.event, ['event', 'order', 'event_or_subevent', 'position_or_address'])
+                subject = bleach.clean(self.object.subject.localize(lang), tags=set())
+                preview_subject = prefix_subject(self.request.event, format_map(subject, placeholders), highlight=True)
                 template = self.object.template.localize(lang)
-                preview_text = markdown_compile_email(format_map(template, placeholders))
+                preview_text = format_map(
+                    markdown_compile_email(format_map(template, placeholders)),
+                    placeholders,
+                    mode=SafeFormatter.MODE_RICH_TO_HTML,
+                )
 
                 o[lang] = {
                     'subject': _('Subject: {subject}'.format(subject=preview_subject)),
@@ -710,7 +709,7 @@ class ListRules(EventPermissionRequiredMixin, PaginationMixin, ListView):
 
 class DeleteRule(EventPermissionRequiredMixin, DeleteView):
     model = Rule
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
     template_name = 'pretixplugins/sendmail/rule_delete.html'
     context_object_name = 'rule'
 

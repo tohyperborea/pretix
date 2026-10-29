@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -46,7 +46,6 @@ from django_scopes import ScopedManager, scopes_disabled
 
 from pretix.base.media import MEDIA_TYPES
 from pretix.base.models import LoggedModel
-from pretix.base.models.fields import MultiStringField
 from pretix.helpers import PostgresWindowFrame
 
 
@@ -62,6 +61,16 @@ class CheckinList(LoggedModel):
                                              'and valid for check-in regardless of which date they are purchased for. '
                                              'You can limit their validity through the advanced check-in rules, '
                                              'though.'))
+    ignore_in_statistics = models.BooleanField(
+        verbose_name=pgettext_lazy('checkin', 'Ignore check-ins on this list in statistics'),
+        default=False
+    )
+    consider_tickets_used = models.BooleanField(
+        verbose_name=pgettext_lazy('checkin', 'Tickets with a check-in on this list should be considered "used"'),
+        help_text=_('This is relevant in various situations, e.g. for deciding if a ticket can still be canceled by '
+                    'the customer.'),
+        default=True
+    )
     include_pending = models.BooleanField(verbose_name=pgettext_lazy('checkin', 'Include pending orders'),
                                           default=False,
                                           help_text=_('With this option, people will be able to check in even if the '
@@ -89,14 +98,6 @@ class CheckinList(LoggedModel):
     exit_all_at = models.DateTimeField(
         verbose_name=_('Automatically check out everyone at'),
         null=True, blank=True
-    )
-    auto_checkin_sales_channels = MultiStringField(
-        default=[],
-        blank=True,
-        verbose_name=_('Sales channels to automatically check in'),
-        help_text=_('All items on this check-in list will be automatically marked as checked-in when purchased through '
-                    'any of the selected sales channels. This option can be useful when tickets sold at the box office '
-                    'are not checked again before entry and should be considered validated directly upon purchase.')
     )
     rules = models.JSONField(default=dict, blank=True)
 
@@ -132,7 +133,7 @@ class CheckinList(LoggedModel):
         return self.positions_query(ignore_status=False)
 
     @scopes_disabled()
-    def positions_inside_query(self, ignore_status=False, at_time=None):
+    def _filter_positions_inside(self, qs, at_time=None):
         if at_time is None:
             c_q = []
         else:
@@ -140,7 +141,7 @@ class CheckinList(LoggedModel):
 
         if "postgresql" not in settings.DATABASES["default"]["ENGINE"]:
             # Use a simple approach that works on all databases
-            qs = self.positions_query(ignore_status=ignore_status).annotate(
+            qs = qs.annotate(
                 last_entry=Subquery(
                     Checkin.objects.filter(
                         *c_q,
@@ -193,7 +194,7 @@ class CheckinList(LoggedModel):
             .values("position_id", "type", "datetime", "cnt_exists_after")
             .query.sql_with_params()
         )
-        return self.positions_query(ignore_status=ignore_status).filter(
+        return qs.filter(
             pk__in=RawSQL(
                 f"""
                 SELECT "position_id"
@@ -204,6 +205,10 @@ class CheckinList(LoggedModel):
                 [*base_params, Checkin.TYPE_ENTRY]
             )
         )
+
+    @scopes_disabled()
+    def positions_inside_query(self, ignore_status=False, at_time=None):
+        return self._filter_positions_inside(self.positions_query(ignore_status=ignore_status), at_time=at_time)
 
     @property
     def positions_inside(self):
@@ -270,11 +275,12 @@ class CheckinList(LoggedModel):
             '<', '<=', '>', '>=', '==', '!=', 'inList', 'isBefore', 'isAfter', 'or', 'and'
         }
         allowed_operators = top_level_operators | {
-            'buildTime', 'objectList', 'lookup', 'var', 'entries_since', 'entries_before'
+            'buildTime', 'objectList', 'lookup', 'var', 'entries_since', 'entries_before', 'entries_days_since',
+            'entries_days_before',
         }
         allowed_vars = {
             'product', 'variation', 'now', 'now_isoweekday', 'entries_number', 'entries_today', 'entries_days',
-            'minutes_since_last_entry', 'minutes_since_first_entry', 'gate',
+            'minutes_since_last_entry', 'minutes_since_first_entry', 'gate', 'entry_status',
         }
         if not rules or not isinstance(rules, dict):
             return rules
@@ -299,7 +305,7 @@ class CheckinList(LoggedModel):
                 raise ValidationError(f'Logic variable "{values[0]}" is currently not allowed.')
             return rules
 
-        if operator in ('entries_since', 'entries_before'):
+        if operator in ('entries_since', 'entries_before', 'entries_days_since', 'entries_days_before'):
             if len(values) != 1 or "buildTime" not in values[0]:
                 raise ValidationError(f'Operator "{operator}" takes exactly one "buildTime" argument.')
 
@@ -340,9 +346,14 @@ class Checkin(models.Model):
     REASON_INCOMPLETE = 'incomplete'
     REASON_ALREADY_REDEEMED = 'already_redeemed'
     REASON_AMBIGUOUS = 'ambiguous'
+    REASON_MEDIUM_INVALID = 'medium_invalid'
+    REASON_MEDIUM_EXISTS = 'medium_exists'
     REASON_ERROR = 'error'
     REASON_BLOCKED = 'blocked'
+    REASON_UNAPPROVED = 'unapproved'
     REASON_INVALID_TIME = 'invalid_time'
+    REASON_ANNULLED = 'annulled'
+    REASON_ALREADY_EXCHANGED = 'already_exchanged'
     REASONS = (
         (REASON_CANCELED, _('Order canceled')),
         (REASON_INVALID, _('Unknown ticket')),
@@ -355,7 +366,12 @@ class Checkin(models.Model):
         (REASON_AMBIGUOUS, _('Ticket code is ambiguous on list')),
         (REASON_ERROR, _('Server error')),
         (REASON_BLOCKED, _('Ticket blocked')),
+        (REASON_UNAPPROVED, _('Order not approved')),
         (REASON_INVALID_TIME, _('Ticket not valid at this time')),
+        (REASON_ANNULLED, _('Check-in annulled')),
+        (REASON_ALREADY_EXCHANGED, _('Ticket already exchanged')),
+        (REASON_MEDIUM_INVALID, _('Reusable medium invalid')),
+        (REASON_MEDIUM_EXISTS, _('Reusable medium already exists')),
     )
 
     successful = models.BooleanField(

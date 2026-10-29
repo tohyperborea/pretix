@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -112,7 +112,8 @@ def dictsum(*dicts) -> dict:
 
 def order_overview(
         event: Event, subevent: SubEvent=None, date_filter='', date_from=None, date_until=None, fees=False,
-        admission_only=False, base_qs=None, base_fees_qs=None,
+        admission_only=False, base_qs=None, base_fees_qs=None, subevent_date_from=None, subevent_date_until=None,
+        skip_empty_lines=False,
 ) -> Tuple[List[Tuple[ItemCategory, List[Item]]], Dict[str, Tuple[Decimal, Decimal]]]:
     items = event.items.all().select_related(
         'category',  # for re-grouping
@@ -125,17 +126,22 @@ def order_overview(
         qs = qs.filter(subevent__in=subevent)
     elif subevent:
         qs = qs.filter(subevent=subevent)
+    if subevent_date_from:
+        qs = qs.filter(subevent__date_from__gte=subevent_date_from)
+    if subevent_date_until:
+        qs = qs.filter(subevent__date_from__lt=subevent_date_until)
+
     if admission_only:
         qs = qs.filter(item__admission=True)
         items = items.filter(admission=True)
 
-    if date_from and isinstance(date_from, date):
+    if date_from and isinstance(date_from, date) and not isinstance(date_from, datetime):
         date_from = make_aware(datetime.combine(
             date_from,
             time(hour=0, minute=0, second=0, microsecond=0)
         ), event.timezone)
 
-    if date_until and isinstance(date_until, date):
+    if date_until and isinstance(date_until, date) and not isinstance(date_until, datetime):
         date_until = make_aware(datetime.combine(
             date_until + timedelta(days=1),
             time(hour=0, minute=0, second=0, microsecond=0)
@@ -192,6 +198,7 @@ def order_overview(
         item.all_variations = list(item.variations.all())
         item.has_variations = (len(item.all_variations) > 0)
         item.num = {}
+        item.subevent = subevent
         if item.has_variations:
             for var in item.all_variations:
                 variid = var.id
@@ -199,13 +206,21 @@ def order_overview(
                 for l in states.keys():
                     var.num[l] = num[l].get((item.id, variid), (0, 0, 0))
                 var.num['total'] = num['total'].get((item.id, variid), (0, 0, 0))
+                var._skip = all(v[0] == 0 for v in var.num.values())
             for l in states.keys():
                 item.num[l] = tuplesum(var.num[l] for var in item.all_variations)
             item.num['total'] = tuplesum(var.num['total'] for var in item.all_variations)
+            if skip_empty_lines:
+                item.all_variations = [v for v in item.all_variations if not v._skip]
+                item._skip = not item.all_variations
         else:
             for l in states.keys():
                 item.num[l] = num[l].get((item.id, None), (0, 0, 0))
             item.num['total'] = num['total'].get((item.id, None), (0, 0, 0))
+            item._skip = all(v[0] == 0 for v in item.num.values())
+
+    if skip_empty_lines:
+        items = [i for i in items if not i._skip]
 
     nonecat = ItemCategory(name=_('Uncategorized'))
     # Regroup those by category
@@ -232,7 +247,7 @@ def order_overview(
     payment_cat_obj.name = _('Fees')
     payment_items = []
 
-    if subevent is None and fees:
+    if subevent is None and not subevent_date_from and not subevent_date_until and fees:
         qs = OrderFee.all if base_fees_qs is None else base_fees_qs
         qs = qs.filter(
             order__event=event

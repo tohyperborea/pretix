@@ -7,16 +7,16 @@
 <!DOCTYPE html>
 <html>
 <head>
-    {% if css_file %}
-        <link rel="stylesheet" type="text/css" href="{{ css_file }}"/>
-    {% else %}
-        {% compress css %}
-            <link rel="stylesheet" type="text/x-scss" href="{% static "pretixpresale/scss/main.scss" %}"/>
-        {% endcompress %}
+    {% compress css %}
+        <link rel="stylesheet" type="text/x-scss" href="{% static "pretixpresale/scss/main.scss" %}"/>
+    {% endcompress %}
+    {% if css_theme %}
+        <link rel="stylesheet" type="text/css" href="{{ css_theme }}" />
     {% endif %}
+    {{ seatingframe_html_head|safe }}
     {% include "pretixpresale/fragment_js.html" %}
     <meta name="referrer" content="origin">
-    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=0">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
 <body class="full-screen-seating" data-locale="{{ request.LANGUAGE_CODE }}">
 <form method="post" data-asynctask
@@ -25,6 +25,7 @@
       action="{% eventurl request.event "presale:event.cart.add" cart_namespace=cart_namespace %}?next={{ cart_redirect|urlencode }}">
     {% csrf_token %}
     <input type="hidden" name="subevent" value="{{ subevent.id|default_if_none:"" }}"/>
+    <input type="hidden" name="_voucher_code" value="{{ voucher.code|default_if_none:"" }}">
     {% if event.has_subevents %}
         {% eventsignal event "pretix.presale.signals.render_seating_plan" request=request subevent=subevent voucher=voucher %}
     {% else %}
@@ -38,7 +39,7 @@
     <script src="{% statici18n request.LANGUAGE_CODE %}" async></script>
 {% endif %}
 {% if request.session.iframe_session %}
-    {% compress js %}
+    {% compress js file iframeresizer %}
         <script type="text/javascript" src="{% static "iframeresizer/iframeResizer.contentWindow.js" %}"></script>
     {% endcompress %}
 {% endif %}

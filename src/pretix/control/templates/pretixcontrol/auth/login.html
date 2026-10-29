@@ -19,6 +19,14 @@
             </ul>
             <br>
         {% endif %}
+        {% if possible_cookie_problem %}
+            <div class="alert alert-warning">
+                {% blocktrans trimmed %}
+                    It looks like your browser is not accepting our cookie and you need to log in repeatedly. Please
+                    check if your browser is set to block cookies, or delete all existing cookies and retry.
+                {% endblocktrans %}
+            </div>
+        {% endif %}
         {% csrf_token %}
         {% bootstrap_form form %}
         <div class="form-group buttons">
@@ -46,5 +54,6 @@
             {% endif %}
         </div>
     </form>
-    <!-- pretix-login-marker -->{# marker required for ajax calls to detect that user session is over #}
+    <script type="text/plain" id="good_origin">{{ good_origin }}</script>
+    <script type="text/plain" id="bad_origin_report_url">{{ bad_origin_report_url }}</script>
 {% endblock %}

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -50,8 +50,8 @@ from pretix.api.serializers.order import (
 from pretix.api.serializers.waitinglist import WaitingListSerializer
 from pretix.base.i18n import LazyLocaleException
 from pretix.base.models import (
-    CachedCombinedTicket, CachedTicket, Event, InvoiceAddress, OrderPayment,
-    OrderPosition, OrderRefund, QuestionAnswer,
+    CachedCombinedTicket, CachedTicket, Event, Invoice, InvoiceAddress,
+    OrderPayment, OrderPosition, OrderRefund, OutgoingMail, QuestionAnswer,
 )
 from pretix.base.services.invoices import invoice_pdf_task
 from pretix.base.signals import register_data_shredders
@@ -153,19 +153,47 @@ class BaseDataShredder:
 
 
 def shred_log_fields(logentry, banlist=None, whitelist=None):
+    def _shred(d, banlist, whitelist):
+        shredded = False
+        if whitelist:
+            for k, v in d.items():
+                if k not in whitelist:
+                    if isinstance(d[k], list):
+                        newlist = []
+                        for i in d[k]:
+                            if isinstance(i, dict):
+                                _shred(i, None, [None])
+                            else:
+                                i = '█'
+                            newlist.append(i)
+                        d[k] = newlist
+                    elif isinstance(d[k], dict):
+                        _shred(d[k], None, [None])
+                    elif d[k]:
+                        d[k] = '█'
+                    shredded = True
+        elif banlist:
+            for k in banlist:
+                if k in d:
+                    if isinstance(d[k], list):
+                        newlist = []
+                        for i in d[k]:
+                            if isinstance(i, dict):
+                                _shred(i, None, [None])
+                            else:
+                                i = '█'
+                            newlist.append(i)
+                        d[k] = newlist
+                    elif isinstance(d[k], dict):
+                        _shred(d[k], None, [None])
+                    elif d[k]:
+                        d[k] = '█'
+                    shredded = True
+        return shredded
+
     d = logentry.parsed_data
     initial_data = copy.copy(d)
-    shredded = False
-    if whitelist:
-        for k, v in d.items():
-            if k not in whitelist:
-                d[k] = '█'
-                shredded = True
-    elif banlist:
-        for f in banlist:
-            if f in d:
-                d[f] = '█'
-                shredded = True
+    shredded = _shred(d, banlist, whitelist)
     if d != initial_data:
         logentry.data = json.dumps(d)
         logentry.shredded = logentry.shredded or shredded
@@ -259,9 +287,9 @@ class PhoneNumberShredder(BaseDataShredder):
 
 
 class EmailAddressShredder(BaseDataShredder):
-    verbose_name = _('E-mails')
+    verbose_name = _('Emails')
     identifier = 'order_emails'
-    description = _('This will remove all e-mail addresses from orders and attendees, as well as logged email '
+    description = _('This will remove all email addresses from orders and attendees, as well as logged email '
                     'contents. This will also remove the association to customer accounts.')
 
     def generate_files(self) -> List[Tuple[str, str, str]]:
@@ -301,6 +329,10 @@ class EmailAddressShredder(BaseDataShredder):
             sleep_time=2,
         )
 
+        slow_delete(
+            OutgoingMail.objects.filter(event=self.event)
+        )
+
         for o in _progress_helper(qs_orders, progress_callback, qs_op_cnt, total):
             changed = bool(o.email) or bool(o.customer)
             o.email = None
@@ -331,7 +363,7 @@ class EmailAddressShredder(BaseDataShredder):
                     le.save(update_fields=['data', 'shredded'])
             else:
                 shred_log_fields(le, banlist=[
-                    'recipient', 'message', 'subject', 'full_mail', 'old_email', 'new_email'
+                    'recipient', 'message', 'subject', 'full_mail', 'old_email', 'new_email', 'bcc', 'cc',
                 ])
 
 
@@ -342,7 +374,7 @@ class WaitingListShredder(BaseDataShredder):
 
     def generate_files(self) -> List[Tuple[str, str, str]]:
         yield 'waiting-list.json', 'application/json', json.dumps([
-            WaitingListSerializer(wle).data
+            WaitingListSerializer(wle, context={"event": self.event}).data
             for wle in self.event.waitinglistentries.all()
         ], indent=4)
 
@@ -496,8 +528,11 @@ class InvoiceAddressShredder(BaseDataShredder):
             d = le.parsed_data
             if 'invoice_data' in d and not isinstance(d['invoice_data'], bool):
                 for field in d['invoice_data']:
-                    if d['invoice_data'][field]:
-                        d['invoice_data'][field] = '█'
+                    if d['invoice_data'][field] and field != "transmission_type":
+                        if field == "transmission_info":
+                            d['invoice_data'][field] = {"_shredded": True}
+                        else:
+                            d['invoice_data'][field] = '█'
                 le.data = json.dumps(d)
                 le.shredded = True
                 le.save(update_fields=['data', 'shredded'])
@@ -563,17 +598,30 @@ class InvoiceShredder(BaseDataShredder):
     def shred_data(self, progress_callback=None):
         qs_i = self.event.invoices.filter(shredded=False)
         total = qs_i.count()
+        ignore_fields = (
+            'prefix', 'invoice_no', 'full_invoice_no', 'invoice_from', 'invoice_from_name', 'invoice_from_zipcode',
+            'invoice_from_city', 'invoice_from_state', 'invoice_from_country', 'invoice_from_tax_id',
+            'invoice_from_vat_id', 'locale', 'payment_provider_stamp', 'footer_text', 'foreign_currency_display',
+            'foreign_currency_source', 'transmission_type', 'transmission_provider', 'transmission_status',
+        )
 
         for i in _progress_helper(qs_i, progress_callback, 0, total):
             if i.file:
                 i.file.delete()
-                i.shredded = True
-                i.introductory_text = "█"
-                i.additional_text = "█"
-                i.invoice_to = "█"
-                i.payment_provider_text = "█"
-                i.save()
-                i.lines.update(description="█")
+            i.shredded = True
+
+            for f in Invoice._meta.fields:
+                if f.name in ignore_fields:
+                    continue
+                val = getattr(i, f.name, None)
+                if val and isinstance(val, str):
+                    setattr(i, f.name, "█")
+                elif val and isinstance(val, list):  # jsonfield
+                    setattr(i, f.name, [])
+                elif val and isinstance(val, dict):  # jsonfield
+                    setattr(i, f.name, {"_shredded": True})
+            i.save()
+            i.lines.update(description="█", attendee_name="█")
 
 
 class CachedTicketShredder(BaseDataShredder):

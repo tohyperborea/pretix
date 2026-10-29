@@ -22,24 +22,59 @@ id                                    integer                    Internal ID of 
 name                                  string                     Team name
 all_events                            boolean                    Whether this team has access to all events
 limit_events                          list                       List of event slugs this team has access to
-can_create_events                     boolean
-can_change_teams                      boolean
-can_change_organizer_settings         boolean
-can_manage_customers                  boolean
-can_manage_reusable_media             boolean
-can_manage_gift_cards                 boolean
-can_change_event_settings             boolean
-can_change_items                      boolean
-can_view_orders                       boolean
-can_change_orders                     boolean
-can_view_vouchers                     boolean
-can_change_vouchers                   boolean
-can_checkin_orders                    boolean
+require_2fa                           boolean                    Whether members of this team are required to use
+                                                                 two-factor authentication
+all_event_permissions                 bool                       Whether members of this team are granted all event-level
+                                                                 permissions, including future additions
+limit_event_permissions               list of strings            The event-level permissions team members are granted
+all_organizer_permissions             bool                       Whether members of this team are granted all organizer-level
+                                                                 permissions, including future additions
+all_organizer_permissions             list of strings            The organizer-level permissions team members are granted
+can_create_events                     boolean                    **DEPRECATED**. Legacy interface, use ``limit_organizer_permissions``.
+can_change_teams                      boolean                    **DEPRECATED**. Legacy interface, use ``limit_organizer_permissions``.
+can_change_organizer_settings         boolean                    **DEPRECATED**. Legacy interface, use ``limit_organizer_permissions``.
+can_manage_customers                  boolean                    **DEPRECATED**. Legacy interface, use ``limit_organizer_permissions``.
+can_manage_reusable_media             boolean                    **DEPRECATED**. Legacy interface, use ``limit_organizer_permissions``.
+can_manage_gift_cards                 boolean                    **DEPRECATED**. Legacy interface, use ``limit_organizer_permissions``.
+can_change_event_settings             boolean                    **DEPRECATED**. Legacy interface, use ``limit_event_permissions``.
+can_change_items                      boolean                    **DEPRECATED**. Legacy interface, use ``limit_event_permissions``.
+can_view_orders                       boolean                    **DEPRECATED**. Legacy interface, use ``limit_event_permissions``.
+can_change_orders                     boolean                    **DEPRECATED**. Legacy interface, use ``limit_event_permissions``.
+can_view_vouchers                     boolean                    **DEPRECATED**. Legacy interface, use ``limit_event_permissions``.
+can_change_vouchers                   boolean                    **DEPRECATED**. Legacy interface, use ``limit_event_permissions``.
+can_checkin_orders                    boolean                    **DEPRECATED**. Legacy interface, use ``limit_event_permissions``.
 ===================================== ========================== =======================================================
 
-.. versionchanged:: 4.18
+Possible values for ``limit_organizer_permissions`` defined in the core pretix system (plugins might add more)::
 
-    The ``can_manage_reusable_media`` permission has been added.
+    organizer.events:create
+    organizer.settings.general:write
+    organizer.teams:write
+    organizer.seatingplans:write
+    organizer.giftcards:read
+    organizer.giftcards:write
+    organizer.customers:read
+    organizer.customers:write
+    organizer.reusablemedia:read
+    organizer.reusablemedia:write
+    organizer.devices:read
+    organizer.devices:write
+    organizer.outgoingmails:read
+
+Possible values for ``limit_event_permissions`` defined in the core pretix system (plugins might add more)::
+
+    event.settings.general:write
+    event.settings.payment:write
+    event.settings.tax:write
+    event.settings.invoicing:write
+    event.subevents:write
+    event.items:write
+    event.orders:read
+    event.orders:write
+    event.orders:checkin
+    event.vouchers:read
+    event.vouchers:write
+    event:cancel
 
 Team member resource
 --------------------
@@ -122,6 +157,11 @@ Team endpoints
             "name": "Admin team",
             "all_events": true,
             "limit_events": [],
+            "require_2fa": true,
+            "all_event_permissions": true,
+            "limit_event_permissions": [],
+            "all_organizer_permissions": true,
+            "limit_organizer_permissions": [],
             "can_create_events": true,
             ...
           }
@@ -159,6 +199,11 @@ Team endpoints
         "name": "Admin team",
         "all_events": true,
         "limit_events": [],
+        "require_2fa": true,
+        "all_event_permissions": true,
+        "limit_event_permissions": [],
+        "all_organizer_permissions": true,
+        "limit_organizer_permissions": [],
         "can_create_events": true,
         ...
       }
@@ -186,7 +231,11 @@ Team endpoints
         "name": "Admin team",
         "all_events": true,
         "limit_events": [],
-        "can_create_events": true,
+        "require_2fa": true,
+        "all_event_permissions": true,
+        "limit_event_permissions": [],
+        "all_organizer_permissions": true,
+        "limit_organizer_permissions": [],
         ...
       }
 
@@ -203,6 +252,11 @@ Team endpoints
         "name": "Admin team",
         "all_events": true,
         "limit_events": [],
+        "require_2fa": true,
+        "all_event_permissions": true,
+        "limit_event_permissions": [],
+        "all_organizer_permissions": true,
+        "limit_organizer_permissions": [],
         "can_create_events": true,
         ...
       }
@@ -230,7 +284,8 @@ Team endpoints
       Content-Length: 94
 
       {
-        "can_create_events": true
+        "all_organizer_permissions": false,
+        "limit_organizer_permissions": ["organizer.events:create"]
       }
 
    **Example response**:
@@ -246,6 +301,11 @@ Team endpoints
         "name": "Admin team",
         "all_events": true,
         "limit_events": [],
+        "require_2fa": true,
+        "all_event_permissions": true,
+        "limit_event_permissions": [],
+        "all_organizer_permissions": false,
+        "limit_organizer_permissions": ["organizer.events:create"],
         "can_create_events": true,
         ...
       }

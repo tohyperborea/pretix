@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -46,7 +46,7 @@ class BankTransactionSerializer(serializers.ModelSerializer):
     class Meta:
         model = BankTransaction
         fields = ('state', 'message', 'checksum', 'payer', 'reference', 'amount', 'date', 'order',
-                  'comment', 'iban', 'bic', 'currency')
+                  'comment', 'iban', 'bic', 'currency', 'external_id')
 
 
 class BankImportJobSerializer(serializers.ModelSerializer):
@@ -97,7 +97,6 @@ class BankImportJobViewSet(CreateModelMixin, viewsets.ReadOnlyModelViewSet):
     queryset = BankImportJob.objects.none()
     filter_backends = (DjangoFilterBackend,)
     filterset_class = JobFilter
-    permission = 'can_view_orders'
 
     def get_queryset(self):
         return BankImportJob.objects.filter(organizer=self.request.organizer)
@@ -105,9 +104,30 @@ class BankImportJobViewSet(CreateModelMixin, viewsets.ReadOnlyModelViewSet):
     def perform_create(self, serializer):
         return serializer.save()
 
+    def retrieve(self, request, *args, **kwargs):
+        perm_holder = (request.auth if isinstance(request.auth, (Device, TeamAPIToken)) else request.user)
+        has_any_event_perm = perm_holder.get_events_with_permission(
+            "event.orders:read", request=request
+        ).filter(organizer=request.organizer).exists()
+        if not has_any_event_perm:
+            raise PermissionDenied('Invalid set of permissions')
+        return super().retrieve(request, *args, **kwargs)
+
+    def list(self, request, *args, **kwargs):
+        perm_holder = (request.auth if isinstance(request.auth, (Device, TeamAPIToken)) else request.user)
+        has_any_event_perm = perm_holder.get_events_with_permission(
+            "event.orders:read", request=request
+        ).filter(organizer=request.organizer).exists()
+        if not has_any_event_perm:
+            raise PermissionDenied('Invalid set of permissions')
+        return super().list(request, *args, **kwargs)
+
     def create(self, request, *args, **kwargs):
         perm_holder = (request.auth if isinstance(request.auth, (Device, TeamAPIToken)) else request.user)
-        if not perm_holder.has_organizer_permission(request.organizer, 'can_change_orders'):
+        has_any_event_perm = perm_holder.get_events_with_permission(
+            "event.orders:write", request=request
+        ).filter(organizer=request.organizer).exists()
+        if not has_any_event_perm:
             raise PermissionDenied('Invalid set of permissions')
 
         if BankImportJob.objects.filter(Q(organizer=request.organizer)).filter(

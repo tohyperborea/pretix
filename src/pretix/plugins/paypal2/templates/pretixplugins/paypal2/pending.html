@@ -1,9 +1,19 @@
 {% load i18n %}
 
 {% if retry %}
-    <p>{% blocktrans trimmed %}
-        Our attempt to execute your Payment via PayPal has failed. Please try again or contact us.
-    {% endblocktrans %}</p>
+    {% if is_known_issue %}
+        <div class="alert alert-info">{% blocktrans trimmed %}
+            Your payment has failed due to a known issue within PayPal. Please try again, there is a high chance of the
+            payment succeeding on a second or third attempt. You can also try other payment methods, if available.
+        {% endblocktrans %}</div>
+{% elif stuck_in_compliance %}
+        <p>{% blocktrans trimmed %}
+            Your payment is being processed by PayPal. This takes longer than usual. You can wait until PayPal
+            acknowledges the payment or you can try paying again with this or another payment method.
+            This might result in you being charged twice in case PayPal allows your initial payment attempt.
+            Please contact us to resolve this case.
+        {% endblocktrans %}</p>
+    {% endif %}
 {% else %}
     <p>{% blocktrans trimmed %}
         We're waiting for an answer from PayPal regarding your payment. Please contact us, if this

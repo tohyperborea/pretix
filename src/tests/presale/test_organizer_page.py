@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -47,6 +47,17 @@ def test_organizer_page_shown(env, client):
 
 
 @pytest.mark.django_db
+def test_organizer_footer_contact_url_overrides_mailto(env, client):
+    env[0].settings.contact_mail = 'orga@example.org'
+    env[0].settings.contact_url = 'https://example.org/contact'
+
+    r = client.get('/mrmcd/')
+
+    assert '/redirect/?url=https%3A//example.org/contact' in r.rendered_content
+    assert 'mailto:orga@example.org' not in r.rendered_content
+
+
+@pytest.mark.django_db
 def test_public_event_on_page(env, client):
     env[1].is_public = True
     env[1].save()
@@ -71,6 +82,21 @@ def test_attributes_on_page(env, client):
     propval.delete()
     r = client.get('/mrmcd/?attr[loc]=HH')
     assert 'MRMCD2015' in r.rendered_content
+
+    with scopes_disabled():
+        series = env[0].events.create(
+            name="Workshop Series",
+            has_subevents=True,
+            live=True,
+            date_from=now() + timedelta(days=3)
+        )
+        se = series.subevents.create(name="Future", active=True, date_from=now() + timedelta(days=3))
+        se.meta_values.create(property=prop, value="B")
+
+    r = client.get('/mrmcd/?attr[loc]=B')
+    assert 'Workshop Series' in r.rendered_content
+    r = client.get('/mrmcd/?attr[loc]=MA')
+    assert 'Workshop Series' not in r.rendered_content
 
     prop.filter_allowed = False
     prop.save()

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -40,6 +40,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+import pycountry
 from django import forms
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -56,6 +57,7 @@ from django.utils.translation import (
 from django_countries.fields import Country
 from hierarkey.models import GlobalSettingsBase, Hierarkey
 from i18nfield.forms import I18nFormField, I18nTextarea, I18nTextInput
+from i18nfield.rest_framework import I18nField
 from i18nfield.strings import LazyI18nString
 from phonenumbers import PhoneNumber, parse
 from rest_framework import serializers
@@ -63,17 +65,26 @@ from rest_framework import serializers
 from pretix.api.serializers.fields import (
     ListMultipleChoiceField, UploadedFileField,
 )
-from pretix.api.serializers.i18n import I18nField, I18nURLField
-from pretix.base.forms import I18nURLFormField
-from pretix.base.models.tax import VAT_ID_COUNTRIES, TaxRule
+from pretix.api.serializers.i18n import I18nURLField
+from pretix.base.forms import I18nMarkdownTextarea, I18nURLFormField
+from pretix.base.models.tax import VAT_ID_COUNTRIES
 from pretix.base.reldate import (
     RelativeDateField, RelativeDateTimeField, RelativeDateWrapper,
     SerializerRelativeDateField, SerializerRelativeDateTimeField,
 )
+from pretix.base.validators import multimail_validate
 from pretix.control.forms import (
     ExtFileField, FontSelect, MultipleLanguagesWidget, SingleLanguageWidget,
 )
-from pretix.helpers.countries import CachedCountries
+from pretix.helpers.countries import CachedCountries, pycountry_add
+
+ROUNDING_MODES = (
+    ('line', _('Compute taxes for every line individually')),
+    ('sum_by_net', _('Compute taxes based on net total')),
+    ('sum_by_net_only_business', _('For business customers, compute taxes based on net total. For individuals, use line-based rounding')),
+    ('sum_by_net_keep_gross', _('Compute taxes based on net total with stable gross prices')),
+    # We could also have sum_by_gross, but we're not aware of any use-cases for it
+)
 
 
 def country_choice_kwargs():
@@ -89,7 +100,7 @@ def primary_font_kwargs():
 
     choices = [('Open Sans', 'Open Sans')]
     choices += sorted([
-        (a, {"title": a, "data": v}) for a, v in get_fonts().items() if not v.get('pdf_only', False)
+        (a, FontSelect.FontOption(title=a, data=v)) for a, v in get_fonts(pdf_support_required=False).items()
     ], key=lambda a: a[0])
     return {
         'choices': choices,
@@ -112,7 +123,7 @@ def restricted_plugin_kwargs():
     from pretix.base.plugins import get_all_plugins
 
     plugins_available = [
-        (p.module, p.name) for p in get_all_plugins(None)
+        (p.module, p.name) for p in get_all_plugins()
         if (
             not p.name.startswith('.') and
             getattr(p, 'restricted', False) and
@@ -170,6 +181,19 @@ DEFAULTS = {
             widget=forms.CheckboxInput(attrs={'data-display-dependency': '#id_settings-customer_accounts'}),
         )
     },
+    'customer_accounts_require_login_for_order_access': {
+        'default': 'False',
+        'type': bool,
+        'form_class': forms.BooleanField,
+        'serializer_class': serializers.BooleanField,
+        'form_kwargs': dict(
+            label=_("Require login to access order confirmation pages"),
+            help_text=_("If enabled, users who were logged in at the time of purchase must also log in to access their order information. "
+                        "If a customer account is created while placing an order, the restriction only becomes active after the customer "
+                        "account is activated."),
+            widget=forms.CheckboxInput(attrs={'data-display-dependency': '#id_settings-customer_accounts'}),
+        )
+    },
     'customer_accounts_link_by_email': {
         'default': 'False',
         'type': bool,
@@ -187,10 +211,23 @@ DEFAULTS = {
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
         'form_kwargs': dict(
-            label=_("Activate re-usable media"),
-            help_text=_("The re-usable media feature allows you to connect tickets and gift cards with physical media "
-                        "such as wristbands or chip cards that may be re-used for different tickets or gift cards "
+            label=_("Activate reusable media"),
+            help_text=_("The reusable media feature allows you to connect tickets and gift cards with physical media "
+                        "such as wristbands or chip cards that may be reused for different tickets or gift cards "
                         "later.")
+        )
+    },
+    'reusable_media_usage_enforced': {
+        'default': 'False',
+        'type': bool,
+        'form_class': forms.BooleanField,
+        'serializer_class': serializers.BooleanField,
+        'form_kwargs': dict(
+            label=_("Enforce the usage of issued reusable media for check-in"),
+            help_text=_("If enabled, a ticket barcode will not be accepted anymore, if a reusable medium has been "
+                        "created and linked to a ticket. Keeping this option turned off will treat the reusable "
+                        "medium and ticket as equals."),
+            widget=forms.CheckboxInput(attrs={'data-display-dependency': '#id_settings-reusable_media_active'}),
         )
     },
     'reusable_media_type_barcode': {
@@ -306,9 +343,11 @@ DEFAULTS = {
         'serializer_class': serializers.IntegerField,
         'serializer_kwargs': dict(
             min_value=1,
+            max_value=settings.PRETIX_MAX_ORDER_SIZE,
         ),
         'form_kwargs': dict(
             min_value=1,
+            max_value=settings.PRETIX_MAX_ORDER_SIZE,
             required=True,
             label=_("Maximum number of items per order"),
             help_text=_("Add-on products will not be counted.")
@@ -319,8 +358,9 @@ DEFAULTS = {
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.tax:write',
         'form_kwargs': dict(
-            label=_("Show net prices instead of gross prices in the product list (not recommended!)"),
+            label=_("Show net prices instead of gross prices in the product list"),
             help_text=_("Independent of your choice, the cart will show gross prices as this is the price that needs to be "
                         "paid."),
 
@@ -461,20 +501,42 @@ DEFAULTS = {
             widget=forms.CheckboxInput(attrs={'data-checkbox-dependency': '#id_settings-order_phone_asked'}),
         )
     },
+    'tax_rounding': {
+        'default': 'line',
+        'type': str,
+        'form_class': forms.ChoiceField,
+        'serializer_class': serializers.ChoiceField,
+        'write_permission': 'event.settings.tax:write',
+        'form_kwargs': dict(
+            label=_("Rounding of taxes"),
+            widget=forms.RadioSelect,
+            choices=ROUNDING_MODES,
+            help_text=_(
+                "Note that if you transfer your sales data from pretix to an external system for tax reporting, you "
+                "need to make sure to account for possible rounding differences if your external system rounds "
+                "differently than pretix."
+            )
+        ),
+        'serializer_kwargs': dict(
+            choices=ROUNDING_MODES,
+        ),
+    },
     'invoice_address_asked': {
         'default': 'True',
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Ask for invoice address"),
-        )
+        ),
     },
     'invoice_address_not_asked_free': {
         'default': 'False',
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_('Do not ask for invoice address if an order is free'),
         )
@@ -484,6 +546,7 @@ DEFAULTS = {
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Require customer name"),
         )
@@ -493,6 +556,7 @@ DEFAULTS = {
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Show attendee names on invoices"),
         )
@@ -502,6 +566,7 @@ DEFAULTS = {
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Show event location on invoices"),
             help_text=_("The event location will be shown below the list of products if it is the same for all "
@@ -513,6 +578,7 @@ DEFAULTS = {
         'type': str,
         'form_class': forms.ChoiceField,
         'serializer_class': serializers.ChoiceField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Show exchange rates"),
             widget=forms.RadioSelect,
@@ -521,6 +587,7 @@ DEFAULTS = {
                 ('True', _('Based on European Central Bank daily rates, whenever the invoice recipient is in an EU '
                            'country that uses a different currency.')),
                 ('CZK', _('Based on Czech National Bank daily rates, whenever the invoice amount is not in CZK.')),
+                ('PLN', _('Based on National Bank of Poland daily rates, whenever the invoice amount is not in PLN.')),
             ),
         ),
         'serializer_kwargs': dict(
@@ -529,6 +596,7 @@ DEFAULTS = {
                 ('True', _('Based on European Central Bank daily rates, whenever the invoice recipient is in an EU '
                            'country that uses a different currency.')),
                 ('CZK', _('Based on Czech National Bank daily rates, whenever the invoice amount is not in CZK.')),
+                ('PLN', _('Based on National Bank of Poland daily rates, whenever the invoice amount is not in PLN.')),
             ),
         ),
     },
@@ -536,6 +604,7 @@ DEFAULTS = {
         'default': 'False',
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.invoicing:write',
         'type': bool,
         'form_kwargs': dict(
             label=_("Require invoice address"),
@@ -546,9 +615,10 @@ DEFAULTS = {
         'default': 'False',
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.invoicing:write',
         'type': bool,
         'form_kwargs': dict(
-            label=_("Require a business addresses"),
+            label=_("Require a business address"),
             help_text=_('This will require users to enter a company name.'),
             widget=forms.CheckboxInput(attrs={'data-checkbox-dependency': '#id_invoice_address_required'}),
         )
@@ -558,6 +628,7 @@ DEFAULTS = {
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Ask for beneficiary"),
             widget=forms.CheckboxInput(attrs={'data-checkbox-dependency': '#id_invoice_address_asked'}),
@@ -568,8 +639,9 @@ DEFAULTS = {
         'type': LazyI18nString,
         'form_class': I18nFormField,
         'serializer_class': I18nField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
-            label=_("Custom recipient field"),
+            label=_("Custom recipient field label"),
             widget=I18nTextInput,
             help_text=_("If you want to add a custom text field, e.g. for a country-specific registration number, to "
                         "your invoice address form, please fill in the label here. This label will both be used for "
@@ -578,19 +650,61 @@ DEFAULTS = {
                         "The field will not be required.")
         )
     },
+    'invoice_address_custom_field_helptext': {
+        'default': '',
+        'type': LazyI18nString,
+        'form_class': I18nFormField,
+        'serializer_class': I18nField,
+        'write_permission': 'event.settings.invoicing:write',
+        'form_kwargs': dict(
+            label=_("Custom recipient field help text"),
+            widget=I18nTextInput,
+            help_text=_("If you use the custom recipient field, you can specify a help text which will be displayed "
+                        "underneath the field. It will not be displayed on the invoice.")
+        )
+    },
     'invoice_address_vatid': {
         'default': 'False',
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Ask for VAT ID"),
             help_text=format_lazy(
-                _("Only works if an invoice address is asked for. VAT ID is never required and only requested from "
-                  "business customers in the following countries: {countries}"),
+                _("Only works if an invoice address is asked for. VAT ID is only requested from business customers "
+                  "in the following countries: {countries}."),
                 countries=lazy(lambda *args: ', '.join(sorted(gettext(Country(cc).name) for cc in VAT_ID_COUNTRIES)), str)()
             ),
             widget=forms.CheckboxInput(attrs={'data-checkbox-dependency': '#id_invoice_address_asked'}),
+        )
+    },
+    'invoice_address_vatid_required_countries': {
+        'default': ['IT', 'GR'],
+        'type': list,
+        'form_class': forms.MultipleChoiceField,
+        'serializer_class': serializers.MultipleChoiceField,
+        'write_permission': 'event.settings.invoicing:write',
+        'serializer_kwargs': dict(
+            choices=lazy(
+                lambda *args: sorted([(cc, gettext(Country(cc).name)) for cc in VAT_ID_COUNTRIES], key=lambda c: c[1]),
+                list
+            )(),
+        ),
+        'form_kwargs': dict(
+            label=_("Require VAT ID in"),
+            choices=lazy(
+                lambda *args: sorted([(cc, gettext(Country(cc).name)) for cc in VAT_ID_COUNTRIES], key=lambda c: c[1]),
+                list
+            )(),
+            help_text=format_lazy(
+                _("VAT ID is optional by default, because not all businesses are assigned a VAT ID in all countries. "
+                  "VAT ID will be required for all business addresses in the selected countries."),
+            ),
+            widget=forms.CheckboxSelectMultiple(attrs={
+                "class": "scrolling-multiple-choice",
+                'data-display-dependency': '#id_invoice_address_vatid'
+            }),
         )
     },
     'invoice_address_explanation_text': {
@@ -598,9 +712,10 @@ DEFAULTS = {
         'type': LazyI18nString,
         'form_class': I18nFormField,
         'serializer_class': I18nField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Invoice address explanation"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '2'}},
             help_text=_("This text will be shown above the invoice address form during checkout.")
         )
@@ -610,6 +725,7 @@ DEFAULTS = {
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Show paid amount on partially paid invoices"),
             help_text=_("If an invoice has already been paid partially, this option will add the paid and pending "
@@ -621,6 +737,7 @@ DEFAULTS = {
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Show free products on invoices"),
             help_text=_("Note that invoices will never be generated for orders that contain only free "
@@ -632,6 +749,7 @@ DEFAULTS = {
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Show expiration date of order"),
             help_text=_("The expiration date will not be shown if the invoice is generated after the order is paid."),
@@ -643,10 +761,12 @@ DEFAULTS = {
         'form_class': forms.IntegerField,
         'serializer_class': serializers.IntegerField,
         'serializer_kwargs': dict(),
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Minimum length of invoice number after prefix"),
             help_text=_("The part of your invoice number after your prefix will be filled up with leading zeros up to this length, e.g. INV-001 or INV-00001."),
             max_value=12,
+            min_value=1,
             required=True,
         )
     },
@@ -655,6 +775,7 @@ DEFAULTS = {
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Generate invoices with consecutive numbers"),
             help_text=_("If deactivated, the order code will be used in the invoice number."),
@@ -665,6 +786,7 @@ DEFAULTS = {
         'type': str,
         'form_class': forms.CharField,
         'serializer_class': serializers.CharField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Invoice number prefix"),
             help_text=_("This will be prepended to invoice numbers. If you leave this field empty, your event slug will "
@@ -682,8 +804,9 @@ DEFAULTS = {
                     message=lazy(lambda *args: _('Please only use the characters {allowed} in this field.').format(
                         allowed='A-Z, a-z, 0-9, -./:#'
                     ), str)()
-                )
+                ),
             ],
+            max_length=155,
         )
     },
     'invoice_numbers_prefix_cancellations': {
@@ -691,6 +814,7 @@ DEFAULTS = {
         'type': str,
         'form_class': forms.CharField,
         'serializer_class': serializers.CharField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Invoice number prefix for cancellations"),
             help_text=_("This will be prepended to invoice numbers of cancellations. If you leave this field empty, "
@@ -704,8 +828,9 @@ DEFAULTS = {
                     message=lazy(lambda *args: _('Please only use the characters {allowed} in this field.').format(
                         allowed='A-Z, a-z, 0-9, -./:#'
                     ), str)()
-                )
+                ),
             ],
+            max_length=155,
         )
     },
     'invoice_renderer_highlight_order_code': {
@@ -713,6 +838,7 @@ DEFAULTS = {
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Highlight order code to make it stand out visibly"),
             help_text=_("Only respected by some invoice renderers."),
@@ -724,6 +850,7 @@ DEFAULTS = {
         'form_class': forms.ChoiceField,
         'serializer_class': serializers.ChoiceField,
         'serializer_kwargs': lambda: dict(**invoice_font_kwargs()),
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': lambda: dict(
             label=_('Font'),
             help_text=_("Only respected by some invoice renderers."),
@@ -734,6 +861,7 @@ DEFAULTS = {
     'invoice_renderer': {
         'default': 'classic',  # default for new events is 'modern1'
         'type': str,
+        'write_permission': 'event.settings.invoicing:write',
     },
     'ticket_secret_generator': {
         'default': 'random',
@@ -799,10 +927,27 @@ DEFAULTS = {
         'serializer_class': I18nField,
         'form_kwargs': dict(
             label=_("End of presale text"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '2'}},
             help_text=_("This text will be shown above the ticket shop once the designated sales timeframe for this event "
                         "is over. You can use it to describe other options to get a ticket, such as a box office.")
+        )
+    },
+    'event_list_empty_text': {
+        'default': LazyI18nString.from_gettext(
+            gettext_noop('No dates match your criteria.'),
+        ),
+        'type': LazyI18nString,
+        'form_class': I18nFormField,
+        'serializer_class': I18nField,
+        'form_kwargs': dict(
+            label=pgettext_lazy("subevents", "Text for empty date results"),
+            widget=I18nMarkdownTextarea,
+            widget_kwargs={'attrs': {'rows': '2'}},
+            help_text=pgettext_lazy("subevents", "This text will be shown if the calendar or list of dates is empty, "
+                                                 "e.g. because a month does not contain any dates or a filter chosen by the user does "
+                                                 "not find any results. You can use this to advertise ways to get in touch with you to "
+                                                 "arrange further dates. We do not recommend more than one or two sentences.")
         )
     },
     'payment_explanation': {
@@ -810,8 +955,9 @@ DEFAULTS = {
         'type': LazyI18nString,
         'form_class': I18nFormField,
         'serializer_class': I18nField,
+        'write_permission': 'event.settings.payment:write',
         'form_kwargs': dict(
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {
                 'rows': 3,
             }},
@@ -831,6 +977,7 @@ DEFAULTS = {
                 ('minutes', _("in minutes"))
             ),
         ),
+        'write_permission': 'event.settings.payment:write',
         'form_kwargs': dict(
             label=_("Set payment term"),
             widget=forms.RadioSelect,
@@ -848,12 +995,13 @@ DEFAULTS = {
         'type': int,
         'form_class': forms.IntegerField,
         'serializer_class': serializers.IntegerField,
-        'form_kwargs': dict(
+        'write_permission': 'event.settings.payment:write',
+        'form_kwargs': lambda suffix="", parent=0: dict(
             label=_('Payment term in days'),
             widget=forms.NumberInput(
                 attrs={
-                    'data-display-dependency': '#id_payment_term_mode_0',
-                    'data-required-if': '#id_payment_term_mode_0'
+                    'data-display-dependency': f'#id_payment_term_mode{suffix}_{parent}',
+                    'data-required-if': f'#id_payment_term_mode{suffix}_{parent}'
                 },
             ),
             help_text=_("The number of days after placing an order the user has to pay to preserve their reservation. If "
@@ -873,6 +1021,7 @@ DEFAULTS = {
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.payment:write',
         'form_kwargs': dict(
             label=_('Only end payment terms on weekdays'),
             help_text=_("If this is activated and the payment term of any order ends on a Saturday or Sunday, it will be "
@@ -890,7 +1039,8 @@ DEFAULTS = {
         'type': int,
         'form_class': forms.IntegerField,
         'serializer_class': serializers.IntegerField,
-        'form_kwargs': dict(
+        'write_permission': 'event.settings.payment:write',
+        'form_kwargs': lambda suffix="", parent=1: dict(
             label=_('Payment term in minutes'),
             help_text=_("The number of minutes after placing an order the user has to pay to preserve their reservation. "
                         "Only use this if you exclusively offer real-time payment methods. Please note that for technical reasons, "
@@ -899,8 +1049,8 @@ DEFAULTS = {
                         MaxValueValidator(1440)],
             widget=forms.NumberInput(
                 attrs={
-                    'data-display-dependency': '#id_payment_term_mode_1',
-                    'data-required-if': '#id_payment_term_mode_1'
+                    'data-display-dependency': f'#id_payment_term_mode{suffix}_{parent}',
+                    'data-required-if': f'#id_payment_term_mode{suffix}_{parent}'
                 },
             ),
         ),
@@ -914,6 +1064,7 @@ DEFAULTS = {
         'type': RelativeDateWrapper,
         'form_class': RelativeDateField,
         'serializer_class': SerializerRelativeDateField,
+        'write_permission': 'event.settings.payment:write',
         'form_kwargs': dict(
             label=_('Last date of payments'),
             help_text=_("The last date any payments are accepted. This has precedence over the terms "
@@ -926,6 +1077,7 @@ DEFAULTS = {
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.payment:write',
         'form_kwargs': dict(
             label=_('Automatically expire unpaid orders'),
             help_text=_("If checked, all unpaid orders will automatically go from 'pending' to 'expired' "
@@ -938,6 +1090,7 @@ DEFAULTS = {
         'type': int,
         'form_class': forms.IntegerField,
         'serializer_class': serializers.IntegerField,
+        'write_permission': 'event.settings.payment:write',
         'form_kwargs': dict(
             label=_('Expiration delay'),
             help_text=_("The order will only actually expire this many days after the expiration date communicated "
@@ -960,6 +1113,7 @@ DEFAULTS = {
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.payment:write',
         'form_kwargs': dict(
             label=_('Hide "payment pending" state on customer-facing pages'),
             help_text=_("The payment instructions panel will still be shown to the primary customer, but no indication "
@@ -969,10 +1123,13 @@ DEFAULTS = {
     },
     'payment_giftcard__enabled': {
         'default': 'True',
-        'type': bool
+        'type': bool,
+        'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.payment:write',
     },
     'payment_giftcard_public_name': {
         'default': LazyI18nString.from_gettext(gettext_noop('Gift card')),
+        'write_permission': 'event.settings.payment:write',
         'type': LazyI18nString
     },
     'payment_giftcard_public_description': {
@@ -981,10 +1138,12 @@ DEFAULTS = {
             'enough credit to pay for the full order, you will be shown this page again and you can either '
             'redeem another gift card or select a different payment method for the difference.'
         )),
+        'write_permission': 'event.settings.payment:write',
         'type': LazyI18nString
     },
     'payment_resellers__restrict_to_sales_channels': {
         'default': ['resellers'],
+        'write_permission': 'event.settings.payment:write',
         'type': list
     },
     'payment_term_accept_late': {
@@ -992,11 +1151,25 @@ DEFAULTS = {
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.payment:write',
         'form_kwargs': dict(
             label=_('Accept late payments'),
             help_text=_("Accept payments for orders even when they are in 'expired' state as long as enough "
                         "capacity is available. No payments will ever be accepted after the 'Last date of payments' "
                         "configured above."),
+        )
+    },
+    'payment_choice_postpone_allowed_channels': {
+        'default': [],
+        'type': list,
+        'form_class': forms.MultipleChoiceField,
+        'form_kwargs': dict(
+            label=_('Allow postponed payment choice for sales channels'),
+            help_text=_("If postponed payment is allowed on a sales channel, customers can complete their order without "
+                        "selecting a payment method. This is useful whenever orders are not created by the same "
+                        "person who is making the payment."),
+            widget=forms.CheckboxSelectMultiple,
+            choices=[],
         )
     },
     'presale_start_show_date': {
@@ -1010,9 +1183,48 @@ DEFAULTS = {
             widget=forms.CheckboxInput,
         )
     },
-    'tax_rate_default': {
-        'default': None,
-        'type': TaxRule
+    'tax_rule_payment': {
+        'default': 'default',
+        'type': str,
+        'form_class': forms.ChoiceField,
+        'serializer_class': serializers.ChoiceField,
+        'serializer_kwargs': dict(
+            choices=(
+                ('default', _('Use default tax rate')),
+                ('none', _('Charge no taxes')),
+            ),
+        ),
+        'write_permission': 'event.settings.payment:write',
+        'form_kwargs': dict(
+            label=_("Tax handling on payment fees"),
+            widget=forms.RadioSelect,
+            choices=(
+                ('default', _('Use default tax rate')),
+                ('none', _('Charge no taxes')),
+            ),
+        )
+    },
+    'tax_rule_cancellation': {
+        'default': 'none',
+        'type': str,
+        'form_class': forms.ChoiceField,
+        'serializer_class': serializers.ChoiceField,
+        'serializer_kwargs': dict(
+            choices=(
+                ('none', _('Charge no taxes')),
+                ('split', _('Use same taxes as order positions (split according to net prices)')),
+                ('default', _('Use default tax rate')),
+            ),
+        ),
+        'form_kwargs': dict(
+            label=_("Tax handling on cancellation fees"),
+            widget=forms.RadioSelect,
+            choices=(
+                ('none', _('Charge no taxes')),
+                ('split', _('Use same taxes as order positions (split according to net prices)')),
+                ('default', _('Use default tax rate')),
+            ),
+        )
     },
     'invoice_generate': {
         'default': 'False',
@@ -1024,10 +1236,12 @@ DEFAULTS = {
                 ('False', _('Do not generate invoices')),
                 ('admin', _('Only manually in admin panel')),
                 ('user', _('Automatically on user request')),
+                ('user_paid', _('Automatically on user request for paid orders')),
                 ('True', _('Automatically for all created orders')),
                 ('paid', _('Automatically on payment or when required by payment method')),
             ),
         ),
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Generate invoices"),
             widget=forms.RadioSelect,
@@ -1036,9 +1250,40 @@ DEFAULTS = {
                 ('paid', _('Automatically after payment or when required by payment method')),
                 ('True', _('Automatically before payment for all created orders')),
                 ('user', _('Automatically on user request')),
+                ('user_paid', _('Automatically on user request for paid orders')),
                 ('admin', _('Only manually in admin panel')),
             ),
             help_text=_("Invoices will never be automatically generated for free orders.")
+        )
+    },
+    'invoice_period': {
+        'default': 'auto',
+        'type': str,
+        'form_class': forms.ChoiceField,
+        'serializer_class': serializers.ChoiceField,
+        'serializer_kwargs': dict(
+            choices=(
+                ('auto', _('Automatic based on ticket-specific validity, membership validity, event series date, or event date')),
+                ('auto_no_event', _('Automatic, but prefer invoice date over event date')),
+                ('event_date', _('Event date')),
+                ('order_date', _('Order date')),
+                ('invoice_date', _('Invoice date')),
+            ),
+        ),
+        'write_permission': 'event.settings.invoicing:write',
+        'form_kwargs': dict(
+            label=_("Date of service"),
+            widget=forms.RadioSelect,
+            choices=(
+                ('auto', _('Automatic based on ticket-specific validity, membership validity, event series date, or event date')),
+                ('auto_no_event', _('Automatic, but prefer invoice date over event date')),
+                ('event_date', _('Event date')),
+                ('order_date', _('Order date')),
+                ('invoice_date', _('Invoice date')),
+            ),
+            help_text=_("This controls what dates are shown on the invoice, but is especially important for "
+                        "electronic invoicing."),
+            required=True,
         )
     },
     'invoice_reissue_after_modify': {
@@ -1046,6 +1291,7 @@ DEFAULTS = {
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Automatically cancel and reissue invoice on address changes"),
             help_text=_("If customers change their invoice address on an existing order, the invoice will "
@@ -1058,8 +1304,9 @@ DEFAULTS = {
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
-            label=_("Allow to update existing invoices"),
+            label=_("Allow updating existing invoices"),
             help_text=_("By default, invoices can never again be changed once they are issued. In most countries, we "
                         "recommend to leave this option turned off and always issue a new invoice if a change needs "
                         "to be made."),
@@ -1067,13 +1314,24 @@ DEFAULTS = {
     },
     'invoice_generate_sales_channels': {
         'default': json.dumps(['web']),
+        'write_permission': 'event.settings.invoicing:write',
         'type': list
+    },
+    'invoice_generate_only_business': {
+        'default': 'False',
+        'type': bool,
+        'form_class': forms.BooleanField,
+        'serializer_class': serializers.BooleanField,
+        'form_kwargs': dict(
+            label=_("Only issue invoices to business customers"),
+        )
     },
     'invoice_address_from': {
         'default': '',
         'type': str,
         'form_class': forms.CharField,
         'serializer_class': serializers.CharField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Address line"),
             widget=forms.Textarea(attrs={
@@ -1089,7 +1347,9 @@ DEFAULTS = {
         'type': str,
         'form_class': forms.CharField,
         'serializer_class': serializers.CharField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
+            max_length=190,
             label=_("Company name"),
         )
     },
@@ -1098,11 +1358,13 @@ DEFAULTS = {
         'type': str,
         'form_class': forms.CharField,
         'serializer_class': serializers.CharField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             widget=forms.TextInput(attrs={
                 'placeholder': '12345'
             }),
             label=_("ZIP code"),
+            max_length=190,
         )
     },
     'invoice_address_from_city': {
@@ -1110,12 +1372,28 @@ DEFAULTS = {
         'type': str,
         'form_class': forms.CharField,
         'serializer_class': serializers.CharField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             widget=forms.TextInput(attrs={
                 'placeholder': _('Random City')
             }),
             label=_("City"),
+            max_length=190,
         )
+    },
+    'invoice_address_from_state': {
+        'default': '',
+        'type': str,
+        'form_class': forms.ChoiceField,
+        'serializer_class': serializers.ChoiceField,
+        'serializer_kwargs': {
+            'choices': [('', '')],
+        },
+        'write_permission': 'event.settings.invoicing:write',
+        'form_kwargs': {
+            "label": pgettext_lazy('address', 'State'),
+            'choices': [('', '')],
+        },
     },
     'invoice_address_from_country': {
         'default': '',
@@ -1123,16 +1401,25 @@ DEFAULTS = {
         'form_class': forms.ChoiceField,
         'serializer_class': serializers.ChoiceField,
         'serializer_kwargs': lambda: dict(**country_choice_kwargs()),
-        'form_kwargs': lambda: dict(label=_('Country'), **country_choice_kwargs()),
+        'write_permission': 'event.settings.invoicing:write',
+        'form_kwargs': lambda: dict(
+            label=_('Country'),
+            widget=forms.Select(attrs={
+                'data-trigger-address-info': 'on',
+            }),
+            **country_choice_kwargs()
+        ),
     },
     'invoice_address_from_tax_id': {
         'default': '',
         'type': str,
         'form_class': forms.CharField,
         'serializer_class': serializers.CharField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Domestic tax ID"),
-            help_text=_("e.g. tax number in Germany, ABN in Australia, …")
+            help_text=_("e.g. tax number in Germany, ABN in Australia, …"),
+            max_length=190,
         )
     },
     'invoice_address_from_vat_id': {
@@ -1140,8 +1427,10 @@ DEFAULTS = {
         'type': str,
         'form_class': forms.CharField,
         'serializer_class': serializers.CharField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("EU VAT ID"),
+            max_length=190,
         )
     },
     'invoice_introductory_text': {
@@ -1149,6 +1438,7 @@ DEFAULTS = {
         'type': LazyI18nString,
         'form_class': I18nFormField,
         'serializer_class': I18nField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             widget=I18nTextarea,
             widget_kwargs={'attrs': {
@@ -1166,6 +1456,7 @@ DEFAULTS = {
         'type': LazyI18nString,
         'form_class': I18nFormField,
         'serializer_class': I18nField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             widget=I18nTextarea,
             widget_kwargs={'attrs': {
@@ -1183,6 +1474,7 @@ DEFAULTS = {
         'type': LazyI18nString,
         'form_class': I18nFormField,
         'serializer_class': I18nField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             widget=I18nTextarea,
             widget_kwargs={'attrs': {
@@ -1197,6 +1489,7 @@ DEFAULTS = {
     },
     'invoice_language': {
         'default': '__user__',
+        'write_permission': 'event.settings.invoicing:write',
         'type': str
     },
     'invoice_email_attachment': {
@@ -1204,6 +1497,7 @@ DEFAULTS = {
         'type': bool,
         'form_class': forms.BooleanField,
         'serializer_class': serializers.BooleanField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Attach invoices to emails"),
             help_text=_("If invoices are automatically generated for all orders, they will be attached to the order "
@@ -1215,14 +1509,19 @@ DEFAULTS = {
     'invoice_email_organizer': {
         'default': '',
         'type': str,
-        'form_class': forms.EmailField,
-        'serializer_class': serializers.EmailField,
+        'form_class': forms.CharField,
+        'serializer_class': serializers.CharField,
+        'write_permission': 'event.settings.invoicing:write',
         'form_kwargs': dict(
             label=_("Email address to receive a copy of each invoice"),
             help_text=_("Each newly created invoice will be sent to this email address shortly after creation. You can "
                         "use this for an automated import of invoices to your accounting system. The invoice will be "
                         "the only attachment of the email."),
-        )
+            validators=[multimail_validate],
+        ),
+        'serializer_kwargs': dict(
+            validators=[multimail_validate],
+        ),
     },
     'show_items_outside_presale_period': {
         'default': 'True',
@@ -1290,9 +1589,13 @@ DEFAULTS = {
         'serializer_class': serializers.BooleanField,
         'form_class': forms.BooleanField,
         'form_kwargs': dict(
-            label=_("Show event times and dates on the ticket shop"),
-            help_text=_("If disabled, no date or time will be shown on the ticket shop's front page. This settings "
-                        "does however not affect the display in other locations."),
+            label=_("This shop represents an event"),
+            help_text=_(
+                "Uncheck this box if you are only selling something that has no specific date, such as gift cards or a "
+                "ticket that can be used any time. The system will then stop showing the event date in some places like "
+                "the event start page. Note that pretix still is a system built around events and the date may still "
+                "show up in other places."
+            ),
         )
     },
     'show_date_to': {
@@ -1395,6 +1698,19 @@ DEFAULTS = {
             widget=forms.NumberInput(),
         )
     },
+    'waiting_list_auto_disable': {
+        'default': None,
+        'type': RelativeDateWrapper,
+        'form_class': RelativeDateTimeField,
+        'serializer_class': SerializerRelativeDateTimeField,
+        'form_kwargs': dict(
+            label=_("Disable waiting list"),
+            help_text=_("The waiting list will be fully disabled after this date. This means that nobody can add "
+                        "themselves to the waiting list any more, but also that tickets will be available for sale "
+                        "again if quota permits, even if there are still people on the waiting list. Vouchers that "
+                        "have already been sent remain active."),
+        )
+    },
     'waiting_list_names_asked': {
         'default': 'False',
         'type': bool,
@@ -1444,7 +1760,7 @@ DEFAULTS = {
         'serializer_class': I18nField,
         'form_kwargs': dict(
             label=_("Phone number explanation"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '2'}},
             help_text=_("If you ask for a phone number, explain why you do so and what you will use the phone number for.")
         )
@@ -1462,6 +1778,10 @@ DEFAULTS = {
             min_value=1,
             required=True,
             widget=forms.NumberInput(),
+            help_text=_('With an increased limit, a customer may request more than one ticket for a specific product '
+                        'using the same, unique email address. However, regardless of this setting, they will need to '
+                        'fill the waiting list form multiple times if they want more than one ticket, as every entry only '
+                        'grants one single ticket at a time.'),
         )
     },
     'show_checkin_number_user': {
@@ -1606,6 +1926,16 @@ DEFAULTS = {
             help_text=_('If your event series has more than 50 dates in the future, only the month or week calendar can be used.')
         ),
     },
+    'event_list_filters': {
+        'default': 'True',
+        'type': bool,
+        'form_class': forms.BooleanField,
+        'serializer_class': serializers.BooleanField,
+        'form_kwargs': dict(
+            label=_("Show filter options for calendar or list view"),
+            help_text=_("You can set up possible filters as meta properties in your organizer settings.")
+        )
+    },
     'event_list_available_only': {
         'default': 'False',
         'type': bool,
@@ -1613,8 +1943,6 @@ DEFAULTS = {
         'serializer_class': serializers.BooleanField,
         'form_kwargs': dict(
             label=_("Hide all unavailable dates from calendar or list views"),
-            help_text=_("This option currently only affects the calendar of this event series, not the organizer-wide "
-                        "calendar.")
         )
     },
     'event_calendar_future_only': {
@@ -1624,9 +1952,29 @@ DEFAULTS = {
         'serializer_class': serializers.BooleanField,
         'form_kwargs': dict(
             label=_("Hide all past dates from calendar"),
-            help_text=_("This option currently only affects the calendar of this event series, not the organizer-wide "
-                        "calendar.")
         )
+    },
+    'allow_modifications': {
+        'default': 'order',
+        'type': str,
+        'form_class': forms.ChoiceField,
+        'serializer_class': serializers.ChoiceField,
+        'serializer_kwargs': dict(
+            choices=(
+                ('no', _('No modifications after order was submitted')),
+                ('order', _('Only the person who ordered can make changes')),
+                ('attendee', _('Both the attendee and the person who ordered can make changes')),
+            )
+        ),
+        'form_kwargs': dict(
+            label=_("Allow customers to modify their information"),
+            widget=forms.RadioSelect,
+            choices=(
+                ('no', _('No modifications after order was submitted')),
+                ('order', _('Only the person who ordered can make changes')),
+                ('attendee', _('Both the attendee and the person who ordered can make changes')),
+            )
+        ),
     },
     'allow_modifications_after_checkin': {
         'default': 'False',
@@ -1635,6 +1983,8 @@ DEFAULTS = {
         'serializer_class': serializers.BooleanField,
         'form_kwargs': dict(
             label=_("Allow customers to modify their information after they checked in."),
+            help_text=_("By default, no more modifications are possible for an order as soon as one of the tickets "
+                        "in the order has been checked in.")
         )
     },
     'last_order_modification_date': {
@@ -1677,6 +2027,8 @@ DEFAULTS = {
                 ('gte', _('Only allow changes if the resulting price is higher or equal than the previous price.')),
                 ('gt', _('Only allow changes if the resulting price is higher than the previous price.')),
                 ('eq', _('Only allow changes if the resulting price is equal to the previous price.')),
+                ('gte_paid', _('Allow changes regardless of price, as long as no refund is required (i.e. the resulting '
+                               'price is not lower than what has already been paid).')),
                 ('any', _('Allow changes regardless of price, even if this results in a refund.')),
             )
         ),
@@ -1686,6 +2038,8 @@ DEFAULTS = {
                 ('gte', _('Only allow changes if the resulting price is higher or equal than the previous price.')),
                 ('gt', _('Only allow changes if the resulting price is higher than the previous price.')),
                 ('eq', _('Only allow changes if the resulting price is equal to the previous price.')),
+                ('gte_paid', _('Allow changes regardless of price, as long as no refund is required (i.e. the resulting '
+                               'price is not lower than what has already been paid).')),
                 ('any', _('Allow changes regardless of price, even if this results in a refund.')),
             ),
             widget=forms.RadioSelect,
@@ -1847,7 +2201,7 @@ DEFAULTS = {
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_("Voluntary lower refund explanation"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '2'}},
             help_text=_("This text will be shown in between the explanation of how the refunds work and the slider "
                         "which your customers can use to choose the amount they would like to receive. You can use it "
@@ -1922,6 +2276,32 @@ DEFAULTS = {
             label=_("Do not allow cancellations after"),
         )
     },
+    'cancel_terms_paid': {
+        'default': None,
+        'type': LazyI18nString,
+        'serializer_class': I18nField,
+        'form_class': I18nFormField,
+        'form_kwargs': dict(
+            label=_("Terms of cancellation"),
+            widget=I18nMarkdownTextarea,
+            widget_kwargs={'attrs': {'rows': '2'}},
+            help_text=_("This text will be shown when cancellation is allowed for a paid order. Leave empty if you "
+                        "want pretix to automatically generate the terms of cancellation based on your settings.")
+        )
+    },
+    'cancel_terms_unpaid': {
+        'default': None,
+        'type': LazyI18nString,
+        'serializer_class': I18nField,
+        'form_class': I18nFormField,
+        'form_kwargs': dict(
+            label=_("Terms of cancellation"),
+            widget=I18nMarkdownTextarea,
+            widget_kwargs={'attrs': {'rows': '2'}},
+            help_text=_("This text will be shown when cancellation is allowed for an unpaid or free order. Leave empty "
+                        "if you want pretix to automatically generate the terms of cancellation based on your settings.")
+        )
+    },
     'contact_mail': {
         'default': None,
         'type': str,
@@ -1932,16 +2312,29 @@ DEFAULTS = {
             help_text=_("We'll show this publicly to allow attendees to contact you.")
         )
     },
+    'contact_url': {
+        'default': None,
+        'type': LazyI18nString,
+        'form_class': I18nURLFormField,
+        'form_kwargs': dict(
+            label=_("Contact URL"),
+            help_text=_("If you set this, the footer contact link will point here instead of using the email address above. "
+                        "Please note that you still need to add a contact email address that will be shared with all emails you send."),
+            widget=I18nTextInput,
+        ),
+        'serializer_class': I18nURLField,
+    },
     'imprint_url': {
         'default': None,
-        'type': str,
-        'form_class': forms.URLField,
+        'type': LazyI18nString,
+        'form_class': I18nURLFormField,
         'form_kwargs': dict(
             label=_("Imprint URL"),
             help_text=_("This should point e.g. to a part of your website that has your contact details and legal "
                         "information."),
+            widget=I18nTextInput,
         ),
-        'serializer_class': serializers.URLField,
+        'serializer_class': I18nURLField,
     },
     'privacy_url': {
         'default': None,
@@ -1952,6 +2345,38 @@ DEFAULTS = {
             help_text=_("This should point e.g. to a part of your website that explains how you use data gathered in "
                         "your ticket shop."),
             widget=I18nTextInput,
+        ),
+        'serializer_class': I18nURLField,
+    },
+    'accessibility_url': {
+        'default': None,
+        'type': LazyI18nString,
+        'form_class': I18nURLFormField,
+        'form_kwargs': dict(
+            label=_("Accessibility information URL"),
+            help_text=_("This should point e.g. to a part of your website that explains how your ticket shop complies "
+                        "with accessibility regulation."),
+            widget=I18nTextInput,
+        ),
+        'serializer_class': I18nURLField,
+    },
+    'accessibility_title': {
+        'default': LazyI18nString.from_gettext(gettext_noop("Accessibility information")),
+        'type': LazyI18nString,
+        'form_class': I18nFormField,
+        'form_kwargs': dict(
+            label=_("Accessibility information title"),
+            widget=I18nTextInput,
+        ),
+        'serializer_class': I18nURLField,
+    },
+    'accessibility_text': {
+        'default': None,
+        'type': LazyI18nString,
+        'form_class': I18nFormField,
+        'form_kwargs': dict(
+            label=_("Accessibility information text"),
+            widget=I18nMarkdownTextarea,
         ),
         'serializer_class': I18nURLField,
     },
@@ -2395,24 +2820,6 @@ as possible to the next person on the waiting list:
 Best regards,  
 Your {event} team"""))  # noqa: W291
     },
-
-    'mail_text_waiting_list_confirm': {
-        'type': LazyI18nString,
-        'default': LazyI18nString.from_gettext(gettext_noop("""Hello,
-
-This is to confirm that you have been added to the lottery for {event}.
-
-Once the ticket lottery has taken place, those selected will receive an email with a voucher to purchase a ticket.
-
-If you are not selected in the initial lottery, you will be added to a waiting list
-and will receive an email when a ticket is available for you.
-
-Want to stay in the loop about the latest news about SideBurn? Subscribe to our newsletter here: http://eepurl.com/ij4Off
-
-Best regards,
-Your {event} ticketing team"""))
-    },
-
     'mail_subject_order_canceled': {
         'type': LazyI18nString,
         'default': LazyI18nString.from_gettext(gettext_noop("Order canceled: {code}")),
@@ -2537,9 +2944,23 @@ You can change your order details and view the status of your order at
 Best regards,  
 Your {event} team"""))  # noqa: W291
     },
+    'mail_subject_order_invoice': {
+        'type': LazyI18nString,
+        'default': LazyI18nString.from_gettext(gettext_noop("Invoice {invoice_number}")),
+    },
+    'mail_text_order_invoice': {
+        'type': LazyI18nString,
+        'default': LazyI18nString.from_gettext(gettext_noop("""Hello,
+
+please find attached a new invoice for order {code} for {event}. This order has been placed by {order_email}.
+
+Best regards,  
+
+Your {event} team"""))  # noqa: W291
+    },
     'mail_days_download_reminder': {
         'type': int,
-        'default': None
+        'default': None  # when this default is changed, send_download_reminders needs to change
     },
     'mail_send_download_reminder_attendee': {
         'type': bool,
@@ -2643,6 +3064,28 @@ Best regards,
 
 Your {organizer} team"""))  # noqa: W291
     },
+    'mail_subject_customer_security_notice': {
+        'type': LazyI18nString,
+        'default': LazyI18nString.from_gettext(gettext_noop("Changes to your account at {organizer}")),
+    },
+    'mail_text_customer_security_notice': {
+        'type': LazyI18nString,
+        'default': LazyI18nString.from_gettext(gettext_noop("""Hello {name},
+
+the following change has been made to your account at {organizer}:
+
+{message}
+
+You can review and change your account settings here:
+
+{url}
+
+If this change was not performed by you, please contact us immediately.
+
+Best regards,  
+
+Your {organizer} team"""))  # noqa: W291
+    },
     'smtp_use_custom': {
         'default': 'False',
         'type': bool
@@ -2693,7 +3136,7 @@ Your {organizer} team"""))  # noqa: W291
         ),
     },
     'theme_color_success': {
-        'default': '#50a167',
+        'default': '#408252',
         'type': str,
         'form_class': forms.CharField,
         'serializer_class': serializers.CharField,
@@ -2789,22 +3232,6 @@ Your {organizer} team"""))  # noqa: W291
             **primary_font_kwargs()
         ),
     },
-    'presale_css_file': {
-        'default': None,
-        'type': str
-    },
-    'presale_css_checksum': {
-        'default': None,
-        'type': str
-    },
-    'presale_widget_css_file': {
-        'default': None,
-        'type': str
-    },
-    'presale_widget_css_checksum': {
-        'default': None,
-        'type': str
-    },
     'logo_image': {
         'default': None,
         'type': File,
@@ -2814,7 +3241,8 @@ Your {organizer} team"""))  # noqa: W291
             ext_whitelist=settings.FILE_UPLOAD_EXTENSIONS_IMAGE,
             max_size=settings.FILE_UPLOAD_MAX_SIZE_IMAGE,
             help_text=_('If you provide a logo image, we will by default not show your event name and date '
-                        'in the page header. By default, we show your logo with a size of up to 1140x120 pixels. You '
+                        'in the page header. If you use a white background, we show your logo with a size of up '
+                        'to 1140x120 pixels. Otherwise the maximum size is 1120x120 pixels. You '
                         'can increase the size with the setting below. We recommend not using small details on the picture '
                         'as it will be resized on smaller screens.')
         ),
@@ -2857,7 +3285,8 @@ Your {organizer} team"""))  # noqa: W291
             ext_whitelist=settings.FILE_UPLOAD_EXTENSIONS_IMAGE,
             max_size=settings.FILE_UPLOAD_MAX_SIZE_IMAGE,
             help_text=_('If you provide a logo image, we will by default not show your organization name '
-                        'in the page header. By default, we show your logo with a size of up to 1140x120 pixels. You '
+                        'in the page header. If you use a white background, we show your logo with a size of up '
+                        'to 1140x120 pixels. Otherwise the maximum size is 1120x120 pixels. You '
                         'can increase the size with the setting below. We recommend not using small details on the picture '
                         'as it will be resized on smaller screens.')
         ),
@@ -2888,6 +3317,25 @@ Your {organizer} team"""))  # noqa: W291
             label=_('Use header image also for events without an individually uploaded logo'),
         )
     },
+    'favicon': {
+        'default': None,
+        'type': File,
+        'form_class': ExtFileField,
+        'form_kwargs': dict(
+            label=_('Favicon'),
+            ext_whitelist=settings.FILE_UPLOAD_EXTENSIONS_FAVICON,
+            max_size=settings.FILE_UPLOAD_MAX_SIZE_FAVICON,
+            help_text=_('If you provide a favicon, we will show it instead of the default pretix icon. '
+                        'We recommend a size of at least 200x200px to accommodate most devices.')
+        ),
+        'serializer_class': UploadedFileField,
+        'serializer_kwargs': dict(
+            allowed_types=[
+                'image/png', 'image/jpeg', 'image/gif', 'image/x-icon', 'image/vnd.microsoft.icon',
+            ],
+            max_size=settings.FILE_UPLOAD_MAX_SIZE_FAVICON,
+        )
+    },
     'og_image': {
         'default': None,
         'type': File,
@@ -2899,7 +3347,7 @@ Your {organizer} team"""))  # noqa: W291
             help_text=_('This picture will be used as a preview if you post links to your ticket shop on social media. '
                         'Facebook advises to use a picture size of 1200 x 630 pixels, however some platforms like '
                         'WhatsApp and Reddit only show a square preview, so we recommend to make sure it still looks good '
-                        'only the center square is shown. If you do not fill this, we will use the logo given above.')
+                        'if only the center square is shown. If you do not fill this, we will use the logo given above.')
         ),
         'serializer_class': UploadedFileField,
         'serializer_kwargs': dict(
@@ -2926,7 +3374,8 @@ Your {organizer} team"""))  # noqa: W291
                 'image/png', 'image/jpeg', 'image/gif'
             ],
             max_size=settings.FILE_UPLOAD_MAX_SIZE_IMAGE,
-        )
+        ),
+        'write_permission': 'event.settings.invoicing:write',
     },
     'frontpage_text': {
         'default': '',
@@ -2935,7 +3384,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_("Frontpage text"),
-            widget=I18nTextarea
+            widget=I18nMarkdownTextarea,
         )
     },
     'event_info_text': {
@@ -2957,7 +3406,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_("Banner text (top)"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '2'}},
             help_text=_("This text will be shown above every page of your shop. Please only use this for "
                         "very important messages.")
@@ -2970,7 +3419,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_("Banner text (bottom)"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '2'}},
             help_text=_("This text will be shown below every page of your shop. Please only use this for "
                         "very important messages.")
@@ -2983,7 +3432,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_("Voucher explanation"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '2'}},
             help_text=_("This text will be shown next to the input for a voucher code. You can use it e.g. to explain "
                         "how to obtain a voucher code.")
@@ -2996,7 +3445,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_("Attendee data explanation"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '2'}},
             help_text=_("This text will be shown above the questions asked for every personalized product. You can use it e.g. to explain "
                         "why you need information from them.")
@@ -3012,7 +3461,7 @@ Your {organizer} team"""))  # noqa: W291
             help_text=_("This message will be shown after an order has been created successfully. It will be shown in additional "
                         "to the default text."),
             widget_kwargs={'attrs': {'rows': '2'}},
-            widget=I18nTextarea
+            widget=I18nMarkdownTextarea,
         )
     },
     'checkout_phone_helptext': {
@@ -3023,12 +3472,12 @@ Your {organizer} team"""))  # noqa: W291
         'form_kwargs': dict(
             label=_("Help text of the phone number field"),
             widget_kwargs={'attrs': {'rows': '2'}},
-            widget=I18nTextarea
+            widget=I18nMarkdownTextarea,
         )
     },
     'checkout_email_helptext': {
         'default': LazyI18nString.from_gettext(gettext_noop(
-            'We will send you an order '
+            'Make sure to enter a valid email address. We will send you an order '
             'confirmation including a link that you need to access your order later.'
         )),
         'type': LazyI18nString,
@@ -3037,7 +3486,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_kwargs': dict(
             label=_("Help text of the email field"),
             widget_kwargs={'attrs': {'rows': '2'}},
-            widget=I18nTextarea
+            widget=I18nMarkdownTextarea,
         )
     },
     'order_import_settings': {
@@ -3167,7 +3616,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_('Homepage text'),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             help_text=_('This will be displayed on the organizer homepage.')
         )
     },
@@ -3186,6 +3635,12 @@ Your {organizer} team"""))  # noqa: W291
             label=_('Length of gift card codes'),
             help_text=_('The system generates by default {}-character long gift card codes. However, if a different length '
                         'is required, it can be set here.'.format(settings.ENTROPY['giftcard_secret'])),
+            min_value=6,
+            max_value=64,
+        ),
+        'serializer_kwargs': dict(
+            min_value=6,
+            max_value=64,
         )
     },
     'giftcard_expiry_years': {
@@ -3197,6 +3652,8 @@ Your {organizer} team"""))  # noqa: W291
             label=_('Validity of gift card codes in years'),
             help_text=_('If you set a number here, gift cards will by default expire at the end of the year after this '
                         'many years. If you keep it empty, gift cards do not have an explicit expiry date.'),
+            min_value=0,
+            max_value=99,
         )
     },
     'cookie_consent': {
@@ -3218,7 +3675,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_("Dialog text"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '3', 'data-display-dependency': '#id_settings-cookie_consent'}},
         )
     },
@@ -3233,7 +3690,7 @@ Your {organizer} team"""))  # noqa: W291
         'form_class': I18nFormField,
         'form_kwargs': dict(
             label=_("Secondary dialog text"),
-            widget=I18nTextarea,
+            widget=I18nMarkdownTextarea,
             widget_kwargs={'attrs': {'rows': '3', 'data-display-dependency': '#id_settings-cookie_consent'}},
         )
     },
@@ -3288,7 +3745,9 @@ Your {organizer} team"""))  # noqa: W291
     },
     'seating_allow_blocked_seats_for_channel': {
         'default': [],
-        'type': list
+        'type': list,
+        'serializer_class': serializers.ListField,
+        'serializer_kwargs': lambda: dict(child=serializers.CharField()),
     },
     'seating_distance_within_row': {
         'default': 'False',
@@ -3302,11 +3761,12 @@ Your {organizer} team"""))  # noqa: W291
         'form_kwargs': dict(
             label=_("Show button to copy user input from other products"),
         ),
-    }
-}
-SETTINGS_AFFECTING_CSS = {
-    'primary_color', 'theme_color_success', 'theme_color_danger', 'primary_font',
-    'theme_color_background', 'theme_round_borders'
+    },
+    'apple_domain_association': {
+        # To maintain backwards-compatibility, we provide Stripe's ApplePay MerchantID Domain Validation Certificate by default
+        'default': "7B227073704964223A2239373943394538343346343131343044463144313834343232393232313734313034353044314339464446394437384337313531303944334643463542433731222C2276657273696F6E223A312C22637265617465644F6E223A313536363233343735303036312C227369676E6174757265223A22333038303036303932613836343838366637306430313037303261303830333038303032303130313331306633303064303630393630383634383031363530333034303230313035303033303830303630393261383634383836663730643031303730313030303061303830333038323033653333303832303338386130303330323031303230323038346333303431343935313964353433363330306130363038326138363438636533643034303330323330376133313265333032633036303335353034303330633235343137303730366336353230343137303730366336393633363137343639366636653230343936653734363536373732363137343639366636653230343334313230326432303437333333313236333032343036303335353034306230633164343137303730366336353230343336353732373436393636363936333631373436393666366532303431373537343638366637323639373437393331313333303131303630333535303430613063306134313730373036633635323034393665363332653331306233303039303630333535303430363133303235353533333031653137306433313339333033353331333833303331333333323335333735613137306433323334333033353331333633303331333333323335333735613330356633313235333032333036303335353034303330633163363536333633326437333664373032643632373236663662363537323264373336393637366535663535343333343264353035323466343433313134333031323036303335353034306230633062363934663533323035333739373337343635366437333331313333303131303630333535303430613063306134313730373036633635323034393665363332653331306233303039303630333535303430363133303235353533333035393330313330363037326138363438636533643032303130363038326138363438636533643033303130373033343230303034633231353737656465626436633762323231386636386464373039306131323138646337623062643666326332383364383436303935643934616634613534313162383334323065643831316633343037653833333331663163353463336637656233323230643662616435643465666634393238393839336537633066313361333832303231313330383230323064333030633036303335353164313330313031666630343032333030303330316630363033353531643233303431383330313638303134323366323439633434663933653465663237653663346636323836633366613262626664326534623330343530363038326230363031303530353037303130313034333933303337333033353036303832623036303130353035303733303031383632393638373437343730336132663266366636333733373032653631373037303663363532653633366636643266366636333733373033303334326436313730373036633635363136393633363133333330333233303832303131643036303335353164323030343832303131343330383230313130333038323031306330363039326138363438383666373633363430353031333038316665333038316333303630383262303630313035303530373032303233303831623630633831623335323635366336393631366536333635323036663665323037343638363937333230363336353732373436393636363936333631373436353230363237393230363136653739323037303631373237343739323036313733373337353664363537333230363136333633363537303734363136653633363532303666363632303734363836353230373436383635366532303631373037303663363936333631363236633635323037333734363136653634363137323634323037343635373236643733323036313665363432303633366636653634363937343639366636653733323036663636323037353733363532633230363336353732373436393636363936333631373436353230373036663663363936333739323036313665363432303633363537323734363936363639363336313734363936663665323037303732363136333734363936333635323037333734363137343635366436353665373437333265333033363036303832623036303130353035303730323031313632613638373437343730336132663266373737373737326536313730373036633635326536333666366432663633363537323734363936363639363336313734363536313735373436383666373236393734373932663330333430363033353531643166303432643330326233303239613032376130323538363233363837343734373033613266326636333732366332653631373037303663363532653633366636643266363137303730366336353631363936333631333332653633373236633330316430363033353531643065303431363034313439343537646236666435373438313836383938393736326637653537383530376537396235383234333030653036303335353164306630313031666630343034303330323037383033303066303630393261383634383836663736333634303631643034303230353030333030613036303832613836343863653364303430333032303334393030333034363032323130306265303935373166653731653165373335623535653561666163623463373266656234343566333031383532323263373235313030326236316562643666353530323231303064313862333530613564643664643665623137343630333562313165623263653837636661336536616636636264383338303839306463383263646461613633333038323032656533303832303237356130303330323031303230323038343936643266626633613938646139373330306130363038326138363438636533643034303330323330363733313162333031393036303335353034303330633132343137303730366336353230353236663666373432303433343132303264323034373333333132363330323430363033353530343062306331643431373037303663363532303433363537323734363936363639363336313734363936663665323034313735373436383666373236393734373933313133333031313036303335353034306130633061343137303730366336353230343936653633326533313062333030393036303335353034303631333032353535333330316531373064333133343330333533303336333233333334333633333330356131373064333233393330333533303336333233333334333633333330356133303761333132653330326330363033353530343033306332353431373037303663363532303431373037303663363936333631373436393666366532303439366537343635363737323631373436393666366532303433343132303264323034373333333132363330323430363033353530343062306331643431373037303663363532303433363537323734363936363639363336313734363936663665323034313735373436383666373236393734373933313133333031313036303335353034306130633061343137303730366336353230343936653633326533313062333030393036303335353034303631333032353535333330353933303133303630373261383634386365336430323031303630383261383634386365336430333031303730333432303030346630313731313834313964373634383564353161356532353831303737366538383061326566646537626165346465303864666334623933653133333536643536363562333561653232643039373736306432323465376262613038666437363137636538386362373662623636373062656338653832393834666635343435613338316637333038316634333034363036303832623036303130353035303730313031303433613330333833303336303630383262303630313035303530373330303138363261363837343734373033613266326636663633373337303265363137303730366336353265363336663664326636663633373337303330333432643631373037303663363537323666366637343633363136373333333031643036303335353164306530343136303431343233663234396334346639336534656632376536633466363238366333666132626266643265346233303066303630333535316431333031303166663034303533303033303130316666333031663036303335353164323330343138333031363830313462626230646561313538333338383961613438613939646562656264656261666461636232346162333033373036303335353164316630343330333032653330326361303261613032383836323636383734373437303361326632663633373236633265363137303730366336353265363336663664326636313730373036633635373236663666373436333631363733333265363337323663333030653036303335353164306630313031666630343034303330323031303633303130303630613261383634383836663736333634303630323065303430323035303033303061303630383261383634386365336430343033303230333637303033303634303233303361636637323833353131363939623138366662333563333536636136326266663431376564643930663735346461323865626566313963383135653432623738396638393866373962353939663938643534313064386639646539633266653032333033323264643534343231623061333035373736633564663333383362393036376664313737633263323136643936346663363732363938323132366635346638376137643162393963623962303938393231363130363939306630393932316430303030333138323031386233303832303138373032303130313330383138363330376133313265333032633036303335353034303330633235343137303730366336353230343137303730366336393633363137343639366636653230343936653734363536373732363137343639366636653230343334313230326432303437333333313236333032343036303335353034306230633164343137303730366336353230343336353732373436393636363936333631373436393666366532303431373537343638366637323639373437393331313333303131303630333535303430613063306134313730373036633635323034393665363332653331306233303039303630333535303430363133303235353533303230383463333034313439353139643534333633303064303630393630383634383031363530333034303230313035303061303831393533303138303630393261383634383836663730643031303930333331306230363039326138363438383666373064303130373031333031633036303932613836343838366637306430313039303533313066313730643331333933303338333133393331333733313332333333303561333032613036303932613836343838366637306430313039333433313164333031623330306430363039363038363438303136353033303430323031303530306131306130363038326138363438636533643034303330323330326630363039326138363438383666373064303130393034333132323034323062303731303365313430613462386231376262613230316130336163643036396234653431366232613263383066383661383338313435633239373566633131333030613036303832613836343863653364303430333032303434363330343430323230343639306264636637626461663833636466343934396534633035313039656463663334373665303564373261313264376335666538633033303033343464663032323032363764353863393365626233353031333836363062353730373938613064643731313734316262353864626436613138363633353038353431656565393035303030303030303030303030227D",  # NoQA
+        'type': str,
+    },
 }
 PERSON_NAME_TITLE_GROUPS = OrderedDict([
     ('english_common', (_('Most common English titles'), (
@@ -3352,7 +3812,7 @@ def concatenation_for_salutation(d):
         salutation = pgettext("person_name_salutation", salutation)
         given_name = None
 
-    return " ".join(filter(None, (salutation, title, given_name, family_name)))
+    return " ".join(str(p) for p in filter(None, (salutation, title, given_name, family_name)))
 
 
 def get_name_parts_localized(name_parts, key):
@@ -3465,8 +3925,8 @@ PERSON_NAME_SCHEMES = OrderedDict([
             str(p) for p in [d.get('family_name', ''), d.get('given_name', '')] if p
         ),
         'sample': {
-            'given_name': '泽东',
-            'family_name': '毛',
+            'family_name': '孫',
+            'given_name': '文',
             '_scheme': 'family_nospace_given',
         },
     }),
@@ -3517,8 +3977,8 @@ PERSON_NAME_SCHEMES = OrderedDict([
         'concatenation': lambda d: str(d.get('full_name', '')),
         'concatenation_all_components': lambda d: str(d.get('full_name', '')) + " (" + d.get('latin_transcription', '') + ")",
         'sample': {
-            'full_name': '庄司',
-            'latin_transcription': 'Shōji',
+            'full_name': '山田花子',
+            'latin_transcription': 'Yamada Hanako',
             '_scheme': 'full_transcription',
         },
     }),
@@ -3606,13 +4066,24 @@ COUNTRIES_WITH_STATE_IN_ADDRESS = {
     # are actually *used* in postal addresses. This is obviously not complete and opinionated.
     # Country: [(List of subdivision types as defined by pycountry), (short or long form to be used)]
     'AU': (['State', 'Territory'], 'short'),
-    'BR': (['State'], 'short'),
+    'BR': (['Federal district', 'State'], 'short'),
     'CA': (['Province', 'Territory'], 'short'),
     # 'CN': (['Province', 'Autonomous region', 'Munincipality'], 'long'),
-    'MY': (['State'], 'long'),
-    'MX': (['State', 'Federal district'], 'short'),
+    'JP': (['Prefecture'], 'long'),
+    'MY': (['State', 'Federal territory'], 'long'),
+    'MX': (['State', 'Federal district', 'Federal entity'], 'short'),
     'US': (['State', 'Outlying area', 'District'], 'short'),
+    'IT': (['Province', 'Free municipal consortium', 'Metropolitan city', 'Autonomous province',
+            'Decentralized regional entity'], 'short'),
 }
+COUNTRY_STATE_LABEL = {
+    # Countries in which the "State" field should not be called "State"
+    'CA': pgettext_lazy('address', 'Province'),
+    'JP': pgettext_lazy('address', 'Prefecture'),
+    'IT': pgettext_lazy('address', 'Province'),
+}
+# Workaround for https://github.com/pretix/pretix/issues/5796
+pycountry_add(pycountry.subdivisions, code="IT-AO", country_code="IT", name="Valle d'Aosta", parent="23", parent_code="IT-23", type="Province")
 
 settings_hierarkey = Hierarkey(attribute_name='settings')
 
@@ -3717,6 +4188,28 @@ def validate_event_settings(event, settings_dict):
         raise ValidationError({
             'invoice_address_company_required': _('You have to require invoice addresses to require for company names.')
         })
+    if settings_dict.get('invoice_address_from_state') and settings_dict.get('invoice_address_from_country'):
+        cc = str(settings_dict.get('invoice_address_from_country'))
+        if cc not in COUNTRIES_WITH_STATE_IN_ADDRESS:
+            raise ValidationError(
+                {'invoice_address_from_state': ['States are not supported in country "{}".'.format(cc)]}
+            )
+        if not pycountry.subdivisions.get(code=cc + '-' + settings_dict.get('invoice_address_from_state')):
+            raise ValidationError(
+                {'invoice_address_from_state': [
+                    '"{}" is not a known subdivision of the country "{}".'.format(
+                        settings_dict.get('invoice_address_from_state'), cc
+                    )
+                ]}
+            )
+    if (
+        settings_dict.get('invoice_address_from_vat_id') and
+        settings_dict.get('invoice_address_from_country') and
+        settings_dict.get('invoice_address_from_country') not in VAT_ID_COUNTRIES
+    ):
+        raise ValidationError({
+            'invoice_address_from_vat_id': _('VAT-ID is not supported for "{}".').format(settings_dict.get('invoice_address_from_country'))
+        })
 
     payment_term_last = settings_dict.get('payment_term_last')
     if payment_term_last and event.presale_end:
@@ -3724,6 +4217,16 @@ def validate_event_settings(event, settings_dict):
             raise ValidationError({
                 'payment_term_last': _('The last payment date cannot be before the end of presale.')
             })
+
+    if settings_dict.get('seating_allow_blocked_seats_for_channel'):
+        allowed_channels = set(event.organizer.sales_channels.values_list("identifier", flat=True))
+        for channel in settings_dict['seating_allow_blocked_seats_for_channel']:
+            if channel not in allowed_channels:
+                raise ValidationError({
+                    'seating_allow_blocked_seats_for_channel': _('The value "{identifier}" is not a valid sales channel.').format(
+                        identifier=channel
+                    )
+                })
 
     if isinstance(event, Event):
         validate_event_settings.send(sender=event, settings_dict=settings_dict)

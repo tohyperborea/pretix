@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -37,26 +37,26 @@ def event():
 
 @pytest.mark.django_db
 def test_require_plugin(event, client):
-    event.plugins = 'pretix.plugins.paypal'
+    event.plugins = 'pretix.plugins.paypal2'
     event.live = True
     event.save()
-    r = client.get('/mrmcd/2015/paypal/abort/', follow=False)
+    r = client.get('/mrmcd/2015/paypal2/abort/', follow=False)
     assert r.status_code == 302
     event.plugins = ''
     event.save()
-    r = client.get('/mrmcd/2015/paypal/abort/', follow=False)
+    r = client.get('/mrmcd/2015/paypal2/abort/', follow=False)
     assert r.status_code == 404
 
 
 @pytest.mark.django_db
 def test_require_live(event, client):
-    event.plugins = 'pretix.plugins.paypal'
+    event.plugins = 'pretix.plugins.paypal2'
     event.live = True
     event.save()
-    r = client.get('/mrmcd/2015/paypal/abort/', follow=False)
+    r = client.get('/mrmcd/2015/paypal2/abort/', follow=False)
     assert r.status_code == 302
 
     event.live = False
     event.save()
-    r = client.get('/mrmcd/2015/paypal/abort/', follow=False)
+    r = client.get('/mrmcd/2015/paypal2/abort/', follow=False)
     assert r.status_code == 403

@@ -4,6 +4,7 @@
 {% load urlreplace %}
 {% load money %}
 {% load bootstrap3 %}
+{% load static %}
 {% block title %}{% trans "Orders" %}{% endblock %}
 {% block content %}
     <h1>{% trans "Orders" %}</h1>
@@ -43,8 +44,7 @@
             <form class="form-inline"
                   action="{% url "control:event.orders.go" event=request.event.slug organizer=request.event.organizer.slug %}">
                 <p class="input-group">
-                    <input type="text" name="code" class="form-control" placeholder="{% trans "Order code" %}"
-                           autofocus>
+                    <input type="text" name="code" class="form-control" placeholder="{% trans "Order code" %}">
                     <span class="input-group-btn">
                             <button class="btn btn-primary" type="submit">{% trans "Go!" %}</button>
                         </span>
@@ -108,7 +108,7 @@
                 </a>
             </p>
         {% endif %}
-        <form action="{% url "control:organizer.device.bulk_edit" organizer=request.organizer.slug %}" method="post">
+        <form action="#will-be-overridden" method="post">
             {% csrf_token %}
             {% for field in filter_form %}
                 {{ field.as_hidden }}
@@ -122,7 +122,7 @@
                 <table class="table table-condensed table-hover table-orders">
                     <thead>
                     <tr>
-                        {% if "can_change_orders" in request.eventpermset %}
+                        {% if "event.orders:write" in request.eventpermset %}
                             <th>
                                 <label aria-label="{% trans "select all rows for batch-operation" %}"
                                        class="batch-select-label"><input type="checkbox" data-toggle-table/></label>
@@ -154,7 +154,7 @@
                             <a href="?{% url_replace request 'ordering' 'status' %}"><i class="fa fa-caret-up"></i></a>
                         </th>
                     </tr>
-                    {% if page_obj.paginator.num_pages > 1 and "can_change_orders" in request.eventpermset %}
+                    {% if page_obj.paginator.num_pages > 1 and "event.orders:write" in request.eventpermset %}
                         <tr class="table-select-all warning hidden">
                             <td>
                                 <input type="checkbox" name="__ALL" id="__all"
@@ -171,7 +171,7 @@
                     <tbody>
                     {% for o in orders %}
                         <tr>
-                            {% if "can_change_orders" in request.eventpermset %}
+                            {% if "event.orders:write" in request.eventpermset %}
                                 <td>
                                     <label aria-label="{% trans "select row for batch-operation" %}"
                                            class="batch-select-label"><input type="checkbox" name="order"
@@ -201,8 +201,13 @@
                                 {% endif %}
                             </td>
                             <td>
-                                <span class="fa fa-fw fa-{{ o.sales_channel_obj.icon }} text-muted"
-                                      data-toggle="tooltip" title="{% trans o.sales_channel_obj.verbose_name %}"></span>
+                                {% if "." in o.sales_channel.icon %}
+                                    <img src="{% static o.sales_channel.icon %}" class="fa-like-image"
+                                         data-toggle="tooltip" title="{{ o.sales_channel.label }}">
+                                {% else %}
+                                    <span class="fa fa-fw fa-{{ o.sales_channel.icon }} text-muted"
+                                          data-toggle="tooltip" title="{{ o.sales_channel.label }}"></span>
+                                {% endif %}
                                 {{ o.datetime|date:"SHORT_DATETIME_FORMAT" }}
                             </td>
                             <td class="text-right flip">
@@ -276,7 +281,7 @@
                     {% endif %}
                 </table>
             </div>
-            {% if "can_change_orders" in request.eventpermset %}
+            {% if "event.orders:write" in request.eventpermset %}
                 <div class="batch-select-actions">
                     <div class="btn-group dropup">
                         <button type="button" class="btn btn-default dropdown-toggle" data-toggle="dropdown"
@@ -297,6 +302,13 @@
                                         formaction="{% url "control:event.orders.bulk.deny" organizer=request.organizer.slug event=request.event.slug %}">
                                     <i class="fa fa-thumbs-down fa-fw text-danger"></i>
                                     {% trans "Deny" %}
+                                </button>
+                            </li>
+                            <li>
+                                <button type="submit" class="btn"
+                                        formaction="{% url "control:event.orders.bulk.refund_overpaid" organizer=request.organizer.slug event=request.event.slug %}">
+                                    <i class="fa fa-money fa-fw text-danger"></i>
+                                    {% trans "Refund overpaid amount" %}
                                 </button>
                             </li>
                             {% if not request.event.settings.payment_term_expire_automatically %}

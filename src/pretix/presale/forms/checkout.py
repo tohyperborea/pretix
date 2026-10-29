@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -32,11 +32,8 @@
 # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations under the License.
 
-from itertools import chain
-
 from django import forms
 from django.core.exceptions import ValidationError
-from django.utils.encoding import force_str
 from django.utils.formats import date_format
 from django.utils.html import escape
 from django.utils.safestring import mark_safe
@@ -44,8 +41,8 @@ from django.utils.translation import gettext_lazy as _
 from phonenumber_field.formfields import PhoneNumberField
 
 from pretix.base.forms.questions import (
-    BaseInvoiceAddressForm, BaseQuestionsForm, WrappedPhoneNumberPrefixWidget,
-    guess_phone_prefix_from_request,
+    BaseInvoiceAddressForm, TicketLevelQuestionsForm,
+    WrappedPhoneNumberPrefixWidget, guess_phone_prefix_from_request,
 )
 from pretix.base.templatetags.rich_text import rich_text
 from pretix.base.validators import EmailBanlistValidator
@@ -54,7 +51,7 @@ from pretix.presale.signals import contact_form_fields
 
 class ContactForm(forms.Form):
     required_css_class = 'required'
-    email = forms.EmailField(label=_('E-mail'),
+    email = forms.EmailField(label=_('Email'),
                              validators=[EmailBanlistValidator()],
                              widget=forms.EmailInput(attrs={'autocomplete': 'section-contact email'})
                              )
@@ -67,7 +64,7 @@ class ContactForm(forms.Form):
 
         if self.event.settings.order_email_asked_twice:
             self.fields['email_repeat'] = forms.EmailField(
-                label=_('E-mail address (repeated)'),
+                label=_('Email address (repeated)'),
                 help_text=_('Please enter the same email address again to make sure you typed it correctly.'),
             )
 
@@ -133,6 +130,7 @@ class InvoiceAddressForm(BaseInvoiceAddressForm):
 
 
 class InvoiceNameForm(InvoiceAddressForm):
+    address_validation = False
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -141,11 +139,14 @@ class InvoiceNameForm(InvoiceAddressForm):
                 del self.fields[f]
 
 
-class QuestionsForm(BaseQuestionsForm):
+class CustomerAwareQuestionsForm(TicketLevelQuestionsForm):
     """
-    This form class is responsible for asking order-related questions. This includes
+    The base class is responsible for asking order-related questions. This includes
     the attendee name for admission tickets, if the corresponding setting is enabled,
     as well as additional questions defined by the organizer.
+
+    This class adds support for pre-filling data like name and address from a
+    customer profile, in case the user is logged-in with a customer account.
     """
     required_css_class = 'required'
     address_validation = True
@@ -167,46 +168,6 @@ class QuestionsForm(BaseQuestionsForm):
             )
 
 
-class AddOnRadioSelect(forms.RadioSelect):
-    option_template_name = 'pretixpresale/forms/addon_choice_option.html'
-
-    def optgroups(self, name, value, attrs=None):
-        attrs = attrs or {}
-        groups = []
-        has_selected = False
-        for index, (option_value, option_label, option_desc) in enumerate(chain(self.choices)):
-            if option_value is None:
-                option_value = ''
-            if isinstance(option_label, (list, tuple)):
-                raise TypeError('Choice groups are not supported here')
-            group_name = None
-            subgroup = []
-            groups.append((group_name, subgroup, index))
-
-            selected = (
-                force_str(option_value) in value and
-                (has_selected is False or self.allow_multiple_selected)
-            )
-            if selected is True and has_selected is False:
-                has_selected = True
-            attrs['description'] = option_desc
-            subgroup.append(self.create_option(
-                name, option_value, option_label, selected, index,
-                subindex=None, attrs=attrs,
-            ))
-
-        return groups
-
-
-class AddOnVariationField(forms.ChoiceField):
-    def valid_value(self, value):
-        text_value = force_str(value)
-        for k, v, d in self.choices:
-            if value == k or text_value == force_str(k):
-                return True
-        return False
-
-
 class MembershipForm(forms.Form):
     required_css_class = 'required'
 
@@ -225,7 +186,9 @@ class MembershipForm(forms.Form):
 
         memberships = [
             m for m in self.memberships
-            if m.is_valid(ev) and m.membership_type in types
+            if m.membership_type in types and (
+                m.is_valid(ev, self.position.valid_from, valid_from_not_chosen=self.position.item.validity_dynamic_start_choice)
+            )
         ]
 
         if len(memberships) == 1:

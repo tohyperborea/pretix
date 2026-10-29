@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -36,6 +36,7 @@
 import datetime
 import re
 from decimal import Decimal
+from importlib import import_module
 from json import loads
 from zoneinfo import ZoneInfo
 
@@ -46,14 +47,17 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils.timezone import now
 from django_scopes import scopes_disabled
+from freezegun import freeze_time
 from tests.base import SoupTest
 from tests.testdummy.signals import FoobarSalesChannel
 
 from pretix.base.models import (
-    Customer, Event, Item, ItemCategory, ItemVariation, Order, Organizer, Quota, Team,
-    User, Voucher, WaitingListEntry,
+    Event, Item, ItemCategory, ItemVariation, Order, Organizer, Quota, Team,
+    User, WaitingListEntry,
 )
 from pretix.base.models.items import SubEventItem, SubEventItemVariation
+from pretix.base.reldate import RelativeDate, RelativeDateWrapper
+from pretix.testutils.sessions import get_cart_session_key
 
 
 class EventTestMixin:
@@ -64,10 +68,10 @@ class EventTestMixin:
         self.event = Event.objects.create(
             organizer=self.orga, name='30C3', slug='30c3',
             date_from=datetime.datetime(now().year + 1, 12, 26, 14, 0, tzinfo=datetime.timezone.utc),
-            live=True, sales_channels=['web', 'bar']
+            live=True,
         )
         self.user = User.objects.create_user('dummy@dummy.dummy', 'dummy')
-        t = Team.objects.create(organizer=self.orga, can_change_event_settings=True)
+        t = Team.objects.create(organizer=self.orga, all_event_permissions=True)
         t.members.add(self.user)
         t.limit_events.add(self.event)
 
@@ -76,6 +80,44 @@ class EventMiddlewareTest(EventTestMixin, SoupTest):
     def test_event_header(self):
         doc = self.get_doc('/%s/%s/' % (self.orga.slug, self.event.slug))
         self.assertIn(str(self.event.name), doc.find("h1").text)
+
+    def test_footer_contact_url_overrides_mailto(self):
+        self.event.settings.contact_mail = 'orga@example.org'
+        self.event.settings.contact_url = 'https://example.org/contact'
+
+        doc = self.get_doc('/%s/%s/' % (self.orga.slug, self.event.slug))
+        contact_link = doc.find('a', string='Contact')
+
+        self.assertIsNotNone(contact_link)
+        self.assertTrue(contact_link['href'].startswith('/redirect/?url=https%3A//example.org/contact'))
+
+    def test_no_session_cookie_set_on_event_index_view(self):
+        resp = self.client.get('/%s/%s/' % (self.orga.slug, self.event.slug))
+        self.assertEqual(resp.status_code, 200)
+        assert settings.SESSION_COOKIE_NAME not in self.client.cookies
+
+    def test_no_cart_session_added_on_event_index_view(self):
+        # Make sure a session is present by doing a cart op on another event
+        event2 = Event.objects.create(
+            organizer=self.orga, name='30C3b', slug='30c3b',
+            date_from=datetime.datetime(now().year + 1, 12, 26, 14, 0, tzinfo=datetime.timezone.utc),
+            live=True,
+        )
+        self.client.post('/%s/%s/cart/add' % (self.orga.slug, event2.slug), {
+            'item_%d' % 1337: '1',  # item does not need to exist
+            'ajax': 1
+        })
+        assert settings.SESSION_COOKIE_NAME in self.client.cookies
+
+        # Visit shop, make sure no session is created
+        resp = self.client.get('/%s/%s/' % (self.orga.slug, self.event.slug))
+        self.assertEqual(resp.status_code, 200)
+
+        SessionStore = import_module(settings.SESSION_ENGINE).SessionStore
+        session = SessionStore(self.client.cookies[settings.SESSION_COOKIE_NAME].value).load()
+        assert set(session.keys()) == {
+            f"current_cart_event_{event2.pk}", "carts"
+        }
 
     def test_not_found(self):
         resp = self.client.get('/%s/%s/' % ('foo', 'bar'))
@@ -152,11 +194,15 @@ class ItemDisplayTest(EventTestMixin, SoupTest):
         with scopes_disabled():
             q = Quota.objects.create(event=self.event, name='Quota', size=2)
             item = Item.objects.create(event=self.event, name='Early-bird ticket', default_price=0, active=True,
-                                       sales_channels=['bar'])
+                                       all_sales_channels=False)
+            item.limit_sales_channels.add(self.orga.sales_channels.get(identifier="bar"))
             q.items.add(item)
         html = self.client.get('/%s/%s/' % (self.orga.slug, self.event.slug)).rendered_content
         self.assertNotIn("Early-bird", html)
-        html = self.client.get('/%s/%s/' % (self.orga.slug, self.event.slug), PRETIX_SALES_CHANNEL=FoobarSalesChannel).rendered_content
+        html = self.client.get(
+            '/%s/%s/' % (self.orga.slug, self.event.slug),
+            PRETIX_SALES_CHANNEL=FoobarSalesChannel.identifier
+        ).rendered_content
         self.assertIn("Early-bird", html)
 
     def test_timely_available(self):
@@ -265,6 +311,48 @@ class ItemDisplayTest(EventTestMixin, SoupTest):
             Item.objects.create(event=self.event, name='Early-bird ticket', category=c, default_price=0)
         resp = self.client.get('/%s/%s/' % (self.orga.slug, self.event.slug))
         self.assertNotIn("Early-bird", resp.rendered_content)
+
+    def tiered_availability_by_date_and_quota(self, q1_size, q2_size, time_offset, expected_phase):
+        current_time = now()
+
+        with scopes_disabled():
+            q1 = Quota.objects.create(event=self.event, name='Phase 1', size=q1_size)
+            item1 = Item.objects.create(
+                event=self.event,
+                name='Phase 1',
+                default_price=0,
+                available_from=current_time,
+                available_until=current_time + datetime.timedelta(days=1),
+                available_from_mode=Item.UNAVAIL_MODE_HIDDEN,
+                available_until_mode=Item.UNAVAIL_MODE_HIDDEN,
+                hidden_if_item_available_mode=Item.UNAVAIL_MODE_HIDDEN,
+            )
+            q1.items.add(item1)
+            q2 = Quota.objects.create(event=self.event, name='Phase 2', size=q2_size)
+            item2 = Item.objects.create(
+                event=self.event,
+                name='Phase 2',
+                default_price=0,
+                available_from=current_time + datetime.timedelta(days=0),
+                available_until=current_time + datetime.timedelta(days=2),
+                available_from_mode=Item.UNAVAIL_MODE_HIDDEN,
+                available_until_mode=Item.UNAVAIL_MODE_HIDDEN,
+                hidden_if_item_available_mode=Item.UNAVAIL_MODE_HIDDEN,
+                hidden_if_item_available=item1
+            )
+            q2.items.add(item2)
+            with freeze_time(current_time + time_offset):
+                resp = self.client.get('/%s/%s/' % (self.orga.slug, self.event.slug))
+                self.assertIn(expected_phase, resp.rendered_content)
+
+    def test_tiered_availability_by_date_and_quota_phase1_available(self):
+        self.tiered_availability_by_date_and_quota(1, 1, datetime.timedelta(seconds=1), "Phase 1")
+
+    def test_tiered_availability_by_date_and_quota_phase1_sold_out(self):
+        self.tiered_availability_by_date_and_quota(0, 1, datetime.timedelta(seconds=1), "Phase 2")
+
+    def test_tiered_availability_by_date_and_quota_phase1_timed_out(self):
+        self.tiered_availability_by_date_and_quota(1, 1, datetime.timedelta(days=1, hours=1), "Phase 2")
 
     def test_subevents_inactive_unknown(self):
         self.event.has_subevents = True
@@ -400,11 +488,11 @@ class ItemDisplayTest(EventTestMixin, SoupTest):
             SubEventItem.objects.create(subevent=se1, item=item, price=12)
 
         resp = self.client.get('/%s/%s/%d/' % (self.orga.slug, self.event.slug, se1.pk))
-        self.assertIn("12.00", resp.rendered_content)
-        self.assertNotIn("15.00", resp.rendered_content)
+        self.assertIn("€12.00", resp.rendered_content)
+        self.assertNotIn("€15.00", resp.rendered_content)
         resp = self.client.get('/%s/%s/%d/' % (self.orga.slug, self.event.slug, se2.pk))
-        self.assertIn("15.00", resp.rendered_content)
-        self.assertNotIn("12.00", resp.rendered_content)
+        self.assertIn("€15.00", resp.rendered_content)
+        self.assertNotIn("€12.00", resp.rendered_content)
 
     def test_subevent_net_prices(self):
         self.event.has_subevents = True
@@ -424,14 +512,14 @@ class ItemDisplayTest(EventTestMixin, SoupTest):
 
         resp = self.client.get('/%s/%s/%d/' % (self.orga.slug, self.event.slug, se1.pk))
         doc = BeautifulSoup(resp.rendered_content, "lxml")
-        self.assertIn("10.08", doc.text)
-        self.assertNotIn("12.00", doc.text)
-        self.assertNotIn("15.00", doc.text)
+        self.assertIn("€10.08", doc.text)
+        self.assertNotIn("€12.00", doc.text)
+        self.assertNotIn("€15.00", doc.text)
         resp = self.client.get('/%s/%s/%d/' % (self.orga.slug, self.event.slug, se2.pk))
         doc = BeautifulSoup(resp.rendered_content, "lxml")
-        self.assertIn("12.61", doc.text)
-        self.assertNotIn("12.00", doc.text)
-        self.assertNotIn("15.00", doc.text)
+        self.assertIn("€12.61", doc.text)
+        self.assertNotIn("€12.00", doc.text)
+        self.assertNotIn("€15.00", doc.text)
 
     def test_variations_subevent_disabled(self):
         self.event.has_subevents = True
@@ -549,7 +637,8 @@ class ItemDisplayTest(EventTestMixin, SoupTest):
             q = Quota.objects.create(event=self.event, name='Quota', size=None)
             item = Item.objects.create(event=self.event, name='Early-bird ticket', category=c, default_price=0)
             var1 = ItemVariation.objects.create(item=item, value='Red')
-            var2 = ItemVariation.objects.create(item=item, value='Blue', sales_channels=['foobar'])
+            var2 = ItemVariation.objects.create(item=item, value='Blue', all_sales_channels=False)
+            var2.limit_sales_channels.add(self.orga.sales_channels.get(identifier='bar'))
         q.items.add(item)
         q.variations.add(var1)
         q.variations.add(var2)
@@ -625,6 +714,59 @@ class ItemDisplayTest(EventTestMixin, SoupTest):
 
         q.size = 0
         q.save()
+
+        doc = self.get_doc('/%s/%s/' % (self.orga.slug, self.event.slug))
+        self.assertNotIn("Early-bird", doc.select("section:nth-of-type(1)")[0].text)
+        self.assertNotIn("SOLD OUT", doc.select("section:nth-of-type(1)")[0].text)
+        self.assertIn("Late-bird", doc.select("section:nth-of-type(1)")[0].text)
+
+    def test_hidden_if_item_available(self):
+        with scopes_disabled():
+            q = Quota.objects.create(event=self.event, name='Early-bird', size=10)
+            q2 = Quota.objects.create(event=self.event, name='Late-bird', size=10)
+            item = Item.objects.create(event=self.event, name='Early-bird ticket', default_price=12)
+            item2 = Item.objects.create(event=self.event, name='Late-bird ticket', default_price=12,
+                                        hidden_if_item_available=item)
+            q.items.add(item)
+            q2.items.add(item2)
+        self.event.settings.hide_sold_out = True
+
+        doc = self.get_doc('/%s/%s/' % (self.orga.slug, self.event.slug))
+        self.assertIn("Early-bird", doc.select("section:nth-of-type(1)")[0].text)
+        self.assertNotIn("SOLD OUT", doc.select("section:nth-of-type(1)")[0].text)
+        self.assertNotIn("Late-bird", doc.select("section:nth-of-type(1)")[0].text)
+
+        q.size = 0
+        q.save()
+
+        doc = self.get_doc('/%s/%s/' % (self.orga.slug, self.event.slug))
+        self.assertNotIn("Early-bird", doc.select("section:nth-of-type(1)")[0].text)
+        self.assertNotIn("SOLD OUT", doc.select("section:nth-of-type(1)")[0].text)
+        self.assertIn("Late-bird", doc.select("section:nth-of-type(1)")[0].text)
+
+    def test_hidden_if_item_available_variation_unavailable_by_time(self):
+        with scopes_disabled():
+            q = Quota.objects.create(event=self.event, name='Early-bird', size=10)
+            q2 = Quota.objects.create(event=self.event, name='Late-bird', size=10)
+            item_with_vars = Item.objects.create(event=self.event, name='Early-bird ticket', default_price=12)
+            v = item_with_vars.variations.create(
+                value='Regular', active=True,
+            )
+            item2 = Item.objects.create(event=self.event, name='Late-bird ticket', default_price=12,
+                                        hidden_if_item_available=item_with_vars)
+            q.items.add(item_with_vars)
+            q.variations.add(v)
+            q2.items.add(item2)
+
+        self.event.settings.hide_sold_out = True
+        doc = self.get_doc('/%s/%s/' % (self.orga.slug, self.event.slug))
+        self.assertIn("Early-bird", doc.select("section:nth-of-type(1)")[0].text)
+        self.assertNotIn("SOLD OUT", doc.select("section:nth-of-type(1)")[0].text)
+        self.assertNotIn("Late-bird", doc.select("section:nth-of-type(1)")[0].text)
+
+        item_with_vars.available_until = now() - datetime.timedelta(days=3)
+        item_with_vars.available_until_mode = "hide"
+        item_with_vars.save()
 
         doc = self.get_doc('/%s/%s/' % (self.orga.slug, self.event.slug))
         self.assertNotIn("Early-bird", doc.select("section:nth-of-type(1)")[0].text)
@@ -771,7 +913,7 @@ class VoucherRedeemItemDisplayTest(EventTestMixin, SoupTest):
         self.q.size = 0
         self.q.save()
         html = self.client.get('/%s/%s/redeem?voucher=%s' % (self.orga.slug, self.event.slug, self.v.code))
-        assert "_voucher_item" not in html.rendered_content
+        assert "_selected_item" not in html.rendered_content
 
     def test_sold_out_blocking(self):
         self.q.size = 0
@@ -779,7 +921,7 @@ class VoucherRedeemItemDisplayTest(EventTestMixin, SoupTest):
         self.v.block_quota = True
         self.v.save()
         html = self.client.get('/%s/%s/redeem?voucher=%s' % (self.orga.slug, self.event.slug, self.v.code))
-        assert "_voucher_item" in html.rendered_content
+        assert "_selected_item" in html.rendered_content
 
     def test_sold_out_ignore(self):
         self.q.size = 0
@@ -787,7 +929,7 @@ class VoucherRedeemItemDisplayTest(EventTestMixin, SoupTest):
         self.v.allow_ignore_quota = True
         self.v.save()
         html = self.client.get('/%s/%s/redeem?voucher=%s' % (self.orga.slug, self.event.slug, self.v.code))
-        assert "_voucher_item" in html.rendered_content
+        assert "_selected_item" in html.rendered_content
 
     def test_variations_sold_out(self):
         with scopes_disabled():
@@ -798,7 +940,7 @@ class VoucherRedeemItemDisplayTest(EventTestMixin, SoupTest):
         self.q.size = 0
         self.q.save()
         html = self.client.get('/%s/%s/redeem?voucher=%s' % (self.orga.slug, self.event.slug, self.v.code))
-        assert "_voucher_item" not in html.rendered_content
+        assert "_selected_item" not in html.rendered_content
 
     def test_variations_sold_out_blocking(self):
         with scopes_disabled():
@@ -811,7 +953,27 @@ class VoucherRedeemItemDisplayTest(EventTestMixin, SoupTest):
         self.v.block_quota = True
         self.v.save()
         html = self.client.get('/%s/%s/redeem?voucher=%s' % (self.orga.slug, self.event.slug, self.v.code))
-        assert "_voucher_item" in html.rendered_content
+        assert "_selected_item" in html.rendered_content
+
+    def test_variation_not_available(self):
+        with scopes_disabled():
+            var1 = ItemVariation.objects.create(item=self.item, value='Red', position=1)
+            var2 = ItemVariation.objects.create(item=self.item, value='Black', position=2, available_from=now() + datetime.timedelta(days=2))
+            var3 = ItemVariation.objects.create(item=self.item, value='Purple', position=3,
+                                                available_from=now() + datetime.timedelta(days=2), available_from_mode=Item.UNAVAIL_MODE_INFO)
+            self.q.variations.add(var1)
+            self.q.variations.add(var2)
+            self.q.variations.add(var3)
+        self.q.size = 0
+        self.q.save()
+        self.v.block_quota = True
+        self.v.save()
+        html = self.client.get('/%s/%s/redeem?voucher=%s' % (self.orga.slug, self.event.slug, self.v.code))
+        assert "_selected_item" in html.rendered_content
+        assert "Black" not in html.rendered_content
+        assert "Red" in html.rendered_content
+        assert "Purple" in html.rendered_content
+        assert "Not available yet" in html.rendered_content
 
     def test_voucher_price(self):
         self.v.value = Decimal("10.00")
@@ -855,6 +1017,7 @@ class VoucherRedeemItemDisplayTest(EventTestMixin, SoupTest):
         html = self.client.get('/%s/%s/redeem?voucher=%s' % (self.orga.slug, self.event.slug, self.v.code), follow=True)
         assert "alert-danger" in html.rendered_content
 
+    # Sideburn: a used-up voucher reports "used up" even if it has also expired (SID-95).
     def test_fail_redeemed_and_expired_prefers_redeemed(self):
         self.v.redeemed = 1
         self.v.valid_until = now() - datetime.timedelta(days=1)
@@ -981,6 +1144,25 @@ class VoucherRedeemItemDisplayTest(EventTestMixin, SoupTest):
         assert 'name="variation_%d_%d' % (self.item.pk, var1.pk) not in html.rendered_content
         assert 'name="variation_%d_%d' % (self.item.pk, var2.pk) not in html.rendered_content
 
+    def test_voucher_is_a_gift_card(self):
+        gc = self.orga.issued_gift_cards.create(secret="GIFTCARD", currency=self.event.currency)
+        gc.transactions.create(value=Decimal("12.00"), acceptor=self.orga)
+
+        html = self.client.get('/%s/%s/redeem?voucher=%s' % (self.orga.slug, self.event.slug, 'GIFTCARD'), follow=True)
+        assert "alert-success" in html.rendered_content
+        assert "€12.00" in html.rendered_content
+
+        payments = self.client.session['carts'][get_cart_session_key(self.client, self.event)]["payments"]
+        assert payments[0]["info_data"]["gift_card_secret"] == "GIFTCARD"
+
+    def test_voucher_is_a_gift_card_but_invalid(self):
+        gc = self.orga.issued_gift_cards.create(secret="GIFTCARD", currency=self.event.currency, expires=now() - datetime.timedelta(days=1))
+        gc.transactions.create(value=Decimal("12.00"), acceptor=self.orga)
+
+        html = self.client.get('/%s/%s/redeem?voucher=%s' % (self.orga.slug, self.event.slug, 'GIFTCARD'), follow=True)
+        assert "alert-danger" in html.rendered_content
+        assert "This gift card is no longer valid" in html.rendered_content
+
 
 class WaitingListTest(EventTestMixin, SoupTest):
     @scopes_disabled()
@@ -995,6 +1177,21 @@ class WaitingListTest(EventTestMixin, SoupTest):
 
     def test_disabled(self):
         self.event.settings.set('waiting_list_enabled', False)
+        response = self.client.get(
+            '/%s/%s/' % (self.orga.slug, self.event.slug)
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn('waitinglist', response.rendered_content)
+        response = self.client.get(
+            '/%s/%s/waitinglist/?item=%d' % (self.orga.slug, self.event.slug, self.item.pk + 1)
+        )
+        self.assertEqual(response.status_code, 302)
+
+    def test_auto_disable(self):
+        self.event.settings.set('waiting_list_enabled', True)
+        self.event.settings.waiting_list_auto_disable = RelativeDateWrapper(
+            RelativeDate(days=900, time=datetime.time(9, 0, 0), base_date_name='event__date_from', minutes=None, is_after=False)
+        )
         response = self.client.get(
             '/%s/%s/' % (self.orga.slug, self.event.slug)
         )
@@ -1032,6 +1229,65 @@ class WaitingListTest(EventTestMixin, SoupTest):
         assert wle.variation is None
         assert wle.voucher is None
         assert wle.locale == 'en'
+
+    def test_initial_selection(self):
+        with scopes_disabled():
+            cat = ItemCategory.objects.create(event=self.event, name='Tickets')
+            self.item.category = cat
+            self.item.save()
+
+            item2 = Item.objects.create(
+                event=self.event, name='VIP ticket',
+                default_price=Decimal('25.00'),
+                active=True, category=cat,
+            )
+            self.q.items.add(item2)
+
+        response = self.client.get(
+            '/%s/%s/waitinglist/?item=%d' % (
+                self.orga.slug, self.event.slug, item2.pk
+            )
+        )
+        self.assertEqual(response.status_code, 200)
+        doc = BeautifulSoup(response.render().content, "lxml")
+
+        select = doc.find('select', {'name': 'itemvar'})
+        optgroup = select.find('optgroup')
+        self.assertIsNotNone(optgroup, 'Choices should be grouped by category')
+        self.assertEqual(optgroup['label'], 'Tickets')
+
+        selected = select.find_all('option', selected=True)
+        self.assertEqual(len(selected), 1, 'Exactly one option should be pre-selected')
+        self.assertEqual(selected[0]['value'], str(item2.pk))
+
+    def test_initial_selection_with_variation(self):
+        with scopes_disabled():
+            cat = ItemCategory.objects.create(event=self.event, name='Tickets')
+            self.item.category = cat
+            self.item.has_variations = True
+            self.item.save()
+
+            var1 = ItemVariation.objects.create(item=self.item, value='Standard')
+            var2 = ItemVariation.objects.create(item=self.item, value='Premium')
+            self.q.variations.add(var1, var2)
+
+        response = self.client.get(
+            '/%s/%s/waitinglist/?item=%d&var=%d' % (
+                self.orga.slug, self.event.slug,
+                self.item.pk, var2.pk,
+            )
+        )
+        self.assertEqual(response.status_code, 200)
+        doc = BeautifulSoup(response.render().content, "lxml")
+
+        select = doc.find('select', {'name': 'itemvar'})
+        optgroup = select.find('optgroup')
+        self.assertIsNotNone(optgroup, 'Choices should be grouped by category')
+        self.assertEqual(optgroup['label'], 'Tickets')
+
+        selected = select.find_all('option', selected=True)
+        self.assertEqual(len(selected), 1, 'Exactly one option should be pre-selected')
+        self.assertEqual(selected[0]['value'], '%d-%d' % (self.item.pk, var2.pk))
 
     def test_subevent_valid(self):
         with scopes_disabled():
@@ -1158,202 +1414,6 @@ class WaitingListTest(EventTestMixin, SoupTest):
         v.refresh_from_db()
         assert v.is_active()
 
-    def test_waiting_list_rank_display_single_product(self):
-        """Test rank display with single product"""
-        with scopes_disabled():
-            self.orga.settings.customer_accounts = True
-            self.orga.save()
-            
-            customer = self.orga.customers.create(email='test@example.com', is_verified=True, is_active=True)
-            customer.set_password('test')
-            customer.save()
-            
-            WaitingListEntry.objects.create(
-                event=self.event, item=self.item, email='test@example.com'
-            )
-        
-        # Login through the customer login endpoint to properly set up customer session
-        login_response = self.client.post('/%s/account/login' % self.orga.slug, {
-            'email': 'test@example.com',
-            'password': 'test',
-        })
-        self.assertEqual(login_response.status_code, 302)  # Should redirect after login
-        
-        response = self.client.get('/%s/%s/' % (self.orga.slug, self.event.slug))
-        self.assertEqual(response.status_code, 200)
-        
-        self.assertIn('waiting_list_ranks', response.context)
-        ranks = response.context['waiting_list_ranks']
-        self.assertEqual(len(ranks), 1)
-        self.assertEqual(ranks[0]['item_name'], 'Early-bird ticket')
-        self.assertEqual(ranks[0]['rank'], 1)  # First in line
-        self.assertIsNone(ranks[0]['variation_name'])
-        self.assertEqual(ranks[0]['lottery_run'], False)
-
-    def test_waiting_list_rank_display_multiple_products(self):
-        """Test rank display with multiple products"""
-        with scopes_disabled():
-            self.orga.settings.customer_accounts = True
-            self.orga.save()
-            
-            customer = self.orga.customers.create(email='test@example.com', is_verified=True, is_active=True)
-            customer.set_password('test')
-            customer.save()
-            
-            item2 = Item.objects.create(event=self.event, name='VIP ticket', default_price=Decimal('50.00'),
-                                        active=True)
-            self.q.items.add(item2)
-            
-            # Create waiting list entries for both products
-            WaitingListEntry.objects.create(
-                event=self.event, item=self.item, email='test@example.com'
-            )
-            WaitingListEntry.objects.create(
-                event=self.event, item=item2, email='test@example.com'
-            )
-        
-        # Login through the customer login endpoint to properly set up customer session
-        login_response = self.client.post('/%s/account/login' % self.orga.slug, {
-            'email': 'test@example.com',
-            'password': 'test',
-        })
-        self.assertEqual(login_response.status_code, 302)  # Should redirect after login
-        
-        response = self.client.get('/%s/%s/' % (self.orga.slug, self.event.slug))
-        self.assertEqual(response.status_code, 200)
-        
-        # Check that both products are in ranks
-        ranks = response.context['waiting_list_ranks']
-        self.assertEqual(len(ranks), 2)
-        item_names = [r['item_name'] for r in ranks]
-        self.assertIn('Early-bird ticket', item_names)
-        self.assertIn('VIP ticket', item_names)
-
-    def test_waiting_list_rank_display_with_voucher(self):
-        """Test rank display when user has a voucher (rank = 0)"""
-        with scopes_disabled():
-            self.orga.settings.customer_accounts = True
-            self.orga.save()
-            
-            customer = self.orga.customers.create(email='test@example.com', is_verified=True, is_active=True)
-            customer.set_password('test')
-            customer.save()
-            
-            v = self.event.vouchers.create(item=self.item, block_quota=True, valid_until=now() + datetime.timedelta(days=5))
-            WaitingListEntry.objects.create(
-                event=self.event, item=self.item, email='test@example.com', voucher=v
-            )
-        
-        # Login through the customer login endpoint to properly set up customer session
-        login_response = self.client.post('/%s/account/login' % self.orga.slug, {
-            'email': 'test@example.com',
-            'password': 'test',
-        })
-        self.assertEqual(login_response.status_code, 302)  # Should redirect after login
-        
-        response = self.client.get('/%s/%s/' % (self.orga.slug, self.event.slug))
-        self.assertEqual(response.status_code, 200)
-        
-        # Check that rank is 0 (has voucher)
-        ranks = response.context['waiting_list_ranks']
-        self.assertEqual(len(ranks), 1)
-        self.assertEqual(ranks[0]['rank'], 0)
-        self.assertEqual(ranks[0]['voucher_code'], v.code)
-
-    def test_waiting_list_rank_display_no_entries(self):
-        """Test rank display when user has no waiting list entries"""
-        with scopes_disabled():
-            self.orga.settings.customer_accounts = True
-            self.orga.save()
-            
-            customer = self.orga.customers.create(email='test@example.com', is_verified=True, is_active=True)
-            customer.set_password('test')
-            customer.save()
-        
-        # Login through the customer login endpoint to properly set up customer session
-        login_response = self.client.post('/%s/account/login' % self.orga.slug, {
-            'email': 'test@example.com',
-            'password': 'test',
-        })
-        self.assertEqual(login_response.status_code, 302)  # Should redirect after login
-        
-        response = self.client.get('/%s/%s/' % (self.orga.slug, self.event.slug))
-        self.assertEqual(response.status_code, 200)
-        
-        ranks = response.context['waiting_list_ranks']
-        self.assertEqual(len(ranks), 0)
-
-    def test_waiting_list_rank_display_after_lottery(self):
-        """Test that rank display updates correctly after lottery is run"""
-        with scopes_disabled():
-            self.orga.settings.customer_accounts = True
-            self.orga.save()
-            
-            customer = self.orga.customers.create(email='test@example.com', is_verified=True, is_active=True)
-            customer.set_password('test')
-            customer.save()
-            
-            for i in range(3):
-                WaitingListEntry.objects.create(
-                    event=self.event, item=self.item, email='other{}@example.com'.format(i)
-                )
-            WaitingListEntry.objects.create(
-                event=self.event, item=self.item, email='test@example.com'
-            )
-        
-        # Login and check initial rank (should be 4th, since 3 others were created first)
-        login_response = self.client.post('/%s/account/login' % self.orga.slug, {
-            'email': 'test@example.com',
-            'password': 'test',
-        })
-        self.assertEqual(login_response.status_code, 302)  # Should redirect after login
-        
-        response = self.client.get('/%s/%s/' % (self.orga.slug, self.event.slug))
-        self.assertEqual(response.status_code, 200)
-        
-        ranks_before = response.context['waiting_list_ranks']
-        self.assertEqual(len(ranks_before), 1)
-        rank_before = ranks_before[0]['rank']
-        self.assertEqual(ranks_before[0]['lottery_run'], False)
-        
-        # Now run lottery via control panel (simulate admin running lottery)
-        # We need to login as admin first
-        from pretix.base.models import User, Team
-        with scopes_disabled():
-            user = User.objects.create_user('admin@example.com', 'admin')
-            t = Team.objects.create(organizer=self.orga, can_view_orders=True, can_change_orders=True)
-            t.members.add(user)
-            t.limit_events.add(self.event)
-        
-        self.client.logout()
-        self.client.login(email='admin@example.com', password='admin')
-        
-        # Run lottery for the item
-        response = self.client.get('/control/event/%s/%s/waitinglist/?lottery=run&item=%d' % (
-            self.orga.slug, self.event.slug, self.item.pk
-        ))
-        self.assertEqual(response.status_code, 200)
-        
-        # Login back as customer and check rank again
-        self.client.logout()
-        login_response = self.client.post('/%s/account/login' % self.orga.slug, {
-            'email': 'test@example.com',
-            'password': 'test',
-        })
-        self.assertEqual(login_response.status_code, 302)  # Should redirect after login
-        
-        response = self.client.get('/%s/%s/' % (self.orga.slug, self.event.slug))
-        self.assertEqual(response.status_code, 200)
-        
-        ranks_after = response.context['waiting_list_ranks']
-        self.assertEqual(len(ranks_after), 1)
-        rank_after = ranks_after[0]['rank']
-        
-        # Rank should still be valid (1-4), but may have changed due to lottery shuffle
-        self.assertGreaterEqual(rank_after, 1)
-        self.assertLessEqual(rank_after, 4)
-        self.assertEqual(ranks_after[0]['lottery_run'], True)
-
 
 class DeadlineTest(EventTestMixin, TestCase):
     @scopes_disabled()
@@ -1442,7 +1502,7 @@ class DeadlineTest(EventTestMixin, TestCase):
     def test_saleschannel_disabled(self):
         self.event.presale_start = None
         self.event.presale_end = None
-        self.event.sales_channels = []
+        self.event.all_sales_channels = False
         self.event.save()
         response = self.client.get(
             '/%s/%s/' % (self.orga.slug, self.event.slug)
@@ -1489,6 +1549,7 @@ class TestResendLink(EventTestMixin, SoupTest):
             Order.objects.create(
                 code='DUMMY1', status=Order.STATUS_PENDING, event=self.event,
                 email='dummy@dummy.dummy', datetime=now(), expires=now(),
+                sales_channel=self.orga.sales_channels.get(identifier="web"),
                 total=0,
             )
         mail.outbox = []
@@ -1503,6 +1564,7 @@ class TestResendLink(EventTestMixin, SoupTest):
             Order.objects.create(
                 code='DUMMY1', status=Order.STATUS_PENDING, event=self.event,
                 email='dummy@dummy.dummy', datetime=now(), expires=now(),
+                sales_channel=self.orga.sales_channels.get(identifier="web"),
                 total=0,
             )
         mail.outbox = []
@@ -1518,11 +1580,13 @@ class TestResendLink(EventTestMixin, SoupTest):
             Order.objects.create(
                 code='DUMMY1', status=Order.STATUS_PENDING, event=self.event,
                 email='dummy@dummy.dummy', datetime=now(), expires=now(),
+                sales_channel=self.orga.sales_channels.get(identifier="web"),
                 total=0,
             )
             Order.objects.create(
                 code='DUMMY2', status=Order.STATUS_PENDING, event=self.event,
                 email='dummy@dummy.dummy', datetime=now(), expires=now(),
+                sales_channel=self.orga.sales_channels.get(identifier="web"),
                 total=0,
             )
         mail.outbox = []
@@ -1622,7 +1686,10 @@ class EventIcalDownloadTest(EventTestMixin, SoupTest):
                       (self.event.settings.timezone,
                        self.event.date_from.astimezone(ZoneInfo(self.event.settings.timezone)).strftime(fmt)),
                       ical, 'incorrect start time')
-        self.assertNotIn('DTEND', ical, 'unexpected end time attribute')
+        self.assertIn('DTEND;TZID=%s:%s' %
+                      (self.event.settings.timezone,
+                       (self.event.date_from.astimezone(ZoneInfo(self.event.settings.timezone)) + datetime.timedelta(hours=1)).strftime(fmt)),
+                      ical, 'incorrect end time')
 
     def test_no_date_to_and_time(self):
         self.event.settings.show_date_to = False
@@ -1630,7 +1697,7 @@ class EventIcalDownloadTest(EventTestMixin, SoupTest):
         self.event.save()
         ical = self.client.get('/%s/%s/ical/' % (self.orga.slug, self.event.slug)).content.decode()
         self.assertIn('DTSTART;VALUE=DATE:%s' % self.event.date_from.strftime('%Y%m%d'), ical, 'incorrect start date')
-        self.assertNotIn('DTEND', ical, 'unexpected end time attribute')
+        self.assertIn('DTEND;VALUE=DATE:%s' % (self.event.date_from + datetime.timedelta(days=1)).strftime('%Y%m%d'), ical, 'incorrect start date')
 
     def test_local_date_diff_from_utc(self):
         self.event.date_from = datetime.datetime(2013, 12, 26, 21, 57, 58, tzinfo=datetime.timezone.utc)
@@ -1736,6 +1803,8 @@ class EventLocaleTest(EventTestMixin, SoupTest):
         self.event.settings.locales = ['de', 'en']
         self.event.settings.locale = 'de'
         self.event.settings.timezone = 'UTC'
+        self.event.date_from = datetime.datetime(2024, 12, 26, 14, 0, tzinfo=datetime.timezone.utc)
+        self.event.save()
 
     def test_german_by_default(self):
         response = self.client.get(
@@ -1751,7 +1820,7 @@ class EventLocaleTest(EventTestMixin, SoupTest):
             '/%s/%s/' % (self.orga.slug, self.event.slug)
         )
         self.assertEqual(response.status_code, 200)
-        self.assertIn('Dec. 26,', response.rendered_content)
+        self.assertIn('Thu, Dec. 26,', response.rendered_content)
         self.assertIn('14:00', response.rendered_content)
 
     def test_english_region_US(self):
@@ -1761,7 +1830,7 @@ class EventLocaleTest(EventTestMixin, SoupTest):
             '/%s/%s/' % (self.orga.slug, self.event.slug)
         )
         self.assertEqual(response.status_code, 200)
-        self.assertIn('Dec. 26,', response.rendered_content)
+        self.assertIn('Thu, Dec. 26,', response.rendered_content)
         self.assertIn('2 p.m.', response.rendered_content)
 
     def test_german_region_US(self):
@@ -1771,5 +1840,5 @@ class EventLocaleTest(EventTestMixin, SoupTest):
             '/%s/%s/' % (self.orga.slug, self.event.slug)
         )
         self.assertEqual(response.status_code, 200)
-        self.assertIn('26. Dezember', response.rendered_content)
+        self.assertIn('Do, 26. Dezember', response.rendered_content)
         self.assertIn('14:00', response.rendered_content)

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -23,7 +23,6 @@ from django.db import models
 from django.db.models import Count, OuterRef, Subquery, Value
 from django.db.models.functions import Coalesce
 from django.utils.formats import date_format
-from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
 from django_scopes import ScopedManager, scopes_disabled
 from i18nfield.fields import I18nCharField
@@ -31,6 +30,7 @@ from i18nfield.fields import I18nCharField
 from pretix.base.models import Customer
 from pretix.base.models.base import LoggedModel
 from pretix.base.models.organizer import Organizer
+from pretix.base.timemachine import time_machine_now
 from pretix.helpers.names import build_name
 
 
@@ -49,7 +49,8 @@ class MembershipType(LoggedModel):
     allow_parallel_usage = models.BooleanField(
         verbose_name=_('Parallel usage is allowed'),
         help_text=_('If this is selected, the membership can be used to purchase tickets for events happening at the same time. Note '
-                    'that this will only check for an identical start time of the events, not for any overlap between events.'),
+                    'that this will only check for an identical start time of the events, not for any overlap between events. An overlap '
+                    'check will be performed if there is a product-level validity of the ticket.'),
         default=False
     )
     max_usages = models.PositiveIntegerField(
@@ -159,14 +160,32 @@ class Membership(models.Model):
         return f'{self.membership_type.name}: {self.attendee_name} ({ds} – {de})'
 
     @property
+    def percentage_used(self):
+        if self.membership_type.max_usages and self.usages:
+            return int(self.usages / self.membership_type.max_usages * 100)
+        return 0
+
+    @property
     def attendee_name(self):
         return build_name(self.attendee_name_parts, fallback_scheme=lambda: self.customer.organizer.settings.name_scheme)
 
-    def is_valid(self, ev=None):
-        if ev:
+    @property
+    def expired(self):
+        return time_machine_now() > self.date_end
+
+    @property
+    def not_yet_valid(self):
+        return time_machine_now() < self.date_start
+
+    def is_valid(self, ev=None, ticket_valid_from=None, valid_from_not_chosen=False):
+        if valid_from_not_chosen:
+            return not self.canceled and self.date_end >= time_machine_now()
+        elif ticket_valid_from:
+            dt = ticket_valid_from
+        elif ev:
             dt = ev.date_from
         else:
-            dt = now()
+            dt = time_machine_now()
 
         return not self.canceled and dt >= self.date_start and dt <= self.date_end
 

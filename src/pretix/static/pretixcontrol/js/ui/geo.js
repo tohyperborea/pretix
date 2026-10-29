@@ -1,163 +1,198 @@
-/*globals $*/
+/* globals $ */
 
-$(document).on("pretix:bind-forms", function () {
-    function cleanup(l) {
-        return $.trim(l.replace(/\n/g, ", "));
-    }
-    $(".geodata-section").each(function () {
-        // Geocoding
-        // detach notifications and append them to first label (should be from location)
-        var $notifications = $(".geodata-autoupdate", this).detach().appendTo($("label", this).first());
-        var $lat = $("input[name$=geo_lat]", this).first();
-        var $lon = $("input[name$=geo_lon]", this).first();
-        var lat;
-        var lon;
-        var $updateButton = $("[data-action=update]", this);
-        var $location = $("textarea[lang=en], input[lang=en]", this).first();
-        if (!$location.length) $location = $("textarea, input[type=text]", this).first();
+$(document).on('pretix:bind-forms', function () {
+	function cleanup (l) {
+		return $.trim(l.replace(/\n/g, ', '))
+	}
+	function combine ($sel) {
+		let parts = [
+			$sel.filter('[name*=street]').val(),
+			$sel.filter('[name*=zipcode]').val(),
+			$sel.filter('[name*=city]').val(),
+			$sel.filter('[name*=state]').val(),
+			$sel.filter('[name*=country]').find('option:selected').text(),
+			$sel.filter('[name*=location]').val(),
+		]
+		let res = ''
+		for (let val of parts) {
+			if (val) {
+				if (res) {
+					res += ', '
+				}
+				res += val
+			}
+		}
+		return cleanup(res)
+	}
+	$('.geodata-section').each(function () {
+		// Geocoding
+		// detach notifications and append them to first label (should be from location)
+		let $notifications = $('.geodata-autoupdate', this).detach().appendTo($('label', this).first())
+		let $lat = $('input[name$=geo_lat]', this).first()
+		let $lon = $('input[name$=geo_lon]', this).first()
+		let lat
+		let lon
+		let $updateButton = $('[data-action=update]', this)
 
-        if (!$lat.length || !$lon.length || !$location.length) {
-            return;
-        }
+		let $location
+		// The .geodata-section is expected to include either...
+		// ... an English "location" field
+		if ($('textarea[lang=en], input[lang=en]', this).length) {
+			$location = $('textarea[lang=en], input[lang=en], select', this).not('[name*=geo_]')
+		}
 
-        var debounceLoad, debounceLatLonChange, delayUpdateDismissal;
-        var touched = $lat.val() !== "";
-        var xhr;
-        var lastLocation = cleanup($location.val());
+		// ... a "location" field in any other language
+		if (!$location || !$location.length) {
+			let lang = $('textarea, input[type=text]', this).not('[name*=geo_]').first().attr('lang')
+			if (lang) {
+				$location = $('textarea[lang=' + lang + '], input[lang=' + lang + '], select', this)
+			}
+		}
 
-        function load() {
-            window.clearTimeout(debounceLoad);
-            if (xhr) {
-                xhr.abort();
-                xhr = null;
-            }
+		// ... or a set of fields like a full address form
+		if (!$location || !$location.length) {
+			$location = $('textarea, input, select', this).not('[name*=geo_]')
+		}
 
-            var q = cleanup($location.val());
-            if (q === "" || q === lastLocation) return;
+		if (!$lat.length || !$lon.length || !$location.length) {
+			return
+		}
 
-            lastLocation = q;
-            $notifications.attr("data-notify", "loading");
+		let debounceLoad, debounceLatLonChange, delayUpdateDismissal
+		let touched = $lat.val() !== ''
+		let xhr
+		let lastLocation = combine($location)
 
-            xhr = $.getJSON('/control/geocode/?q=' + encodeURIComponent(q), function (res) {
-                if (!res.results || !res.results.length) {
-                    $notifications.attr("data-notify", "error");
-                    return;
-                }
+		function load () {
+			window.clearTimeout(debounceLoad)
+			if (xhr) {
+				xhr.abort()
+				xhr = null
+			}
 
-                lat = res.results[0].lat;
-                lon = res.results[0].lon;
-                if ($lat.val() == lat && $lon.val() == lon) {
-                    $notifications.attr("data-notify", "");
-                }
-                else if (touched) {
-                    $notifications.attr("data-notify", "confirm");
-                }
-                else {
-                    $notifications.attr("data-notify", "");
-                    $lat.val(lat);
-                    $lon.val(lon);
-                    center(13);
-                }
-            })
-        }
+			let q = combine($location)
+			if (q === '' || q === lastLocation) return
 
-        $lat.add($lon).change(function () {
-            if (this.value !== "") touched = true;
-            center(13);
-        }).keyup(function () {
-            window.clearTimeout(debounceLatLonChange);
-            debounceLatLonChange = window.setTimeout(center, 300);
-        });
+			lastLocation = q
+			$notifications.attr('data-notify', 'loading')
 
-        $location.change(load);
-        $location.keyup(function () {
-            window.clearTimeout(debounceLoad);
-            debounceLoad = window.setTimeout(load, 1000);
-            if ($notifications.attr("data-notify") == "confirm" && lastLocation !== cleanup(this.value)) $notifications.attr("data-notify", "");
-        });
+			xhr = $.getJSON('/control/geocode/?q=' + encodeURIComponent(q), function (res) {
+				if (!res.results || !res.results.length) {
+					$notifications.attr('data-notify', 'error')
+					return
+				}
 
-        $updateButton.click(function() {
-            $lat.val(lat);
-            $lon.val(lon).trigger("change");// change-event is needed by bulk-edit
-            touched = false;
-            center(13);
-            $notifications.attr("data-notify", "updated");
-            delayUpdateDismissal = window.setTimeout(function() {
-                if ($notifications.attr("data-notify") == "updated") $notifications.attr("data-notify", "");
-            }, 2500);
-        });
+				lat = res.results[0].lat
+				lon = res.results[0].lon
+				if ($lat.val() == lat && $lon.val() == lon) {
+					$notifications.attr('data-notify', '')
+				} else if (touched) {
+					$notifications.attr('data-notify', 'confirm')
+				} else {
+					$notifications.attr('data-notify', '')
+					$lat.val(lat)
+					$lon.val(lon)
+					center(13)
+				}
+			})
+		}
 
-        // Map
-        var $grp = $(".geodata-group", this);
-        var tiles = $grp.attr("data-tiles");
-        var attrib = $grp.attr("data-attrib");
-        if (tiles) {
-            var $map = $("<div>");
-            $grp.append($("<div>").addClass("col-md-9 col-md-offset-3").append($map));
-            var map = L.map($map.get(0));
-            L.tileLayer(tiles, {
-                attribution: attrib,
-                maxZoom: 18,
-            }).addTo(map);
+		$lat.add($lon).change(function () {
+			if (this.value !== '') touched = true
+			center(13)
+		}).keyup(function () {
+			window.clearTimeout(debounceLatLonChange)
+			debounceLatLonChange = window.setTimeout(center, 300)
+		})
 
-            function getpoint() {
-                if ($lat.val() !== "" && $lon.val() !== "") {
-                    var p = [parseFloat($lat.val().replace(",", ".")), parseFloat($lon.val().replace(",", "."))];
-                    // Clip to valid ranges. Very invalid lon/lat values can even lead to browser crashes in leaflet apparently
-                    if (p[0] < -90) p[0] = -90
-                    if (p[0] > 90) p[0] = 90
-                    if (p[1] < -180) p[1] = -180
-                    if (p[1] > 180) p[1] = 180
-                    return p
-                } else {
-                    return [0.0, 0.0];
-                }
-            }
+		$location.change(load)
+		$location.keyup(function () {
+			window.clearTimeout(debounceLoad)
+			debounceLoad = window.setTimeout(load, 1000)
+			if ($notifications.attr('data-notify') == 'confirm' && lastLocation !== cleanup(this.value)) $notifications.attr('data-notify', '')
+		})
 
-            var marker = L.marker(getpoint(), {
-                draggable: 'true',
-                icon: L.icon({
-                    iconUrl: $grp.attr("data-icon"),
-                    shadowUrl: $grp.attr("data-shadow"),
-                    iconSize: [25, 41],
-                    iconAnchor: [12, 41],
-                    popupAnchor: [1, -34],
-                    tooltipAnchor: [16, -28],
-                    shadowSize: [41, 41]
-                })
-            });
-            marker.addTo(map);
-            marker.on("dragend", function (event) {
-                var position = marker.getLatLng();
-                marker.setLatLng(position, {
-                    draggable: 'true'
-                }).bindPopup(position).update();
-                $lat.val(position.lat.toFixed(7));
-                $lon.val(position.lng.toFixed(7));
-                touched = true;
-                center(null);
-            });
+		$updateButton.click(function () {
+			$lat.val(lat)
+			$lon.val(lon).trigger('change')// change-event is needed by bulk-edit
+			touched = false
+			center(13)
+			$notifications.attr('data-notify', 'updated')
+			delayUpdateDismissal = window.setTimeout(function () {
+				if ($notifications.attr('data-notify') == 'updated') $notifications.attr('data-notify', '')
+			}, 2500)
+		})
 
-            function center(zoom) {
-                if ($lat.val() !== "" && $lon.val() !== "") {
-                    if (zoom) {
-                        map.setView(getpoint(), zoom);
-                    } else {
-                        map.panTo(getpoint());
-                    }
-                    marker.setLatLng(getpoint(), {
-                        draggable: 'true'
-                    }).bindPopup(getpoint()).update();
-                } else {
-                    map.fitWorld();
-                }
-            }
+		// Map
+		let $grp = $('.geodata-group', this)
+		let tiles = $grp.attr('data-tiles')
+		let attrib = $grp.attr('data-attrib')
+		if (tiles) {
+			let $map = $('<div>')
+			$grp.append($('<div>').addClass('col-md-9 col-md-offset-3').append($map))
+			let map = L.map($map.get(0))
+			L.tileLayer(tiles, {
+				attribution: attrib,
+				maxZoom: 18,
+			}).addTo(map)
 
-            center(13);
-        } else {
-            function center(zoom) {
-            }
-        }
+			function getpoint () {
+				if ($lat.val() !== '' && $lon.val() !== '') {
+					let p = [parseFloat($lat.val().replace(',', '.')), parseFloat($lon.val().replace(',', '.'))]
+					// Clip to valid ranges. Very invalid lon/lat values can even lead to browser crashes in leaflet apparently
+					if (p[0] < -90) p[0] = -90
+					if (p[0] > 90) p[0] = 90
+					if (p[1] < -180) p[1] = -180
+					if (p[1] > 180) p[1] = 180
+					return p
+				} else {
+					return [0.0, 0.0]
+				}
+			}
 
-    });
-});
+			let marker = L.marker(getpoint(), {
+				draggable: 'true',
+				icon: L.icon({
+					iconUrl: $grp.attr('data-icon'),
+					shadowUrl: $grp.attr('data-shadow'),
+					iconSize: [25, 41],
+					iconAnchor: [12, 41],
+					popupAnchor: [1, -34],
+					tooltipAnchor: [16, -28],
+					shadowSize: [41, 41]
+				})
+			})
+			marker.addTo(map)
+			marker.on('dragend', function (event) {
+				let position = marker.getLatLng()
+				marker.setLatLng(position, {
+					draggable: 'true'
+				}).bindPopup(position).update()
+				$lat.val(position.lat.toFixed(7))
+				$lon.val(position.lng.toFixed(7))
+				touched = true
+				center(null)
+			})
+
+			function center (zoom) {
+				if ($lat.val() !== '' && $lon.val() !== '') {
+					if (zoom) {
+						map.setView(getpoint(), zoom)
+					} else {
+						map.panTo(getpoint())
+					}
+					marker.setLatLng(getpoint(), {
+						draggable: 'true'
+					}).bindPopup(getpoint()).update()
+				} else {
+					map.fitWorld()
+				}
+			}
+
+			center(13)
+		} else {
+			function center (zoom) {
+			}
+		}
+	})
+})

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -22,15 +22,15 @@
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
-from django.core.validators import EmailValidator, MinLengthValidator
+from django.core.validators import MinLengthValidator
 from django.utils.functional import cached_property
 from django.utils.translation import gettext as _, gettext_lazy, pgettext_lazy
 
 from pretix.base.modelimport import (
     BooleanColumnMixin, DatetimeColumnMixin, DecimalColumnMixin, ImportColumn,
-    IntegerColumnMixin, i18n_flat,
+    IntegerColumnMixin, SubeventColumnMixin, i18n_flat,
 )
-from pretix.base.models import ItemVariation, Quota, Seat, Voucher
+from pretix.base.models import ItemVariation, Quota, Seat, SubEvent, Voucher
 from pretix.base.signals import voucher_import_columns
 
 
@@ -55,23 +55,29 @@ class CodeColumn(ImportColumn):
         obj.code = value
 
 
-class SubeventColumn(ImportColumn):
+class SubeventColumn(SubeventColumnMixin, ImportColumn):
     identifier = 'subevent'
     verbose_name = pgettext_lazy('subevents', 'Date')
 
-    def assign(self, value, obj: Voucher, **kwargs):
+    def assign(self, value, obj: SubEvent, **kwargs):
         obj.subevent = value
 
 
 class MaxUsagesColumn(IntegerColumnMixin, ImportColumn):
     identifier = 'max_usages'
     verbose_name = gettext_lazy('Maximum usages')
+    default_value = None
     initial = "static:1"
 
     def static_choices(self):
         return [
             ("1", "1")
         ]
+
+    def clean(self, value, previous_values):
+        if value is None and previous_values.get("code"):
+            raise ValidationError(_('The maximum number of usages must be set.'))
+        return super().clean(value, previous_values)
 
     def assign(self, value, obj: Voucher, **kwargs):
         obj.max_usages = value if value is not None else 1
@@ -80,6 +86,7 @@ class MaxUsagesColumn(IntegerColumnMixin, ImportColumn):
 class MinUsagesColumn(IntegerColumnMixin, ImportColumn):
     identifier = 'min_usages'
     verbose_name = gettext_lazy('Minimum usages')
+    default_value = None
     initial = "static:1"
 
     def static_choices(self):
@@ -125,7 +132,7 @@ class AllowIgnoreQuotaColumn(BooleanColumnMixin, ImportColumn):
 
 class PriceModeColumn(ImportColumn):
     identifier = 'price_mode'
-    verbose_name = gettext_lazy('Price mode')
+    verbose_name = gettext_lazy('Price effect')
     default_value = None
     initial = 'static:none'
 
@@ -140,7 +147,7 @@ class PriceModeColumn(ImportColumn):
         elif value in reverse:
             return reverse[value]
         else:
-            raise ValidationError(_("Could not parse {value} as a price mode, use one of {options}.").format(
+            raise ValidationError(_("Could not parse {value} as a price effect, use one of {options}.").format(
                 value=value, options=', '.join(d.keys())
             ))
 
@@ -155,7 +162,7 @@ class ValueColumn(DecimalColumnMixin, ImportColumn):
     def clean(self, value, previous_values):
         value = super().clean(value, previous_values)
         if value and previous_values.get("price_mode") == "none":
-            raise ValidationError(_("It is pointless to set a value without a price mode."))
+            raise ValidationError(_("It is pointless to set a value without a price effect."))
         return value
 
     def assign(self, value, obj: Voucher, **kwargs):
@@ -246,7 +253,7 @@ class QuotaColumn(ImportColumn):
                 raise ValidationError(_("You cannot specify a quota if you specified a product."))
             matches = [
                 q for q in self.quotas
-                if str(q.pk) == value or any((v and v == value) for v in i18n_flat(q.name))
+                if str(q.pk) == value or q.name == value
             ]
             if len(matches) == 0:
                 raise ValidationError(_("No matching variation was found."))
@@ -322,24 +329,6 @@ class CommentColumn(ImportColumn):
         voucher.comment = value or ''
 
 
-class RecipientEmailColumn(ImportColumn):
-    identifier = 'email'
-    verbose_name = gettext_lazy('Recipient email')
-
-    def clean(self, value, previous_values):
-        settings = getattr(self, 'import_settings', {})
-        if settings.get('send') and not value:
-            raise ValidationError(_('This field is required if you enable email sending.'))
-        if value:
-            EmailValidator()(value)
-        return value
-
-
-class RecipientNameColumn(ImportColumn):
-    identifier = 'name'
-    verbose_name = gettext_lazy('Recipient name')
-
-
 class ShowHiddenItemsColumn(BooleanColumnMixin, ImportColumn):
     identifier = 'show_hidden_items'
     verbose_name = gettext_lazy('Shows hidden products that match this voucher')
@@ -385,8 +374,6 @@ def get_voucher_import_columns(event):
         SeatColumn(event),
         TagColumn(event),
         CommentColumn(event),
-        RecipientEmailColumn(event),
-        RecipientNameColumn(event),
         ShowHiddenItemsColumn(event),
         AllAddonsIncludedColumn(event),
         AllBundlesIncludedColumn(event),

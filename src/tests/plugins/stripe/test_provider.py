@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -40,7 +40,7 @@ import pytest
 from django.test import RequestFactory
 from django.utils.timezone import now
 from django_scopes import scope
-from stripe.error import APIConnectionError, CardError
+from stripe import error
 
 from pretix.base.models import Event, Order, OrderRefund, Organizer
 from pretix.base.payment import PaymentException
@@ -55,11 +55,13 @@ def env():
             organizer=o, name='Dummy', slug='dummy',
             date_from=now(), live=True
         )
+        event.settings.set('payment_stripe_publishable_key', 'nokey')
         o1 = Order.objects.create(
             code='FOOBAR', event=event, email='dummy@dummy.test',
             status=Order.STATUS_PENDING,
             datetime=now(), expires=now() + timedelta(days=10),
-            total=Decimal('13.37')
+            total=Decimal('13.37'),
+            sales_channel=o.sales_channels.get(identifier="web"),
         )
         yield event, o1
 
@@ -75,11 +77,11 @@ def factory():
     return RequestFactory()
 
 
-class MockedRefunds():
+class MockedRefunds:
     pass
 
 
-class MockedCharge():
+class MockedCharge:
     status = ''
     paid = False
     id = 'ch_123345345'
@@ -96,16 +98,25 @@ class MockedCharge():
         pass
 
 
-class Object():
+class Object:
     pass
 
 
-class MockedPaymentintent():
+class MockedPaymentintent:
     status = ''
     id = 'pi_1EUon12Tb35ankTnZyvC3SdE'
+    latest_charge = MockedCharge()
     charges = Object()
-    charges.data = [MockedCharge()]
+    charges.data = [latest_charge]
     last_payment_error = None
+
+
+class MockedAppleDomain:
+    livemode = True
+
+
+def apple_domain_create(**kwargs):
+    return MockedAppleDomain()
 
 
 @pytest.mark.django_db
@@ -118,9 +129,10 @@ def test_perform_success(env, factory, monkeypatch):
         assert kwargs['payment_method'] == 'pm_189fTT2eZvKYlo2CvJKzEzeu'
         c = MockedPaymentintent()
         c.status = 'succeeded'
-        c.charges.data[0].paid = True
+        c.latest_charge.paid = True
         return c
 
+    monkeypatch.setattr("stripe.ApplePayDomain.create", apple_domain_create)
     monkeypatch.setattr("stripe.PaymentIntent.create", paymentintent_create)
 
     prov = StripeCC(event)
@@ -140,6 +152,38 @@ def test_perform_success(env, factory, monkeypatch):
     assert order.status == Order.STATUS_PAID
 
 
+# Sideburn: the buyer's email is sent to Stripe so staff can search the Stripe dashboard by email.
+@pytest.mark.django_db
+def test_perform_sends_buyer_email_to_stripe(env, factory, monkeypatch):
+    event, order = env
+    sent = {}
+
+    def paymentintent_create(**kwargs):
+        sent.update(kwargs)
+        c = MockedPaymentintent()
+        c.status = 'succeeded'
+        c.charges.data[0].paid = True
+        return c
+
+    monkeypatch.setattr("stripe.PaymentIntent.create", paymentintent_create)
+
+    prov = StripeCC(event)
+    req = factory.post('/', {
+        'stripe_card_payment_method_id': 'pm_189fTT2eZvKYlo2CvJKzEzeu',
+        'stripe_card_last4': '4242',
+        'stripe_card_brand': 'Visa'
+    })
+    req.session = {}
+    prov.checkout_prepare(req, {})
+    payment = order.payments.create(
+        provider='stripe_cc', amount=order.total
+    )
+    prov.execute_payment(req, payment)
+
+    assert sent['description'] == 'dummy@dummy.test-DUMMY-FOOBAR'
+    assert sent['metadata']['customer'] == 'dummy@dummy.test'
+
+
 @pytest.mark.django_db
 def test_perform_success_zero_decimal_currency(env, factory, monkeypatch):
     event, order = env
@@ -152,9 +196,10 @@ def test_perform_success_zero_decimal_currency(env, factory, monkeypatch):
         assert kwargs['payment_method'] == 'pm_189fTT2eZvKYlo2CvJKzEzeu'
         c = MockedPaymentintent()
         c.status = 'succeeded'
-        c.charges.data[0].paid = True
+        c.latest_charge.paid = True
         return c
 
+    monkeypatch.setattr("stripe.ApplePayDomain.create", apple_domain_create)
     monkeypatch.setattr("stripe.PaymentIntent.create", paymentintent_create)
     prov = StripeCC(event)
     req = factory.post('/', {
@@ -178,8 +223,9 @@ def test_perform_card_error(env, factory, monkeypatch):
     event, order = env
 
     def paymentintent_create(**kwargs):
-        raise CardError(message='Foo', param='foo', code=100)
+        raise error.CardError(message='Foo', param='foo', code=100)
 
+    monkeypatch.setattr("stripe.ApplePayDomain.create", apple_domain_create)
     monkeypatch.setattr("stripe.PaymentIntent.create", paymentintent_create)
     prov = StripeCC(event)
     req = factory.post('/', {
@@ -204,8 +250,9 @@ def test_perform_stripe_error(env, factory, monkeypatch):
     event, order = env
 
     def paymentintent_create(**kwargs):
-        raise CardError(message='Foo', param='foo', code=100)
+        raise error.CardError(message='Foo', param='foo', code=100)
 
+    monkeypatch.setattr("stripe.ApplePayDomain.create", apple_domain_create)
     monkeypatch.setattr("stripe.PaymentIntent.create", paymentintent_create)
     prov = StripeCC(event)
     req = factory.post('/', {
@@ -236,11 +283,12 @@ def test_perform_failed(env, factory, monkeypatch):
         c = MockedPaymentintent()
         c.status = 'failed'
         c.failure_message = 'Foo'
-        c.charges.data[0].paid = True
+        c.latest_charge.paid = True
         c.last_payment_error = Object()
         c.last_payment_error.message = "Foo"
         return c
 
+    monkeypatch.setattr("stripe.ApplePayDomain.create", apple_domain_create)
     monkeypatch.setattr("stripe.PaymentIntent.create", paymentintent_create)
     prov = StripeCC(event)
     req = factory.post('/', {
@@ -264,18 +312,20 @@ def test_perform_failed(env, factory, monkeypatch):
 def test_refund_success(env, factory, monkeypatch):
     event, order = env
 
-    def charge_retr(*args, **kwargs):
-        def refund_create(amount):
-            r = MockedCharge()
-            r.id = 'foo'
-            r.status = 'succeeded'
-            return r
+    def refund_create(*args, **kwargs):
+        r = MockedCharge()
+        r.id = 'foo'
+        r.status = 'succeeded'
+        return r
 
+    def charge_retr(*args, **kwargs):
         c = MockedCharge()
         c.refunds.create = refund_create
         return c
 
+    monkeypatch.setattr("stripe.ApplePayDomain.create", apple_domain_create)
     monkeypatch.setattr("stripe.Charge.retrieve", charge_retr)
+    monkeypatch.setattr("stripe.Refund.create", refund_create)
     order.status = Order.STATUS_PAID
     p = order.payments.create(provider='stripe_cc', amount=order.total, info=json.dumps({
         'id': 'ch_123345345'
@@ -294,15 +344,17 @@ def test_refund_success(env, factory, monkeypatch):
 def test_refund_unavailable(env, factory, monkeypatch):
     event, order = env
 
-    def charge_retr(*args, **kwargs):
-        def refund_create(amount):
-            raise APIConnectionError(message='Foo')
+    def refund_create(*args, **kwargs):
+        raise error.APIConnectionError(message='Foo')
 
+    def charge_retr(*args, **kwargs):
         c = MockedCharge()
         c.refunds.create = refund_create
         return c
 
+    monkeypatch.setattr("stripe.ApplePayDomain.create", apple_domain_create)
     monkeypatch.setattr("stripe.Charge.retrieve", charge_retr)
+    monkeypatch.setattr("stripe.Refund.create", refund_create)
     order.status = Order.STATUS_PAID
     p = order.payments.create(provider='stripe_cc', amount=order.total, info=json.dumps({
         'id': 'ch_123345345'

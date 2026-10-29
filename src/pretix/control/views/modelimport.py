@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -38,6 +38,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.contrib import messages
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils.functional import cached_property
@@ -85,6 +86,7 @@ class BaseImportView(TemplateView):
             filename='import.csv',
             type='text/csv',
         )
+        cf.bind_to_session(request, "modelimport")
         cf.file.save('import.csv', request.FILES['file'])
 
         if self.request.POST.get("charset") in ENCODINGS:
@@ -137,7 +139,10 @@ class BaseProcessView(AsyncAction, FormView):
 
     @cached_property
     def file(self):
-        return get_object_or_404(CachedFile, pk=self.kwargs.get("file"), filename="import.csv")
+        cf = get_object_or_404(CachedFile, pk=self.kwargs.get("file"), filename="import.csv")
+        if not cf.allowed_for_session(self.request, "modelimport"):
+            raise Http404()
+        return cf
 
     @cached_property
     def parsed(self):
@@ -146,7 +151,7 @@ class BaseProcessView(AsyncAction, FormView):
         else:
             charset = None
         try:
-            return parse_csv(self.file.file, 1024 * 1024, charset=charset)
+            reader = parse_csv(self.file.file, 1024 * 1024, charset=charset)
         except UnicodeDecodeError:
             messages.warning(
                 self.request,
@@ -155,7 +160,16 @@ class BaseProcessView(AsyncAction, FormView):
                     "Some characters were replaced with a placeholder."
                 )
             )
-            return parse_csv(self.file.file, 1024 * 1024, "replace", charset=charset)
+            reader = parse_csv(self.file.file, 1024 * 1024, "replace", charset=charset)
+        if reader and reader._had_duplicates:
+            messages.warning(
+                self.request,
+                _(
+                    "Multiple columns of the CSV file have the same name and were renamed automatically. We "
+                    "recommend that you rename these in your source file to avoid problems during import."
+                )
+            )
+        return reader
 
     @cached_property
     def parsed_list(self):
@@ -200,7 +214,7 @@ class BaseProcessView(AsyncAction, FormView):
 
 class OrderImportView(EventPermissionRequiredMixin, BaseImportView):
     template_name = 'pretixcontrol/orders/import_start.html'
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
 
     def get_process_url(self, request, cf, charset):
         return reverse('control:event.orders.import.process', kwargs={
@@ -211,7 +225,7 @@ class OrderImportView(EventPermissionRequiredMixin, BaseImportView):
 
 
 class OrderProcessView(EventPermissionRequiredMixin, BaseProcessView):
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
     template_name = 'pretixcontrol/orders/import_process.html'
     form_class = OrdersProcessForm
     task = import_orders
@@ -243,7 +257,7 @@ class OrderProcessView(EventPermissionRequiredMixin, BaseProcessView):
 
 class VoucherImportView(EventPermissionRequiredMixin, BaseImportView):
     template_name = 'pretixcontrol/vouchers/import_start.html'
-    permission = 'can_change_vouchers'
+    permission = 'event.vouchers:write'
 
     def get_process_url(self, request, cf, charset):
         return reverse('control:event.vouchers.import.process', kwargs={
@@ -254,7 +268,7 @@ class VoucherImportView(EventPermissionRequiredMixin, BaseImportView):
 
 
 class VoucherProcessView(EventPermissionRequiredMixin, BaseProcessView):
-    permission = 'can_change_vouchers'
+    permission = 'event.vouchers:write'
     template_name = 'pretixcontrol/vouchers/import_process.html'
     form_class = VouchersProcessForm
     task = import_vouchers

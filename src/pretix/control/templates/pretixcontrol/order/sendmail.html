@@ -19,12 +19,15 @@
             {% bootstrap_field form.subject layout='horizontal' %}
             {% bootstrap_field form.message layout='horizontal' %}
             {% bootstrap_field form.attach_tickets layout='horizontal' %}
+            {% if form.attach_new_order %}
+                {% bootstrap_field form.attach_new_order layout='horizontal' %}
+            {% endif %}
             {% if form.attach_invoices %}
                 {% bootstrap_field form.attach_invoices layout='horizontal' %}
             {% endif %}
             {% if request.method == "POST" %}
                 <fieldset>
-                    <legend>{% trans "E-mail preview" %}</legend>
+                    <legend>{% trans "Email preview" %}</legend>
                     <div class="tab-pane mail-preview-group">
                         <div lang="{{ order.locale }}" class="mail-preview">
                             <strong>{{ preview_output.subject }}</strong><br><br>

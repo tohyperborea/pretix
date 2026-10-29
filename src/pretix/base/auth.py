@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -32,13 +32,16 @@
 # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations under the License.
 
+import string
 from collections import OrderedDict
 from importlib import import_module
 
 from django import forms
 from django.conf import settings
 from django.contrib.auth import authenticate
-from django.utils.translation import gettext_lazy as _
+from django.contrib.auth.hashers import check_password, make_password
+from django.core.exceptions import ValidationError
+from django.utils.translation import gettext_lazy as _, ngettext
 
 
 def get_auth_backends():
@@ -149,7 +152,7 @@ class NativeAuthBackend(BaseAuthBackend):
         to log in.
         """
         d = OrderedDict([
-            ('email', forms.EmailField(label=_("E-mail"), max_length=254,
+            ('email', forms.EmailField(label=_("Email"), max_length=254,
                                        widget=forms.EmailInput(attrs={'autofocus': 'autofocus'}))),
             ('password', forms.CharField(label=_("Password"), widget=forms.PasswordInput,
                                          max_length=4096)),
@@ -160,3 +163,74 @@ class NativeAuthBackend(BaseAuthBackend):
         u = authenticate(request=request, email=form_data['email'].lower(), password=form_data['password'])
         if u and u.auth_backend == self.identifier:
             return u
+
+
+class NumericAndAlphabeticPasswordValidator:
+
+    def validate(self, password, user=None):
+        has_numeric = any(c in string.digits for c in password)
+        has_alpha = any(c in string.ascii_letters for c in password)
+        if not has_numeric or not has_alpha:
+            raise ValidationError(
+                _(
+                    "Your password must contain both numeric and alphabetic characters.",
+                ),
+                code="password_numeric_and_alphabetic",
+            )
+
+    def get_help_text(self):
+        return _(
+            "Your password must contain both numeric and alphabetic characters.",
+        )
+
+
+class HistoryPasswordValidator:
+
+    def __init__(self, history_length=4):
+        self.history_length = history_length
+
+    def validate(self, password, user=None):
+        from pretix.base.models import User
+
+        if not user or not user.pk or not isinstance(user, User):
+            return
+
+        for hp in user.historic_passwords.order_by("-created")[:self.history_length]:
+            if check_password(password, hp.password):
+                raise ValidationError(
+                    ngettext(
+                        "Your password may not be the same as your previous password.",
+                        "Your password may not be the same as one of your %(history_length)s previous passwords.",
+                        self.history_length,
+                    ),
+                    code="password_history",
+                    params={"history_length": self.history_length},
+                )
+
+    def get_help_text(self):
+        return ngettext(
+            "Your password may not be the same as your previous password.",
+            "Your password may not be the same as one of your %(history_length)s previous passwords.",
+            self.history_length,
+        ) % {"history_length": self.history_length}
+
+    def password_changed(self, password, user=None):
+        if not user:
+            pass
+
+        user.historic_passwords.create(password=make_password(password))
+        user.historic_passwords.filter(
+            pk__in=user.historic_passwords.order_by("-created")[self.history_length:].values_list("pk", flat=True),
+        ).delete()
+
+
+def has_event_access_permission(request, permission='event.settings.general:write'):
+    return (
+        request.user.is_authenticated and
+        request.user.has_event_permission(request.organizer, request.event, permission, request=request)
+    ) or (
+        getattr(request, 'event_access_user', None) and
+        request.event_access_user.is_authenticated and
+        request.event_access_user.has_event_permission(request.organizer, request.event, permission,
+                                                       session_key=request.event_access_parent_session_key)
+    )

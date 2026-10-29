@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -38,8 +38,11 @@ class StripeApp(AppConfig):
         featured = True
         picture = 'pretixplugins/stripe/stripe_logo.svg'
         description = _("Accept payments via Stripe, a globally popular payment service provider. Stripe supports "
-                        "payments via credit cards as well as many local payment methods such as giropay, iDEAL, Alipay,"
+                        "payments via credit cards as well as many local payment methods such as iDEAL, Alipay,"
                         "and many more.")
+        settings_links = [
+            ((_("Payment"), _("Stripe")), "control:event.settings.payment.provider", {"provider": "stripe_settings"}),
+        ]
 
     def ready(self):
         from . import signals, tasks  # NOQA

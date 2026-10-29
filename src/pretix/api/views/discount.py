@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -32,6 +32,7 @@
 # distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations under the License.
 
+from django.db import transaction
 from django_filters.rest_framework import DjangoFilterBackend, FilterSet
 from django_scopes import scopes_disabled
 from rest_framework import viewsets
@@ -57,11 +58,14 @@ class DiscountViewSet(ConditionalListView, viewsets.ModelViewSet):
     ordering_fields = ('id', 'position')
     ordering = ('position', 'id')
     permission = None
-    write_permission = 'can_change_items'
+    write_permission = 'event.items:write'
 
     def get_queryset(self):
-        return self.request.event.discounts.all()
+        return self.request.event.discounts.prefetch_related(
+            'limit_sales_channels',
+        )
 
+    @transaction.atomic()
     def perform_create(self, serializer):
         serializer.save(event=self.request.event)
         serializer.instance.log_action(
@@ -76,6 +80,7 @@ class DiscountViewSet(ConditionalListView, viewsets.ModelViewSet):
         ctx['event'] = self.request.event
         return ctx
 
+    @transaction.atomic()
     def perform_update(self, serializer):
         serializer.save(event=self.request.event)
         serializer.instance.log_action(
@@ -85,6 +90,7 @@ class DiscountViewSet(ConditionalListView, viewsets.ModelViewSet):
             data=self.request.data
         )
 
+    @transaction.atomic()
     def perform_destroy(self, instance):
         if not instance.allow_delete():
             raise PermissionDenied('You cannot delete this discount because it already has '

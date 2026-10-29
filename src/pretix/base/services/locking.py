@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -100,7 +100,8 @@ def lock_objects(objects, *, shared_lock_objects=None, replace_exclusive_with_sh
     if 'postgresql' in settings.DATABASES['default']['ENGINE']:
         shared_keys = set(pg_lock_key(obj) for obj in shared_lock_objects) if shared_lock_objects else set()
         exclusive_keys = set(pg_lock_key(obj) for obj in objects)
-        if replace_exclusive_with_shared_when_exclusive_are_more_than and len(exclusive_keys) > replace_exclusive_with_shared_when_exclusive_are_more_than:
+        if replace_exclusive_with_shared_when_exclusive_are_more_than and shared_keys and \
+                len(exclusive_keys) > replace_exclusive_with_shared_when_exclusive_are_more_than:
             exclusive_keys = shared_keys
         keys = sorted(list(shared_keys | exclusive_keys))
         calls = ", ".join([

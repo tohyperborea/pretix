@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -34,8 +34,10 @@
 # License for the specific language governing permissions and limitations under the License.
 
 import calendar
+import os
 import sys
 import uuid
+import warnings
 from collections import Counter, OrderedDict
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, DecimalException
@@ -48,27 +50,26 @@ from dateutil.tz import datetime_exists
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.validators import (
-    MaxLengthValidator, MinValueValidator, RegexValidator,
+    MaxLengthValidator, MinLengthValidator, MinValueValidator, RegexValidator,
 )
 from django.db import models
 from django.db.models import Q
 from django.utils import formats
 from django.utils.crypto import get_random_string
 from django.utils.functional import cached_property
-from django.utils.timezone import is_naive, make_aware, now
+from django.utils.timezone import is_naive, make_aware
 from django.utils.translation import gettext_lazy as _, pgettext_lazy
 from django_countries.fields import Country
 from django_scopes import ScopedManager
 from i18nfield.fields import I18nCharField, I18nTextField
 
-from pretix.base.models import fields
+from pretix.base.media import MEDIA_TYPES
+from pretix.base.models import Event, SubEvent
 from pretix.base.models.base import LoggedModel
 from pretix.base.models.fields import MultiStringField
 from pretix.base.models.tax import TaxedPrice
-
-from ...helpers.images import ImageSizeValidator
-from ..media import MEDIA_TYPES
-from .event import Event, SubEvent
+from pretix.base.timemachine import time_machine_now
+from pretix.helpers.images import ImageSizeValidator
 
 
 class ItemCategory(LoggedModel):
@@ -109,6 +110,33 @@ class ItemCategory(LoggedModel):
                     'only be bought in combination with a product that has this category configured as a possible '
                     'source for add-ons.')
     )
+    CROSS_SELLING_MODES = (
+        (None, _('Normal category')),
+        ('both', _('Normal + cross-selling category')),
+        ('only', _('Cross-selling category')),
+    )
+    cross_selling_mode = models.CharField(
+        choices=CROSS_SELLING_MODES,
+        null=True,
+        max_length=5
+    )
+    CROSS_SELLING_CONDITION = (
+        ('always', _('Always show in cross-selling step')),
+        ('discounts', _('Only show products that qualify for a discount according to discount rules')),
+        ('products', _('Only show if the cart contains one of the following products')),
+    )
+    cross_selling_condition = models.CharField(
+        verbose_name=_("Cross-selling condition"),
+        choices=CROSS_SELLING_CONDITION,
+        null=True,
+        max_length=10,
+    )
+    cross_selling_match_products = models.ManyToManyField(
+        'pretixbase.Item',
+        blank=True,
+        verbose_name=_("Cross-selling condition products"),
+        related_name="matched_by_cross_selling_categories",
+    )
 
     class Meta:
         verbose_name = _("Product category")
@@ -117,9 +145,31 @@ class ItemCategory(LoggedModel):
 
     def __str__(self):
         name = self.internal_name or self.name
-        if self.is_addon:
-            return _('{category} (Add-On products)').format(category=str(name))
+        if self.category_type != 'normal':
+            return _('{category} ({category_type})').format(category=str(name),
+                                                            category_type=self.get_category_type_display())
         return str(name)
+
+    def get_category_type_display(self):
+        if self.is_addon:
+            return _('Add-on category')
+        elif self.cross_selling_mode:
+            return self.get_cross_selling_mode_display()
+        else:
+            return _('Normal category')
+
+    @property
+    def category_type(self):
+        return 'addon' if self.is_addon else self.cross_selling_mode or 'normal'
+
+    @category_type.setter
+    def category_type(self, new_value):
+        if new_value == 'addon':
+            self.is_addon = True
+            self.cross_selling_mode = None
+        else:
+            self.is_addon = False
+            self.cross_selling_mode = None if new_value == 'normal' else new_value
 
     def delete(self, *args, **kwargs):
         super().delete(*args, **kwargs)
@@ -192,7 +242,7 @@ class SubEventItem(models.Model):
             self.subevent.event.cache.clear()
 
     def is_available(self, now_dt: datetime=None) -> bool:
-        now_dt = now_dt or now()
+        now_dt = now_dt or time_machine_now()
         if self.disabled:
             return False
         if self.available_from and self.available_from > now_dt:
@@ -248,7 +298,7 @@ class SubEventItemVariation(models.Model):
             self.subevent.event.cache.clear()
 
     def is_available(self, now_dt: datetime=None) -> bool:
-        now_dt = now_dt or now()
+        now_dt = now_dt or time_machine_now()
         if self.disabled:
             return False
         if self.available_from and self.available_from > now_dt:
@@ -258,17 +308,29 @@ class SubEventItemVariation(models.Model):
         return True
 
 
-def filter_available(qs, channel='web', voucher=None, allow_addons=False):
+def filter_available(qs, channel='web', voucher=None, allow_addons=False, allow_cross_sell=False):
+    # Channel can currently be a SalesChannel or a str, since we need that compatibility, but a SalesChannel
+    # makes the query SIGNIFICANTLY faster
+    from .organizer import SalesChannel
+
+    assert isinstance(channel, (SalesChannel, str))
     q = (
         # IMPORTANT: If this is updated, also update the ItemVariation query
         # in models/event.py: EventMixin.annotated()
         Q(active=True)
-        & Q(Q(available_from__isnull=True) | Q(available_from__lte=now()))
-        & Q(Q(available_until__isnull=True) | Q(available_until__gte=now()))
-        & Q(sales_channels__contains=channel) & Q(require_bundling=False)
+        & Q(Q(available_from__isnull=True) | Q(available_from__lte=time_machine_now()) | Q(available_from_mode='info'))
+        & Q(Q(available_until__isnull=True) | Q(available_until__gte=time_machine_now()) | Q(available_until_mode='info'))
+        & Q(require_bundling=False)
     )
+    if isinstance(channel, str):
+        q &= Q(Q(all_sales_channels=True) | Q(limit_sales_channels__identifier=channel))
+    else:
+        q &= Q(Q(all_sales_channels=True) | Q(limit_sales_channels=channel))
+
     if not allow_addons:
         q &= Q(Q(category__isnull=True) | Q(category__is_addon=False))
+    if not allow_cross_sell:
+        q &= Q(Q(category__isnull=True) | ~Q(category__cross_selling_mode='only'))
 
     if voucher:
         if voucher.item_id:
@@ -282,8 +344,8 @@ def filter_available(qs, channel='web', voucher=None, allow_addons=False):
 
 
 class ItemQuerySet(models.QuerySet):
-    def filter_available(self, channel='web', voucher=None, allow_addons=False):
-        return filter_available(self, channel, voucher, allow_addons)
+    def filter_available(self, channel='web', voucher=None, allow_addons=False, allow_cross_sell=False):
+        return filter_available(self, channel, voucher, allow_addons, allow_cross_sell)
 
 
 class ItemQuerySetManager(ScopedManager(organizer='event__organizer').__class__):
@@ -291,8 +353,8 @@ class ItemQuerySetManager(ScopedManager(organizer='event__organizer').__class__)
         super().__init__()
         self._queryset_class = ItemQuerySet
 
-    def filter_available(self, channel='web', voucher=None, allow_addons=False):
-        return filter_available(self.get_queryset(), channel, voucher, allow_addons)
+    def filter_available(self, channel='web', voucher=None, allow_addons=False, allow_cross_sell=False):
+        return filter_available(self.get_queryset(), channel, voucher, allow_addons, allow_cross_sell)
 
 
 class Item(LoggedModel):
@@ -336,12 +398,16 @@ class Item(LoggedModel):
     :type min_per_order: int
     :param checkin_attention: Requires special attention at check-in
     :type checkin_attention: bool
+    :param checkin_text: Additional text to show at check-in
+    :type checkin_text: bool
     :param original_price: The item's "original" price. Will not be used for any calculations, will just be shown.
     :type original_price: decimal.Decimal
     :param require_approval: If set to ``True``, orders containing this product can only be processed and paid after approved by an administrator
     :type require_approval: bool
-    :param sales_channels: Sales channels this item is available on.
-    :type sales_channels: bool
+    :param all_sales_channels: A flag indicating that this item is available on all channels and limit_sales_channels will be ignored.
+    :type all_sales_channels: bool
+    :param limit_sales_channels: A list of sales channel identifiers, that this item is available for sale on.
+    :type limit_sales_channels: list
     :param issue_giftcard: If ``True``, buying this product will give you a gift card with the value of the product's price
     :type issue_giftcard: bool
     :param validity_mode: Instruction how to set ``valid_from``/``valid_until`` on tickets, ``null`` is default event validity.
@@ -372,14 +438,30 @@ class Item(LoggedModel):
         (VALIDITY_MODE_DYNAMIC, _('Dynamic validity')),
     )
 
+    UNAVAIL_MODE_HIDDEN = "hide"
+    UNAVAIL_MODE_INFO = "info"
+    UNAVAIL_MODES = (
+        (UNAVAIL_MODE_HIDDEN, _("Hide product if unavailable")),
+        (UNAVAIL_MODE_INFO, _("Show product with info on why it’s unavailable")),
+    )
+    UNAVAIL_MODE_ICONS = {
+        UNAVAIL_MODE_HIDDEN: 'eye-slash',
+        UNAVAIL_MODE_INFO: 'info'
+    }
+
     MEDIA_POLICY_REUSE = 'reuse'
     MEDIA_POLICY_NEW = 'new'
     MEDIA_POLICY_REUSE_OR_NEW = 'reuse_or_new'
+    MEDIA_POLICY_APPEND = 'append'
+    MEDIA_POLICY_APPEND_OR_NEW = 'append_or_new'
     MEDIA_POLICIES = (
-        (None, _("Don't use re-usable media, use regular one-off tickets")),
-        (MEDIA_POLICY_REUSE, _('Require an existing medium to be re-used')),
+        (None, _("Don't use reusable media, use regular one-off tickets")),
         (MEDIA_POLICY_NEW, _('Require a previously unknown medium to be newly added')),
-        (MEDIA_POLICY_REUSE_OR_NEW, _('Require either an existing or a new medium to be used')),
+        (MEDIA_POLICY_REUSE, _('Require an existing medium to be reused, replacing any previous tickets')),
+        (MEDIA_POLICY_REUSE_OR_NEW, _('Require either an existing or a new medium to be used, replacing any previous tickets')),
+        (MEDIA_POLICY_APPEND, _('Require an existing medium to be reused, adding to any previous tickets')),
+        (MEDIA_POLICY_APPEND_OR_NEW,
+         _('Require either an existing or a new medium to be used, adding to any previous tickets')),
     )
 
     objects = ItemQuerySetManager()
@@ -421,15 +503,21 @@ class Item(LoggedModel):
         help_text=_("If this product has multiple variations, you can set different prices for each of the "
                     "variations. If a variation does not have a special price or if you do not have variations, "
                     "this price will be used."),
-        max_digits=13, decimal_places=2, null=True
+        max_digits=13, decimal_places=2,
     )
     free_price = models.BooleanField(
         default=False,
         verbose_name=_("Free price input"),
         help_text=_("If this option is active, your users can choose the price themselves. The price configured above "
                     "is then interpreted as the minimum price a user has to enter. You could use this e.g. to collect "
-                    "additional donations for your event. This is currently not supported for products that are "
-                    "bought as an add-on to other products.")
+                    "additional donations for your event.")
+    )
+    free_price_suggestion = models.DecimalField(
+        verbose_name=_("Suggested price"),
+        help_text=_("This price will be used as the default value of the input field. The user can choose a lower "
+                    "value, but not lower than the price this product would have without the free price option. This "
+                    "will be ignored if a voucher is used that lowers the price."),
+        max_digits=13, decimal_places=2, null=True, blank=True,
     )
     tax_rule = models.ForeignKey(
         'TaxRule',
@@ -479,21 +567,48 @@ class Item(LoggedModel):
         null=True, blank=True,
         help_text=_('This product will not be sold before the given date.')
     )
+    available_from_mode = models.CharField(
+        choices=UNAVAIL_MODES,
+        default=UNAVAIL_MODE_HIDDEN,
+        max_length=16,
+    )
     available_until = models.DateTimeField(
         verbose_name=_("Available until"),
         null=True, blank=True,
         help_text=_('This product will not be sold after the given date.')
     )
+    available_until_mode = models.CharField(
+        choices=UNAVAIL_MODES,
+        default=UNAVAIL_MODE_HIDDEN,
+        max_length=16,
+    )
     hidden_if_available = models.ForeignKey(
         'Quota',
         null=True, blank=True,
         on_delete=models.SET_NULL,
-        verbose_name=_("Only show after sellout of"),
+        verbose_name=pgettext_lazy("hidden_if_available_legacy", "Only show after sellout of"),
         help_text=_("If you select a quota here, this product will only be shown when that quota is "
                     "unavailable. If combined with the option to hide sold-out products, this allows you to "
                     "swap out products for more expensive ones once they are sold out. There might be a short period "
                     "in which both products are visible while all tickets in the referenced quota are reserved, "
                     "but not yet sold.")
+    )
+    hidden_if_item_available = models.ForeignKey(
+        'Item',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        verbose_name=_("Only show after sellout of"),
+        help_text=_("If you select a product here, this product will only be shown when that product is "
+                    "no longer available. This will happen either because the other product has sold out or because "
+                    "the time is outside of the sales window for the other product. If combined with the option "
+                    "to hide sold-out products, this allows you to swap out products for more expensive ones once "
+                    "the cheaper option is sold out. There might be a short period in which both products are visible "
+                    "while all tickets of the referenced product are reserved, but not yet sold.")
+    )
+    hidden_if_item_available_mode = models.CharField(
+        choices=UNAVAIL_MODES,
+        default=UNAVAIL_MODE_HIDDEN,
+        max_length=16,
     )
     require_voucher = models.BooleanField(
         verbose_name=_('This product can only be bought using a voucher.'),
@@ -549,6 +664,11 @@ class Item(LoggedModel):
                     'attention. You can use this for example for student tickets to indicate to the person at '
                     'check-in that the student ID card still needs to be checked.')
     )
+    checkin_text = models.TextField(
+        verbose_name=_('Check-in text'),
+        null=True, blank=True,
+        help_text=_('This text will be shown by the check-in app if a ticket of this type is scanned.')
+    )
     original_price = models.DecimalField(
         verbose_name=_('Original price'),
         blank=True, null=True,
@@ -556,9 +676,14 @@ class Item(LoggedModel):
         help_text=_('If set, this will be displayed next to the current price to show that the current price is a '
                     'discounted one. This is just a cosmetic setting and will not actually impact pricing.')
     )
-    sales_channels = fields.MultiStringField(
-        verbose_name=_('Sales channels'),
-        default=['web'],
+    all_sales_channels = models.BooleanField(
+        verbose_name=_("Sell on all sales channels"),
+        default=True,
+    )
+    limit_sales_channels = models.ManyToManyField(
+        "SalesChannel",
+        verbose_name=_("Restrict to specific sales channels"),
+        help_text=_('Only sell tickets for this product on the selected sales channels.'),
         blank=True,
     )
     issue_giftcard = models.BooleanField(
@@ -607,7 +732,7 @@ class Item(LoggedModel):
         null=True, blank=True, max_length=16,
         verbose_name=_('Validity'),
         help_text=_(
-            'When setting up a regular event, or an event series with time slots, you typically to NOT need to change '
+            'When setting up a regular event, or an event series with time slots, you typically do NOT need to change '
             'this value. The default setting means that the validity time of tickets will not be decided by the '
             'product, but by the event and check-in configuration. Only use the other options if you need them to '
             'realize e.g. a booking of a year-long ticket with a dynamic start date. Note that the validity will be '
@@ -649,7 +774,7 @@ class Item(LoggedModel):
         null=True, blank=True, max_length=16,
         verbose_name=_('Reusable media policy'),
         help_text=_(
-            'If this product should be stored on a re-usable physical medium, you can attach a physical media policy. '
+            'If this product should be stored on a reusable physical medium, you can attach a physical media policy. '
             'This is not required for regular tickets, which just use a one-time barcode, but only for products like '
             'renewable season tickets or re-chargeable gift card wristbands. '
             'This is an advanced feature that also requires specific configuration of ticketing and printing settings.'
@@ -658,7 +783,7 @@ class Item(LoggedModel):
     media_type = models.CharField(
         max_length=100,
         null=True, blank=True,
-        choices=[(None, _("Don't use re-usable media, use regular one-off tickets"))] + [(k, v) for k, v in MEDIA_TYPES.items()],
+        choices=[(None, _("Don't use reusable media, use regular one-off tickets"))] + [(k, v) for k, v in MEDIA_TYPES.items()],
         verbose_name=_('Reusable media type'),
         help_text=_(
             'Select the type of physical medium that should be used for this product. Note that not all media types '
@@ -673,12 +798,14 @@ class Item(LoggedModel):
     class Meta:
         verbose_name = _("Product")
         verbose_name_plural = _("Products")
-        ordering = ("category__position", "category", "position")
+        ordering = ("category__position", "category", "position", "pk")
 
     def __str__(self):
         return str(self.internal_name or self.name)
 
     def save(self, *args, **kwargs):
+        if self.hide_without_voucher:
+            self.require_voucher = True
         super().save(*args, **kwargs)
         if self.event:
             self.event.cache.clear()
@@ -699,7 +826,8 @@ class Item(LoggedModel):
     def ask_attendee_data(self):
         return self.admission and self.personalized
 
-    def tax(self, price=None, base_price_is='auto', currency=None, invoice_address=None, override_tax_rate=None, include_bundled=False):
+    def tax(self, price=None, base_price_is='auto', currency=None, invoice_address=None, override_tax_rate=None,
+            include_bundled=False, force_fixed_gross_price=False):
         price = price if price is not None else self.default_price
 
         bundled_sum = Decimal('0.00')
@@ -724,14 +852,15 @@ class Item(LoggedModel):
 
         if not self.tax_rule:
             t = TaxedPrice(gross=price - bundled_sum, net=price - bundled_sum, tax=Decimal('0.00'),
-                           rate=Decimal('0.00'), name='')
+                           rate=Decimal('0.00'), name='', code=None)
         else:
             t = self.tax_rule.tax(price, base_price_is=base_price_is, invoice_address=invoice_address,
                                   override_tax_rate=override_tax_rate, currency=currency or self.event.currency,
-                                  subtract_from_gross=bundled_sum)
+                                  subtract_from_gross=bundled_sum, force_fixed_gross_price=force_fixed_gross_price)
 
         if bundled_sum:
             t.name = "MIXED!"
+            t.code = None
             t.gross += bundled_sum
             t.net += bundled_sum_net
             t.tax += bundled_sum_tax
@@ -739,7 +868,7 @@ class Item(LoggedModel):
         return t
 
     def is_available_by_time(self, now_dt: datetime=None) -> bool:
-        now_dt = now_dt or now()
+        now_dt = now_dt or time_machine_now()
         if self.available_from and self.available_from > now_dt:
             return False
         if self.available_until and self.available_until < now_dt:
@@ -751,7 +880,7 @@ class Item(LoggedModel):
         Returns whether this item is available according to its ``active`` flag
         and its ``available_from`` and ``available_until`` fields
         """
-        now_dt = now_dt or now()
+        now_dt = now_dt or time_machine_now()
         if not self.active or not self.is_available_by_time(now_dt):
             return False
         return True
@@ -851,6 +980,11 @@ class Item(LoggedModel):
                 raise ValidationError(_('The selected media type does not support usage for tickets currently.'))
             if not mt.supports_giftcard and issue_giftcard:
                 raise ValidationError(_('The selected media type does not support usage for gift cards currently.'))
+            if media_policy in (Item.MEDIA_POLICY_NEW, Item.MEDIA_POLICY_APPEND_OR_NEW, Item.MEDIA_POLICY_REUSE_OR_NEW):
+                if not mt.medium_created_by_server and not mt.medium_created_from_unknown_supported:
+                    raise ValidationError(_('The selected media type requires all media to be registered in the system '
+                                            'prior to their usage. Therefore, the selected media policy does not make '
+                                            'sense for this media type.'))
             if issue_giftcard:
                 raise ValidationError(_('You currently cannot create gift cards with a reusable media policy. Instead, '
                                         'gift cards for some reusable media types can be created or re-charged directly '
@@ -896,11 +1030,11 @@ class Item(LoggedModel):
             return self.validity_fixed_from, self.validity_fixed_until
         elif self.validity_mode == Item.VALIDITY_MODE_DYNAMIC:
             tz = override_tz or self.event.timezone
-            requested_start = requested_start or now()
+            requested_start = requested_start or time_machine_now()
             if enforce_start_limit and not self.validity_dynamic_start_choice:
-                requested_start = now()
+                requested_start = time_machine_now()
             if enforce_start_limit and self.validity_dynamic_start_choice_day_limit is not None:
-                requested_start = min(requested_start, now() + timedelta(days=self.validity_dynamic_start_choice_day_limit))
+                requested_start = min(requested_start, time_machine_now() + timedelta(days=self.validity_dynamic_start_choice_day_limit))
 
             valid_until = requested_start.astimezone(tz)
 
@@ -916,10 +1050,8 @@ class Item(LoggedModel):
 
                 replace_year = valid_until.year
                 replace_month = valid_until.month + self.validity_dynamic_duration_months
-
-                while replace_month > 12:
-                    replace_month -= 12
-                    replace_year += 1
+                replace_year += (replace_month - 1) // 12
+                replace_month = ((replace_month - 1) % 12) + 1
                 max_day = calendar.monthrange(replace_year, replace_month)[1]
                 replace_date = date(
                     year=replace_year,
@@ -960,9 +1092,13 @@ class Item(LoggedModel):
             return None, None
 
 
-def _all_sales_channels_identifiers():
-    from pretix.base.channels import get_all_sales_channels
-    return list(get_all_sales_channels().keys())
+def _all_sales_channels_identifiers():  # kept for legacy migrations
+    from pretix.base.channels import get_all_sales_channel_types
+
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        warnings.warn('Method should not be used in new code.', DeprecationWarning)
+
+    return list(get_all_sales_channel_types().keys())
 
 
 class ItemVariation(models.Model):
@@ -983,9 +1119,12 @@ class ItemVariation(models.Model):
     :param original_price: The item's "original" price. Will not be used for any calculations, will just be shown.
     :type original_price: decimal.Decimal
     :param require_approval: If set to ``True``, orders containing this variation can only be processed and paid after
-    approval by an administrator
+                             approval by an administrator
     :type require_approval: bool
-
+    :param all_sales_channels: A flag indicating that this variation is available on all channels and limit_sales_channels will be ignored.
+    :type all_sales_channels: bool
+    :param limit_sales_channels: A list of sales channel identifiers, that this variation is available for sale on.
+    :type limit_sales_channels: list
     """
     item = models.ForeignKey(
         Item,
@@ -1021,6 +1160,13 @@ class ItemVariation(models.Model):
         help_text=_('If set, this will be displayed next to the current price to show that the current price is a '
                     'discounted one. This is just a cosmetic setting and will not actually impact pricing.')
     )
+    free_price_suggestion = models.DecimalField(
+        verbose_name=_("Suggested price"),
+        help_text=_("This price will be used as the default value of the input field. The user can choose a lower "
+                    "value, but not lower than the price this product would have without the free price option. This "
+                    "will be ignored if a voucher is used that lowers the price."),
+        max_digits=13, decimal_places=2, null=True, blank=True,
+    )
     require_approval = models.BooleanField(
         verbose_name=_('Require approval'),
         default=False,
@@ -1048,14 +1194,28 @@ class ItemVariation(models.Model):
         null=True, blank=True,
         help_text=_('This variation will not be sold before the given date.')
     )
+    available_from_mode = models.CharField(
+        choices=Item.UNAVAIL_MODES,
+        default=Item.UNAVAIL_MODE_HIDDEN,
+        max_length=16,
+    )
     available_until = models.DateTimeField(
         verbose_name=_("Available until"),
         null=True, blank=True,
         help_text=_('This variation will not be sold after the given date.')
     )
-    sales_channels = fields.MultiStringField(
-        verbose_name=_('Sales channels'),
-        default=_all_sales_channels_identifiers,
+    available_until_mode = models.CharField(
+        choices=Item.UNAVAIL_MODES,
+        default=Item.UNAVAIL_MODE_HIDDEN,
+        max_length=16,
+    )
+    all_sales_channels = models.BooleanField(
+        verbose_name=_("Sell on all sales channels the product is sold on"),
+        default=True,
+    )
+    limit_sales_channels = models.ManyToManyField(
+        "SalesChannel",
+        verbose_name=_("Restrict to specific sales channels"),
         help_text=_('The sales channel selection for the product as a whole takes precedence, so if a sales channel is '
                     'selected here but not on product level, the variation will not be available.'),
         blank=True,
@@ -1072,6 +1232,11 @@ class ItemVariation(models.Model):
         help_text=_('If you set this, the check-in app will show a visible warning that this ticket requires special '
                     'attention. You can use this for example for student tickets to indicate to the person at '
                     'check-in that the student ID card still needs to be checked.')
+    )
+    checkin_text = models.TextField(
+        verbose_name=_('Check-in text'),
+        null=True, blank=True,
+        help_text=_('This text will be shown by the check-in app if a ticket of this type is scanned.')
     )
 
     objects = ScopedManager(organizer='item__event__organizer')
@@ -1094,7 +1259,7 @@ class ItemVariation(models.Model):
 
         if not self.item.tax_rule:
             t = TaxedPrice(gross=price, net=price, tax=Decimal('0.00'),
-                           rate=Decimal('0.00'), name='')
+                           rate=Decimal('0.00'), name='', code=None)
         else:
             t = self.item.tax_rule.tax(price, base_price_is=base_price_is, currency=currency,
                                        override_tax_rate=override_tax_rate,
@@ -1116,6 +1281,7 @@ class ItemVariation(models.Model):
                     t.net += bprice.net - compare_price.net
                     t.tax += bprice.tax - compare_price.tax
                     t.name = "MIXED!"
+                    t.code = None
 
         return t
 
@@ -1208,7 +1374,7 @@ class ItemVariation(models.Model):
         return ItemVariation.objects.filter(item=self.item).count() == 1
 
     def is_available_by_time(self, now_dt: datetime=None) -> bool:
-        now_dt = now_dt or now()
+        now_dt = now_dt or time_machine_now()
         if self.available_from and self.available_from > now_dt:
             return False
         if self.available_until and self.available_until < now_dt:
@@ -1220,7 +1386,7 @@ class ItemVariation(models.Model):
         Returns whether this item is available according to its ``active`` flag
         and its ``available_from`` and ``available_until`` fields
         """
-        now_dt = now_dt or now()
+        now_dt = now_dt or time_machine_now()
         if not self.active or not self.is_available_by_time(now_dt):
             return False
         return True
@@ -1427,6 +1593,8 @@ class Question(LoggedModel):
     :param items: A set of ``Items`` objects that this question should be applied to
     :param ask_during_checkin: Whether to ask this question during check-in instead of during check-out.
     :type ask_during_checkin: bool
+    :param show_during_checkin: Whether to show the answer to this question during check-in.
+    :type show_during_checkin: bool
     :param hidden: Whether to only show the question in the backend
     :type hidden: bool
     :param identifier: An arbitrary, internal identifier
@@ -1436,6 +1604,9 @@ class Question(LoggedModel):
     :param dependency_values: The values that `dependency_question` needs to be set to for this question to be applicable.
     :type dependency_values: list[str]
     """
+    class ContainerType(models.TextChoices):
+        ORDER = "O", _("Order")
+        ORDERPOSITION = "P", _("Order position")
     TYPE_NUMBER = "N"
     TYPE_STRING = "S"
     TYPE_TEXT = "T"
@@ -1464,11 +1635,18 @@ class Question(LoggedModel):
     )
     UNLOCALIZED_TYPES = [TYPE_DATE, TYPE_TIME, TYPE_DATETIME]
     ASK_DURING_CHECKIN_UNSUPPORTED = []
+    SHOW_DURING_CHECKIN_UNSUPPORTED = [TYPE_FILE]
 
     event = models.ForeignKey(
         Event,
         related_name="questions",
         on_delete=models.CASCADE
+    )
+    container_type = models.CharField(
+        max_length=5,
+        choices=ContainerType.choices,
+        verbose_name=_("Asked on"),
+        default=ContainerType.ORDERPOSITION,
     )
     question = I18nTextField(
         verbose_name=_("Question")
@@ -1515,6 +1693,11 @@ class Question(LoggedModel):
         help_text=_('Not supported by all check-in apps for all question types.'),
         default=False
     )
+    show_during_checkin = models.BooleanField(
+        verbose_name=_('Show answer during check-in'),
+        help_text=_('Not supported by all check-in apps for all question types.'),
+        default=False
+    )
     hidden = models.BooleanField(
         verbose_name=_('Hidden question'),
         help_text=_('This question will only show up in the backend.'),
@@ -1528,10 +1711,10 @@ class Question(LoggedModel):
         'Question', null=True, blank=True, on_delete=models.SET_NULL, related_name='dependent_questions'
     )
     dependency_values = MultiStringField(default=[])
-    valid_number_min = models.DecimalField(decimal_places=6, max_digits=16, null=True, blank=True,
+    valid_number_min = models.DecimalField(decimal_places=6, max_digits=30, null=True, blank=True,
                                            verbose_name=_('Minimum value'),
                                            help_text=_('Currently not supported in our apps and during check-in'))
-    valid_number_max = models.DecimalField(decimal_places=6, max_digits=16, null=True, blank=True,
+    valid_number_max = models.DecimalField(decimal_places=6, max_digits=30, null=True, blank=True,
                                            verbose_name=_('Maximum value'),
                                            help_text=_('Currently not supported in our apps and during check-in'))
     valid_date_min = models.DateField(null=True, blank=True,
@@ -1546,6 +1729,11 @@ class Question(LoggedModel):
     valid_datetime_max = models.DateTimeField(null=True, blank=True,
                                               verbose_name=_('Maximum value'),
                                               help_text=_('Currently not supported in our apps and during check-in'))
+    valid_string_length_min = models.PositiveIntegerField(null=True, blank=True,
+                                                          verbose_name=_('Minimum length'),
+                                                          help_text=_(
+                                                              'Currently not supported in our apps and during check-in'
+                                                          ))
     valid_string_length_max = models.PositiveIntegerField(null=True, blank=True,
                                                           verbose_name=_('Maximum length'),
                                                           help_text=_(
@@ -1635,7 +1823,7 @@ class Question(LoggedModel):
                 ))
                 llen = len(answer.split(','))
             elif all(isinstance(o, QuestionOption) for o in answer):
-                return o
+                return answer
             else:
                 l_ = list(self.options.filter(
                     Q(pk__in=[a for a in answer if isinstance(a, int) or a.isdigit()]) |
@@ -1700,6 +1888,11 @@ class Question(LoggedModel):
             else:
                 raise ValidationError(_('Unknown country code.'))
         elif self.type in (Question.TYPE_STRING, Question.TYPE_TEXT):
+            if self.valid_string_length_min is not None and len(answer) < self.valid_string_length_min:
+                raise ValidationError(MinLengthValidator.message % {
+                    'limit_value': self.valid_string_length_min,
+                    'show_value': len(answer)
+                })
             if self.valid_string_length_max is not None and len(answer) > self.valid_string_length_max:
                 raise ValidationError(MaxLengthValidator.message % {
                     'limit_value': self.valid_string_length_max,
@@ -1713,6 +1906,36 @@ class Question(LoggedModel):
         for item in items:
             if event != item.event:
                 raise ValidationError(_('One or more items do not belong to this event.'))
+
+    def clean(self):
+        if self.valid_date_max and self.valid_date_min and self.valid_date_min > self.valid_date_max:
+            raise ValidationError(_("The maximum date must not be before the minimum value."))
+        if self.valid_datetime_max and self.valid_datetime_min and self.valid_datetime_min > self.valid_datetime_max:
+            raise ValidationError(_("The maximum date must not be before the minimum value."))
+        if self.valid_number_max and self.valid_number_min and self.valid_number_min > self.valid_number_max:
+            raise ValidationError(_("The maximum value must not be lower than the minimum value."))
+        if self.valid_string_length_max and self.valid_string_length_min and self.valid_string_length_min > self.valid_string_length_max:
+            raise ValidationError(_("The maximum length must not be shorter than the minimum length."))
+        super().clean()
+
+    def clean_type_change(self, old_type, new_type):
+        if old_type == new_type:
+            return True
+        if not self.pk or not self.answers.exists():
+            return True
+        if new_type == self.TYPE_TEXT and old_type != self.TYPE_FILE:
+            # All types can be converted to text except file
+            return True
+        if new_type == self.TYPE_STRING and old_type not in (self.TYPE_TEXT, self.TYPE_FILE):
+            # All types can be converted to string except text or file
+            return True
+        if new_type == self.TYPE_CHOICE_MULTIPLE and old_type == self.TYPE_CHOICE:
+            # Single-choice can be converted to multiple choice without loss
+            return True
+        raise ValidationError(
+            _("The system already contains answers to this question that are not compatible with changing the "
+              "type of question without data loss. Consider hiding this question and creating a new one instead.")
+        )
 
 
 class QuestionOption(models.Model):
@@ -1990,7 +2213,7 @@ class Quota(LoggedModel):
 class ItemMetaProperty(LoggedModel):
     """
     An event can have ItemMetaProperty objects attached to define meta information fields
-    for its items. This information can be re-used for example in ticket layouts.
+    for its items. This information can be reused for example in ticket layouts.
 
     :param event: The event this property is defined for.
     :type event: Event
@@ -2064,3 +2287,36 @@ class ItemVariationMetaValue(LoggedModel):
 
     class Meta:
         unique_together = ('variation', 'property')
+
+
+class ItemProgramTime(models.Model):
+    """
+    This model can be used to add a program time to an item.
+
+    :param item: The item the program time applies to
+    :type item: Item
+    :param start: The date and time this program time starts
+    :type start: datetime
+    :param end: The date and time this program time ends
+    :type end: datetime
+    :param location: venue
+    :type location: str
+    """
+    item = models.ForeignKey('Item', related_name='program_times', on_delete=models.CASCADE)
+    start = models.DateTimeField(verbose_name=_("Start"))
+    end = models.DateTimeField(verbose_name=_("End"))
+    location = I18nTextField(
+        null=True, blank=True,
+        max_length=200,
+        verbose_name=_("Location"),
+    )
+
+    def clean(self):
+        if hasattr(self, 'item') and self.item and self.item.event.has_subevents:
+            raise ValidationError(_("You cannot use program times on an event series."))
+        self.clean_start_end(start=self.start, end=self.end)
+        super().clean()
+
+    def clean_start_end(self, start: datetime = None, end: datetime = None):
+        if start and end and start > end:
+            raise ValidationError(_("The program end must not be before the program start."))

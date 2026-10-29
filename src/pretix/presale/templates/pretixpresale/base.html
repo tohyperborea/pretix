@@ -8,18 +8,17 @@
 <html{% if rtl %} dir="rtl" class="rtl"{% endif %} lang="{{ html_locale }}">
 <head>
     <title>{% block thetitle %}{% endblock %}</title>
-    {% if css_file %}
-        <link rel="stylesheet" type="text/css" href="{{ css_file }}" />
-    {% else %}
-        {% compress css %}
-            <link rel="stylesheet" type="text/x-scss" href="{% static "pretixpresale/scss/main.scss" %}"/>
-        {% endcompress %}
+    {% compress css file presale %}
+        <link rel="stylesheet" type="text/x-scss" href="{% static "pretixpresale/scss/main.scss" %}"/>
+    {% endcompress %}
+    {% if css_theme %}
+        <link rel="stylesheet" type="text/css" href="{{ css_theme }}" />
     {% endif %}
 
     {% include "pretixpresale/fragment_js.html" %}
     <meta name="referrer" content="origin">
     {{ html_head|safe }}
-    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=0">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     {% block custom_header %}{% endblock %}
     {% if settings.favicon %}
         <link rel="icon" href="{{ settings.favicon|thumb:'16x16^' }}">
@@ -38,20 +37,38 @@
         <link rel="icon" type="image/png" sizes="192x192" href="{% static "pretixbase/img/icons/android-chrome-192x192.png" %}">
         <link rel="apple-touch-icon" sizes="180x180" href="{% static "pretixbase/img/icons/apple-touch-icon.png" %}">
     {% endif %}
-    <link rel="manifest" href="{% url "presale:site.webmanifest" %}">
-    <meta name="msapplication-TileColor" content="{{ settings.primary_color|default:"#3b1c4a" }}">
-    <meta name="msapplication-config" content="{% url "presale:browserconfig.xml" %}">
     <meta name="theme-color" content="{{ settings.primary_color|default:"#3b1c4a" }}">
 </head>
 <body class="nojs" data-locale="{{ request.LANGUAGE_CODE }}" data-now="{% now "U.u" %}" data-datetimeformat="{{ js_datetime_format }}" data-timeformat="{{ js_time_format }}" data-dateformat="{{ js_date_format }}" data-datetimelocale="{{ js_locale }}" data-currency="{{ request.event.currency }}">
 {{ html_page_header|safe }}
+<nav id="skip-to-main" role="navigation" aria-label="{% trans "Skip link" context "skip-to-main-nav" %}" class="sr-only on-focus-visible">
+  <p><a href="#content">{% trans "Skip to main content" %}</a></p>
+</nav>
 <header>
+{% if ie_deprecation_warning %}
+    <div class="old-browser-warning">
+        <span class="fa fa-internet-explorer"></span>
+        {% blocktrans trimmed %}
+            We've detected that you are using <strong>Microsoft Internet Explorer</strong>.
+        {% endblocktrans %}
+        {% blocktrans trimmed %}
+            Internet Explorer is an old browser that does not support lots of recent web-based
+            technologies and is no longer supported by this website.
+        {% endblocktrans %}
+        {% blocktrans trimmed %}
+            We kindly ask you to move to one of our supported browsers, such as Microsoft Edge,
+            Mozilla Firefox, Google Chrome, or Safari.
+        {% endblocktrans %}
+    </div>
+{% endif %}
 {% block above %}
 {% endblock %}
 </header>
 <div class="container main-box">
+    <main id="content">
     {% block page %}
     {% endblock %}
+    </main>
     <footer>
         {% block footer %}
         {% endblock %}
@@ -63,7 +80,7 @@
                 <li>{{ footer_text }}</li>
             {% endif %}
             {% for f in footer %}
-                <li><a href="{% safelink f.url %}" target="_blank" rel="noopener">{{ f.label }}</a></li>
+                <li><a class="{{ f.cssclass }}" href="{% safelink f.url %}" target="_blank" rel="noopener">{{ f.label }}</a></li>
             {% endfor %}
             {% include "pretixpresale/base_footer.html" %} {# removing or hiding this might be in violation of pretix' license #}
             </ul>
@@ -77,7 +94,7 @@
     <script src="{% statici18n request.LANGUAGE_CODE %}"></script>
 {% endif %}
 {% if request.session.iframe_session %}
-    {% compress js %}
+    {% compress js file iframeresizer %}
         <script type="text/javascript" src="{% static "iframeresizer/iframeResizer.contentWindow.js" %}"></script>
     {% endcompress %}
 {% endif %}

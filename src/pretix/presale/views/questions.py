@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -35,13 +35,17 @@
 from django.utils.functional import cached_property
 
 from pretix.base.views.mixins import BaseQuestionsViewMixin
-from pretix.presale.forms.checkout import QuestionsForm
+from pretix.presale.forms.checkout import CustomerAwareQuestionsForm
 from pretix.presale.views import get_cart
 
 
-class QuestionsViewMixin(BaseQuestionsViewMixin):
-    form_class = QuestionsForm
+class CartQuestionsViewMixin(BaseQuestionsViewMixin):
+    orderposition_form_class = CustomerAwareQuestionsForm
     only_user_visible = True
+
+    @property
+    def order_question_container(self):
+        return self.checkout_session
 
     @cached_property
     def _positions_for_questions(self):

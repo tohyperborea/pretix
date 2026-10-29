@@ -39,33 +39,34 @@
             </fieldset>
             {% if is_preview %}
             <fieldset>
-                <legend>{% trans "E-mail preview" %}</legend>
+                <legend>{% trans "Email preview" %}</legend>
                 <div class="tab-pane mail-preview-group">
                     {% for locale, out in output.items %}
                         <div lang="{{ locale }}" class="mail-preview">
                             <strong>{{ out.subject|safe }}</strong><br><br>
                             {{ out.html|safe }}
-                            {% if out.attachment %}
-                                <p>
-                                    <a href="{% url 'cachedfile.download' id=out.attachment.id %}" class="btn btn-default"
-                                            target="_blank">
-                                        <span class="fa fa-file" aria-hidden="true"></span>
-                                        {{ out.attachment.filename }}
-                                    </a>
-                                </p>
-                            {% endif %}
-                            {% if form.cleaned_data.attach_tickets %}
-                                <p>
-                                    <span class="fa fa-file" aria-hidden="true"></span>
-                                    {% trans "Tickets" %}
-                                </p>
-                            {% endif %}
-                            {% if form.cleaned_data.attach_ical %}
-                                <p>
-                                    <span class="fa fa-file" aria-hidden="true"></span>
-                                    {% trans "Attach calendar files" %}
-                                </p>
-                            {% endif %}
+                            <ul class="list-unstyled">
+                                {% if out.attachment %}
+                                    <li>
+                                        <span class="fa fa-file-o fa-fw" aria-hidden="true"></span>
+                                        <a href="{% url 'cachedfile.download' id=out.attachment.id %}" target="_blank">
+                                            {{ out.attachment.filename }}
+                                        </a>
+                                    </li>
+                                {% endif %}
+                                {% if form.cleaned_data.attach_tickets %}
+                                    <li>
+                                        <span class="fa fa-file-o fa-fw" aria-hidden="true"></span>
+                                        {% trans "Tickets" %}
+                                    </li>
+                                {% endif %}
+                                {% if form.cleaned_data.attach_ical %}
+                                    <li>
+                                        <span class="fa fa-calendar-o fa-fw" aria-hidden="true"></span>
+                                        {% trans "Attach calendar files" %}
+                                    </li>
+                                {% endif %}
+                            </ul>
                         </div>
                     {% endfor %}
                 </div>

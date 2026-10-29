@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -51,7 +51,7 @@ def gift_card(organizer):
 @pytest.fixture
 def admin_user(organizer):
     u = User.objects.create_user('dummy@dummy.dummy', 'dummy')
-    admin_team = Team.objects.create(organizer=organizer, can_manage_reusable_media=True, name='Admin team')
+    admin_team = Team.objects.create(organizer=organizer, all_organizer_permissions=True, name='Admin team')
     admin_team.members.add(u)
     return u
 
@@ -112,7 +112,8 @@ def test_typeahead(organizer, admin_user, client, gift_card):
         o = Order.objects.create(
             code='FOO', event=event, email='dummy@dummy.test',
             status=Order.STATUS_PENDING, datetime=now(), expires=now() + timedelta(days=10),
-            total=14, locale='en'
+            total=14, locale='en',
+            sales_channel=event.organizer.sales_channels.get(identifier="web"),
         )
         ticket = event.items.create(name='Early-bird ticket', category=None, default_price=23, admission=True, personalized=True)
         op = o.positions.create(item=ticket, price=Decimal("14"))
@@ -121,7 +122,7 @@ def test_typeahead(organizer, admin_user, client, gift_card):
 
     # Privileged user can search
     team.all_events = True
-    team.can_view_orders = True
+    team.limit_event_permissions["event.orders:read"] = True
     team.save()
 
     r = client.get('/control/organizer/dummy/ticket_select2?query=' + op.secret[0:3])
@@ -139,7 +140,8 @@ def test_typeahead(organizer, admin_user, client, gift_card):
 
     # Unprivileged user can only do exact match
     team.all_events = True
-    team.can_view_orders = False
+    team.all_event_permissions = False
+    team.limit_event_permissions = {"event.vouchers:read": True}
     team.save()
 
     r = client.get('/control/organizer/dummy/ticket_select2?query=' + op.secret[0:3])
@@ -153,7 +155,7 @@ def test_typeahead(organizer, admin_user, client, gift_card):
     assert d == {"results": [{'event': 'Dummy', 'id': op.pk, 'text': 'FOO-1 (Early-bird ticket)'}], "pagination": {"more": False}}
 
     team.all_events = False
-    team.can_view_orders = True
+    team.limit_event_permissions["event.orders:read"] = True
     team.save()
 
     r = client.get('/control/organizer/dummy/ticket_select2?query=' + op.secret[0:3])

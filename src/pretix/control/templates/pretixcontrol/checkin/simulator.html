@@ -5,11 +5,12 @@
 {% load getitem %}
 {% load static %}
 {% load compress %}
+{% load vite %}
 {% block title %}{% trans "Check-in simulator" %}{% endblock %}
 {% block inside %}
     <h1>
         {% blocktrans with name=checkinlist.name %}Check-in list: {{ name }}{% endblocktrans %}
-        {% if 'can_change_event_settings' in request.eventpermset %}
+        {% if 'event.settings.general:write' in request.eventpermset %}
             <a href="{% url "control:event.orders.checkinlists.edit" event=request.event.slug organizer=request.event.organizer.slug list=checkinlist.pk %}"
                class="btn btn-default">
                 <span class="fa fa-wrench"></span>
@@ -53,6 +54,8 @@
                     <span class="fa fa-check-circle"></span>
                 {% elif result.status == "incomplete" %}
                     <span class="fa fa-question-circle"></span>
+                {% elif result.status == "exchange" %}
+                    <span class="fa fa-recycle"></span>
                 {% elif result.status == "error" %}
                     {% if result.reason == "already_redeemed" %}
                         <span class="fa fa-warning"></span>
@@ -78,6 +81,14 @@
                             </li>
                         {% endfor %}
                     </ul>
+                {% elif result.status == "exchange" %}
+                    <h3 class="nomargin-top">{% trans "Media exchange required" %}</h3>
+                    <p>
+                        {% blocktrans trimmed with media_policy=media_policies|getitem:result.media_policy media_type=media_types|getitem:result.media_type %}
+                            This ticket needs to be exchanged into a <strong>{{ media_type }}</strong> reusable medium.
+                            <strong>{{ media_policy }}</strong>.
+                        {% endblocktrans %}
+                    </p>
                 {% elif result.status == "error" %}
                     <h3 class="nomargin-top">{{ reason_labels|getitem:result.reason }}</h3>
                     {% if result.reason_explanation %}
@@ -85,10 +96,30 @@
                     {% endif %}
                 {% endif %}
                 {% if result.position %}
-                    {% if result.position.require_attention %}
+                    {% if result.require_attention %}
                         <p>
-                            <span class="fa fa-info-circle fa-fw"></span> {% trans "Special attention required" %}
+                            <strong>
+                                <span class="fa fa-info-circle text-info fa-fw"></span>
+                                {% trans "Special attention required" %}
+                            </strong>
                         </p>
+                    {% endif %}
+                    {% for t in result.checkin_texts %}
+                        <p>
+                            <span class="fa fa-info-circle text-muted fa-fw"></span>
+                            {{ t }}
+                        </p>
+                    {% endfor %}
+                    {% if result.position_object %}
+                        {% for a in result.position_object.answers.all %}
+                            {% if a.question.show_during_checkin %}
+                                <p>
+                                    <span class="fa fa-question-circle text-muted fa-fw"></span>
+                                    <strong>{{ a.question.question }}</strong>
+                                    {{ a }}
+                                </p>
+                            {% endif %}
+                        {% endfor %}
                     {% endif %}
                     <p>
                         <span class="fa fa-ticket fa-fw"></span>
@@ -104,11 +135,9 @@
                 {% endif %}
                 {% if result.rule_graph %}
                     <div id="rules-editor" class="form-inline">
-                        <div role="tabpanel" class="tab-pane" id="rules-viz">
-                            <checkin-rules-visualization></checkin-rules-visualization>
-                        </div>
-                        <textarea id="id_rules" class="sr-only">{{ result.rule_graph|attr_escapejson_dumps }}</textarea>
+                        <!-- Vue app mount point -->
                     </div>
+                    <textarea id="id_rules" class="sr-only">{{ result.rule_graph|attr_escapejson_dumps }}</textarea>
                 {% endif %}
             </div>
         </div>
@@ -132,10 +161,6 @@
         <script type="text/javascript" src="{% static "d3/d3-drag.v2.js" %}"></script>
         <script type="text/javascript" src="{% static "d3/d3-zoom.v2.js" %}"></script>
     {% endcompress %}
-    {% compress js %}
-        <script type="text/javascript" src="{% static "pretixcontrol/js/ui/checkinrules/jsonlogic-boolalg.js" %}"></script>
-        <script type="text/vue" src="{% static 'pretixcontrol/js/ui/checkinrules/viz-node.vue' %}"></script>
-        <script type="text/vue" src="{% static 'pretixcontrol/js/ui/checkinrules/checkin-rules-visualization.vue' %}"></script>
-        <script type="text/javascript" src="{% static "pretixcontrol/js/ui/checkinrules.js" %}"></script>
-    {% endcompress %}
+    {% vite_hmr %}
+    {% vite_asset "src/pretix/static/pretixcontrol/js/ui/checkinrules/index.ts" %}
 {% endblock %}

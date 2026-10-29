@@ -1,0 +1,19 @@
+{% load i18n %}{% blocktrans %}Hello,
+
+We noticed a new sign-in to your {{ instance }} account:
+{% endblocktrans %}
+- {% trans "Time" %}: {{ when }}
+- {% trans "Browser" %}: {{ agent }}
+- {% trans "Operating system" %}: {{ os }}
+{% if device %}- {% trans "Device" %}: {{ device }}
+{% endif %}{% if country %}- {% trans "Country" %}: {{ country }}
+{% endif %}
+{% blocktrans with url=url|safe %}If it was you, no action is needed.
+
+If you don't recognize this sign-in, please change your password immediately:
+
+{{ url }}
+
+Thanks,  
+The {{ instance }} Team
+{% endblocktrans %}

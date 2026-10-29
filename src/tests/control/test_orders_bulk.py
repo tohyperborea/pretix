@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -49,14 +49,14 @@ from pretix.base.models import (
 
 @pytest.fixture
 def env():
-    o = Organizer.objects.create(name='Dummy', slug='dummy')
+    o = Organizer.objects.create(name='Dummy', slug='dummy', plugins='pretix.plugins.banktransfer')
     event = Event.objects.create(
         organizer=o, name='Dummy', slug='dummy',
         date_from=now(), plugins='pretix.plugins.banktransfer,pretix.plugins.stripe,tests.testdummy'
     )
     event.settings.set('ticketoutput_testdummy__enabled', True)
     user = User.objects.create_user('dummy@dummy.dummy', 'dummy')
-    t = Team.objects.create(organizer=o, can_view_orders=True, can_change_orders=True, can_manage_customers=True)
+    t = Team.objects.create(organizer=o, all_event_permissions=True)
     t.members.add(user)
     t.limit_events.add(event)
     ticket = Item.objects.create(event=event, name='Early-bird ticket',
@@ -73,6 +73,7 @@ def order1(env):
         code='FOO', event=env[0], email='foo@dummy.test',
         status=Order.STATUS_PENDING,
         datetime=now(), expires=now() + timedelta(days=10),
+        sales_channel=env[0].organizer.sales_channels.get(identifier="web"),
         total=14, locale='en'
     )
     o.payments.create(
@@ -94,6 +95,7 @@ def order2(env):
         code='BAR', event=env[0], email='bar@dummy.test',
         status=Order.STATUS_PENDING,
         datetime=now(), expires=now() + timedelta(days=10),
+        sales_channel=env[0].organizer.sales_channels.get(identifier="web"),
         total=14, locale='en'
     )
     o.payments.create(
@@ -277,3 +279,51 @@ def test_order_bulk_delete_ignore_wrong_state(client, env, order1, order2):
 
     with scopes_disabled():
         assert Order.objects.get() == order2
+
+
+@pytest.mark.django_db
+def test_order_bulk_overpaid_refund_explicit_id(client, env, order1, order2):
+    client.login(email='dummy@dummy.dummy', password='dummy')
+    with scopes_disabled():
+        payment1 = order1.payments.first()
+        payment1.state = OrderPayment.PAYMENT_STATE_CONFIRMED
+        payment1.info_data = {"payer": "Dummy Dummy", "iban": "DE02120300000000202051"}
+        payment1.save()
+        order1.payments.create(
+            amount=2, provider='banktransfer', state=OrderPayment.PAYMENT_STATE_CONFIRMED
+        )
+
+    _run_bulk_action(client, 'refund_overpaid', {'order': order1.pk}, {'operation': 'confirm'})
+
+    order1.refresh_from_db()
+    order2.refresh_from_db()
+    with scopes_disabled():
+        assert order1.refunds.exists()
+        assert order1.refunds.get().amount == Decimal('2.00')
+        assert order1.all_logentries().count() == 1
+
+
+@pytest.mark.django_db
+def test_order_bulk_overpaid_refund_ignores_non_refundable(client, env, order1, order2):
+    client.login(email='dummy@dummy.dummy', password='dummy')
+    with scopes_disabled():
+        o1_payment1 = order1.payments.first()
+        o1_payment1.state = OrderPayment.PAYMENT_STATE_CONFIRMED
+        o1_payment1.save()
+        order1.payments.create(
+            amount=2, provider='banktransfer', state=OrderPayment.PAYMENT_STATE_CONFIRMED
+        )
+        o2_payment1 = order1.payments.first()
+        o2_payment1.provider = "manual"
+        o2_payment1.save()
+        order2.payments.create(
+            amount=2, provider='banktransfer', state=OrderPayment.PAYMENT_STATE_CONFIRMED
+        )
+
+    _run_bulk_action(client, 'refund_overpaid', {'__ALL': 'on'}, {'operation': 'confirm'})
+
+    order1.refresh_from_db()
+    order2.refresh_from_db()
+    with scopes_disabled():
+        assert not order1.refunds.exists()
+        assert not order2.refunds.exists()

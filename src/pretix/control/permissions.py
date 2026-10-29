@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -35,9 +35,13 @@
 from urllib.parse import quote
 
 from django.core.exceptions import PermissionDenied
-from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils.translation import gettext as _
+
+from pretix.base.permissions import (
+    assert_valid_event_permission, assert_valid_organizer_permission,
+)
+from pretix.helpers.http import redirect_to_url
 
 
 def current_url(request):
@@ -54,7 +58,9 @@ def event_permission_required(permission):
     """
     if permission == 'can_change_settings':
         # Legacy support
-        permission = 'can_change_event_settings'
+        permission = 'event.settings.general:write'
+
+    assert_valid_event_permission(permission)
 
     def decorator(function):
         def wrapper(request, *args, **kw):
@@ -78,7 +84,7 @@ class EventPermissionRequiredMixin:
     This mixin is equivalent to the event_permission_required view decorator but
     is in a form suitable for class-based views.
     """
-    permission = ''
+    permission = None  # None means "any permission"
 
     @classmethod
     def as_view(cls, **initkwargs):
@@ -91,9 +97,11 @@ def organizer_permission_required(permission):
     This view decorator rejects all requests with a 403 response which are not from
     users having the given permission for the event the request is associated with.
     """
-    if permission == 'can_change_settings':
+    if permission in ('event.settings.general:write', 'can_change_settings', 'can_change_event_settings'):
         # Legacy support
-        permission = 'can_change_organizer_settings'
+        permission = 'organizer.settings.general:write'
+
+    assert_valid_organizer_permission(permission)
 
     def decorator(function):
         def wrapper(request, *args, **kw):
@@ -115,7 +123,7 @@ class OrganizerPermissionRequiredMixin:
     This mixin is equivalent to the organizer_permission_required view decorator but
     is in a form suitable for class-based views.
     """
-    permission = ''
+    permission = None  # None means "any permission"
 
     @classmethod
     def as_view(cls, **initkwargs):
@@ -135,7 +143,7 @@ def administrator_permission_required():
                 raise PermissionDenied()
             if not request.user.has_active_staff_session(request.session.session_key):
                 if request.user.is_staff:
-                    return redirect(reverse('control:user.sudo') + '?next=' + quote(current_url(request)))
+                    return redirect_to_url(reverse('control:user.sudo') + '?next=' + quote(current_url(request)))
                 raise PermissionDenied(_('You do not have permission to view this content.'))
             return function(request, *args, **kw)
         return wrapper

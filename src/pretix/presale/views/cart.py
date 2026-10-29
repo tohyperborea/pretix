@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -42,9 +42,10 @@ from urllib.parse import quote
 from django.conf import settings
 from django.contrib import messages
 from django.core.cache import caches
+from django.core.exceptions import ValidationError
 from django.db.models import Q
 from django.http import FileResponse, Http404, JsonResponse
-from django.shortcuts import get_object_or_404, redirect, render
+from django.shortcuts import get_object_or_404, render
 from django.utils import translation
 from django.utils.crypto import get_random_string
 from django.utils.decorators import method_decorator
@@ -57,24 +58,25 @@ from django.views.generic import TemplateView, View
 from django_scopes import scopes_disabled
 
 from pretix.base.models import (
-    CartPosition, InvoiceAddress, QuestionAnswer, SubEvent, Voucher,
+    CartPosition, GiftCard, InvoiceAddress, QuestionAnswer, SubEvent, Voucher,
 )
 from pretix.base.services.cart import (
     CartError, add_items_to_cart, apply_voucher, clear_cart, error_messages,
-    remove_cart_position,
+    extend_cart_reservation, remove_cart_position,
 )
+from pretix.base.timemachine import time_machine_now
 from pretix.base.views.tasks import AsyncAction
 from pretix.helpers.http import redirect_to_url
+from pretix.helpers.safedownload import check_token
 from pretix.multidomain.urlreverse import eventreverse
+from pretix.presale.productlist import (
+    get_item_option_count, item_group_by_category, prepare_item_list_for_shop,
+)
 from pretix.presale.views import (
     CartMixin, EventViewMixin, allow_cors_if_namespaced,
-    allow_frame_if_namespaced, iframe_entry_view_wrapper,
-)
-from pretix.presale.views.event import (
-    get_grouped_items, item_group_by_category,
+    allow_frame_if_namespaced, get_cart, iframe_entry_view_wrapper,
 )
 from pretix.presale.views.robots import NoSearchIndexViewMixin
-from pretix.presale.views.customer import CustomerRequiredMixin
 
 try:
     widget_data_cache = caches['redis']
@@ -98,7 +100,10 @@ class CartActionMixin:
         if 'locale' in self.request.GET:
             query['locale'] = self.request.GET['locale']
         disclose_cart_id = (
-            'iframe' in self.request.GET or settings.SESSION_COOKIE_NAME not in self.request.COOKIES
+            'iframe' in self.request.GET or (
+                settings.SESSION_COOKIE_NAME not in self.request.COOKIES and
+                '__Host-' + settings.SESSION_COOKIE_NAME not in self.request.COOKIES
+            )
         ) and self.kwargs.get('cart_namespace')
         if disclose_cart_id:
             cart_id = get_or_create_cart_id(self.request)
@@ -121,7 +126,10 @@ class CartActionMixin:
             else:
                 u += '?require_cookie=true'
             disclose_cart_id = (
-                'iframe' in self.request.GET or settings.SESSION_COOKIE_NAME not in self.request.COOKIES
+                'iframe' in self.request.GET or (
+                    settings.SESSION_COOKIE_NAME not in self.request.COOKIES and
+                    '__Host-' + settings.SESSION_COOKIE_NAME not in self.request.COOKIES
+                )
             ) and self.kwargs.get('cart_namespace')
             if disclose_cart_id:
                 cart_id = get_or_create_cart_id(self.request)
@@ -145,104 +153,116 @@ class CartActionMixin:
         except InvoiceAddress.DoesNotExist:
             return InvoiceAddress()
 
-    def _item_from_post_value(self, key, value, voucher=None, voucher_ignore_if_redeemed=False):
-        if value.strip() == '' or '_' not in key:
-            return
 
-        if not key.startswith('item_') and not key.startswith('variation_') and not key.startswith('seat_'):
-            return
+def _item_from_post_value(request, key, value, voucher=None, voucher_ignore_if_redeemed=False):
+    if value.strip() == '' or '_' not in key:
+        return
 
-        parts = key.split("_")
-        price = self.request.POST.get('price_' + "_".join(parts[1:]), "")
-        subevent = None
-        if 'subevent' in self.request.POST:
-            try:
-                subevent = int(self.request.POST.get('subevent'))
-            except ValueError:
-                pass
-
-        if key.startswith('seat_'):
-            try:
-                return {
-                    'item': int(parts[1]),
-                    'variation': int(parts[2]) if len(parts) > 2 else None,
-                    'count': 1,
-                    'seat': value,
-                    'price': price,
-                    'voucher': voucher,
-                    'voucher_ignore_if_redeemed': voucher_ignore_if_redeemed,
-                    'subevent': subevent
-                }
-            except ValueError:
-                raise CartError(_('Please enter numbers only.'))
-
+    subevent = None
+    prefix = ''
+    if key.startswith('subevent_'):
         try:
-            amount = int(value)
+            parts = key.split('_', 2)
+            subevent = int(parts[1])
+            key = parts[2]
+            prefix = f'subevent_{subevent}_'
         except ValueError:
-            raise CartError(_('Please enter numbers only.'))
-        if amount < 0:
-            raise CartError(_('Please enter positive numbers only.'))
-        elif amount == 0:
-            return
-
-        if key.startswith('item_'):
-            try:
-                return {
-                    'item': int(parts[1]),
-                    'variation': None,
-                    'count': amount,
-                    'price': price,
-                    'voucher': voucher,
-                    'voucher_ignore_if_redeemed': voucher_ignore_if_redeemed,
-                    'subevent': subevent
-                }
-            except ValueError:
-                raise CartError(_('Please enter numbers only.'))
-        elif key.startswith('variation_'):
-            try:
-                return {
-                    'item': int(parts[1]),
-                    'variation': int(parts[2]),
-                    'count': amount,
-                    'price': price,
-                    'voucher': voucher,
-                    'voucher_ignore_if_redeemed': voucher_ignore_if_redeemed,
-                    'subevent': subevent
-                }
-            except ValueError:
-                raise CartError(_('Please enter numbers only.'))
-
-    def _items_from_post_data(self):
-        """
-        Parses the POST data and returns a list of dictionaries
-        """
-
-        # Compatibility patch that makes the frontend code a lot easier
-        req_items = list(self.request.POST.lists())
-        if '_voucher_item' in self.request.POST and '_voucher_code' in self.request.POST:
-            req_items.append((
-                '%s' % self.request.POST['_voucher_item'], ('1',)
-            ))
+            pass
+    elif 'subevent' in request.POST:
+        try:
+            subevent = int(request.POST.get('subevent'))
+        except ValueError:
             pass
 
-        items = []
-        if 'raw' in self.request.POST:
-            items += json.loads(self.request.POST.get("raw"))
-        for key, values in req_items:
-            for value in values:
-                try:
-                    item = self._item_from_post_value(key, value, self.request.POST.get('_voucher_code'),
-                                                      voucher_ignore_if_redeemed=self.request.POST.get('_voucher_ignore_if_redeemed') == 'on')
-                except CartError as e:
-                    messages.error(self.request, str(e))
-                    return
-                if item:
-                    items.append(item)
+    if not key.startswith('item_') and not key.startswith('variation_') and not key.startswith('seat_'):
+        return
 
-        if len(items) == 0:
-            messages.warning(self.request, _('You did not select any products.'))
-            return []
-        return items
+    parts = key.split("_")
+    price = request.POST.get(prefix + 'price_' + "_".join(parts[1:]), "")
+
+    if key.startswith('seat_'):
+        try:
+            return {
+                'item': int(parts[1]),
+                'variation': int(parts[2]) if len(parts) > 2 else None,
+                'count': 1,
+                'seat': value,
+                'price': price,
+                'voucher': voucher,
+                'voucher_ignore_if_redeemed': voucher_ignore_if_redeemed,
+                'subevent': subevent
+            }
+        except ValueError:
+            raise CartError(_('Please enter numbers only.'))
+
+    try:
+        amount = int(value)
+    except ValueError:
+        raise CartError(_('Please enter numbers only.'))
+    if amount < 0:
+        raise CartError(_('Please enter positive numbers only.'))
+    elif amount == 0:
+        return
+
+    if key.startswith('item_'):
+        try:
+            return {
+                'item': int(parts[1]),
+                'variation': None,
+                'count': amount,
+                'price': price,
+                'voucher': voucher,
+                'voucher_ignore_if_redeemed': voucher_ignore_if_redeemed,
+                'subevent': subevent
+            }
+        except ValueError:
+            raise CartError(_('Please enter numbers only.'))
+    elif key.startswith('variation_'):
+        try:
+            return {
+                'item': int(parts[1]),
+                'variation': int(parts[2]),
+                'count': amount,
+                'price': price,
+                'voucher': voucher,
+                'voucher_ignore_if_redeemed': voucher_ignore_if_redeemed,
+                'subevent': subevent
+            }
+        except ValueError:
+            raise CartError(_('Please enter numbers only.'))
+
+
+def _items_from_post_data(request, warn_if_empty=True):
+    """
+    Parses the POST data and returns a list of dictionaries
+    """
+
+    # Compatibility patch that makes the frontend code a lot easier
+    req_items = list(request.POST.lists())
+    if '_selected_item' in request.POST:
+        req_items.append((
+            '%s' % request.POST['_selected_item'], ('1',)
+        ))
+        pass
+
+    items = []
+    if 'raw' in request.POST:
+        items += json.loads(request.POST.get("raw"))
+    for key, values in req_items:
+        for value in values:
+            try:
+                item = _item_from_post_value(request, key, value, request.POST.get('_voucher_code'),
+                                             voucher_ignore_if_redeemed=request.POST.get('_voucher_ignore_if_redeemed') == 'on')
+            except CartError as e:
+                messages.error(request, str(e))
+                return
+            if item:
+                items.append(item)
+
+    if len(items) == 0 and warn_if_empty:
+        messages.warning(request, _('You did not select any products.'))
+        return []
+    return items
 
 
 @scopes_disabled()
@@ -369,6 +389,7 @@ def get_or_create_cart_id(request, create=True):
             if 'carts' in request.session:
                 request.session['carts'][current_id] = {}
         else:
+            # We found a valid, existing cart.
             return current_id
 
     cart_data = {}
@@ -379,6 +400,7 @@ def get_or_create_cart_id(request, create=True):
             cart_data['widget_data'] = cached_widget_data
     else:
         if not create:
+            # There is no existing cart for this request and we're not supposed to create a new one.
             return None
         new_id = generate_cart_id(request, prefix=prefix)
 
@@ -398,7 +420,7 @@ def get_or_create_cart_id(request, create=True):
     return new_id
 
 
-def cart_session(request):
+def cart_session(request, create=True):
     """
     Before pretix 1.8.0, all checkout-related information (like the entered email address) was stored
     in the user's regular session dictionary. This led to data interference and leaks for example if a
@@ -409,35 +431,94 @@ def cart_session(request):
     active cart session sub-dictionary for read and write access.
     """
     request.session.modified = True
-    cart_id = get_or_create_cart_id(request)
+    cart_id = get_or_create_cart_id(request, create=create)
+    if not cart_id and not create:
+        return None
     return request.session['carts'][cart_id]
 
 
 @method_decorator(allow_frame_if_namespaced, 'dispatch')
 class CartApplyVoucher(EventViewMixin, CartActionMixin, AsyncAction, View):
     task = apply_voucher
-    known_errortypes = ['CartError']
+    known_errortypes = ['CartError', 'CartPositionError']
 
     def get_success_message(self, value):
         return _('We applied the voucher to as many products in your cart as we could.')
 
     def post(self, request, *args, **kwargs):
+        from pretix.base.payment import GiftCardPayment, GiftCardPaymentForm
+
         if 'voucher' in request.POST:
-            return self.do(self.request.event.id, request.POST.get('voucher'), get_or_create_cart_id(self.request),
-                           translation.get_language(), request.sales_channel.identifier)
+            code = request.POST.get('voucher').strip()
+
+            if not self.request.event.vouchers.filter(code__iexact=code):
+                try:
+                    gc = self.request.event.organizer.accepted_gift_cards.get(secret=code)
+                    gcp = GiftCardPayment(self.request.event)
+                    if not gcp.is_enabled or not gcp.is_allowed(self.request, Decimal("1.00")):
+                        raise ValidationError(error_messages['voucher_invalid'])
+                    else:
+                        cs = cart_session(request)
+                        used_cards = [
+                            p.get('info_data', {}).get('gift_card')
+                            for p in cs.get('payments', [])
+                            if p.get('info_data', {}).get('gift_card')
+                        ]
+                        form = GiftCardPaymentForm(
+                            event=request.event,
+                            used_cards=used_cards,
+                            positions=get_cart(request),
+                            testmode=request.event.testmode,
+                            data={'code': code},
+                        )
+                        form.fields = gcp.payment_form_fields
+                        if not form.is_valid():
+                            # raise first validation-error in form
+                            raise next(iter(form.errors.as_data().values()))[0]
+                        gcp._add_giftcard_to_cart(cs, gc)
+                        messages.success(
+                            request,
+                            _("The gift card has been saved to your cart. Please continue your checkout.")
+                        )
+                        if "ajax" in self.request.POST or "ajax" in self.request.GET:
+                            return JsonResponse({
+                                'ready': True,
+                                'success': True,
+                                'redirect': self.get_success_url(),
+                                'message': str(
+                                    _("The gift card has been saved to your cart. Please continue your checkout.")
+                                )
+                            })
+                        return redirect_to_url(self.get_success_url())
+                except GiftCard.DoesNotExist:
+                    pass
+                except ValidationError as e:
+                    messages.error(self.request, str(e.message))
+                    if "ajax" in self.request.POST or "ajax" in self.request.GET:
+                        return JsonResponse({
+                            'ready': True,
+                            'success': False,
+                            'redirect': self.get_success_url(),
+                            'message': str(e.message)
+                        })
+                    return redirect_to_url(self.get_error_url())
+
+            return self.do(self.request.event.id, code, get_or_create_cart_id(self.request),
+                           translation.get_language(), request.sales_channel.identifier,
+                           time_machine_now(default=None))
         else:
             if 'ajax' in self.request.GET or 'ajax' in self.request.POST:
                 return JsonResponse({
                     'redirect': self.get_error_url()
                 })
             else:
-                return redirect(self.get_error_url())
+                return redirect_to_url(self.get_error_url())
 
 
 @method_decorator(allow_frame_if_namespaced, 'dispatch')
 class CartRemove(EventViewMixin, CartActionMixin, AsyncAction, View):
     task = remove_cart_position
-    known_errortypes = ['CartError']
+    known_errortypes = ['CartError', 'CartPositionError']
 
     def get_success_message(self, value):
         if CartPosition.objects.filter(cart_id=get_or_create_cart_id(self.request)).exists():
@@ -450,22 +531,23 @@ class CartRemove(EventViewMixin, CartActionMixin, AsyncAction, View):
         if 'id' in request.POST:
             try:
                 return self.do(self.request.event.id, int(request.POST.get('id')), get_or_create_cart_id(self.request),
-                               translation.get_language(), request.sales_channel.identifier)
+                               translation.get_language(), request.sales_channel.identifier,
+                               time_machine_now(default=None))
             except ValueError:
-                return redirect(self.get_error_url())
+                return redirect_to_url(self.get_error_url())
         else:
             if 'ajax' in self.request.GET or 'ajax' in self.request.POST:
                 return JsonResponse({
                     'redirect': self.get_error_url()
                 })
             else:
-                return redirect(self.get_error_url())
+                return redirect_to_url(self.get_error_url())
 
 
 @method_decorator(allow_frame_if_namespaced, 'dispatch')
 class CartClear(EventViewMixin, CartActionMixin, AsyncAction, View):
     task = clear_cart
-    known_errortypes = ['CartError']
+    known_errortypes = ['CartError', 'CartPositionError']
 
     def get_success_message(self, value):
         create_empty_cart_id(self.request)
@@ -473,7 +555,43 @@ class CartClear(EventViewMixin, CartActionMixin, AsyncAction, View):
 
     def post(self, request, *args, **kwargs):
         return self.do(self.request.event.id, get_or_create_cart_id(self.request), translation.get_language(),
-                       request.sales_channel.identifier)
+                       request.sales_channel.identifier, time_machine_now(default=None))
+
+
+@method_decorator(allow_cors_if_namespaced, 'dispatch')
+class CartCreate(EventViewMixin, CartActionMixin, View):
+    def get(self, request, *args, **kwargs):
+        if 'ajax' in self.request.GET:
+            cart_id = get_or_create_cart_id(self.request, create=True)
+            return JsonResponse({
+                'cart_id': cart_id,
+            })
+        else:
+            return redirect_to_url(self.get_success_url())
+
+
+@method_decorator(allow_frame_if_namespaced, 'dispatch')
+class CartExtendReservation(EventViewMixin, CartActionMixin, AsyncAction, View):
+    task = extend_cart_reservation
+    known_errortypes = ['CartError', 'CartPositionError']
+
+    def _ajax_response_data(self, value):
+        if isinstance(value, dict):
+            return value
+        else:
+            return {}
+
+    def get_success_message(self, value):
+        if value['success'] > 0:
+            if value.get('price_changed'):
+                return _('Your cart timeout was extended. Please note that some of the prices in your cart '
+                         'changed.')
+            else:
+                return _('Your cart timeout was extended.')
+
+    def post(self, request, *args, **kwargs):
+        return self.do(self.request.event.id, get_or_create_cart_id(self.request), translation.get_language(),
+                       request.sales_channel.identifier, time_machine_now(default=None))
 
 
 @method_decorator(allow_cors_if_namespaced, 'dispatch')
@@ -481,12 +599,12 @@ class CartClear(EventViewMixin, CartActionMixin, AsyncAction, View):
 @method_decorator(iframe_entry_view_wrapper, 'dispatch')
 class CartAdd(EventViewMixin, CartActionMixin, AsyncAction, View):
     task = add_items_to_cart
-    known_errortypes = ['CartError']
+    known_errortypes = ['CartError', 'CartPositionError']
 
     def get_success_message(self, value):
         return _('The products have been successfully added to your cart.')
 
-    def _ajax_response_data(self):
+    def _ajax_response_data(self, value):
         cart_id = get_or_create_cart_id(self.request)
         return {
             'cart_id': cart_id,
@@ -507,7 +625,7 @@ class CartAdd(EventViewMixin, CartActionMixin, AsyncAction, View):
         return u
 
     def post(self, request, *args, **kwargs):
-        if request.sales_channel.identifier not in request.event.sales_channels:
+        if not request.event.all_sales_channels and request.sales_channel.identifier not in (s.identifier for s in request.event.limit_sales_channels.all()):
             raise Http404(_('Tickets for this event cannot be purchased on this sales channel.'))
 
         cart_id = get_or_create_cart_id(self.request)
@@ -526,10 +644,11 @@ class CartAdd(EventViewMixin, CartActionMixin, AsyncAction, View):
             cs = cart_session(request)
             widget_data = cs.get('widget_data', {})
 
-        items = self._items_from_post_data()
+        items = _items_from_post_data(self.request)
         if items:
             return self.do(self.request.event.id, items, cart_id, translation.get_language(),
-                           self.invoice_address.pk, widget_data, self.request.sales_channel.identifier)
+                           self.invoice_address.pk, widget_data, self.request.sales_channel.identifier,
+                           time_machine_now(default=None))
         else:
             if 'ajax' in self.request.GET or 'ajax' in self.request.POST:
                 return JsonResponse({
@@ -538,26 +657,26 @@ class CartAdd(EventViewMixin, CartActionMixin, AsyncAction, View):
                     'message': str(error_messages['empty'])
                 })
             else:
-                return redirect(self.get_error_url())
+                return redirect_to_url(self.get_error_url())
 
 
 @method_decorator(allow_frame_if_namespaced, 'dispatch')
 @method_decorator(iframe_entry_view_wrapper, 'dispatch')
-class RedeemView(CustomerRequiredMixin, NoSearchIndexViewMixin, EventViewMixin, CartMixin, TemplateView):
+class RedeemView(NoSearchIndexViewMixin, EventViewMixin, CartMixin, TemplateView):
     template_name = "pretixpresale/event/voucher.html"
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
 
         context['voucher'] = self.voucher
-        context['max_times'] = self.voucher.max_usages - self.voucher.redeemed
+        context['max_choices'] = self.voucher.max_usages - self.voucher.redeemed
 
         # Fetch all items
-        items, display_add_to_cart = get_grouped_items(
+        items, display_add_to_cart = prepare_item_list_for_shop(
             self.request.event,
-            self.subevent,
+            subevent=self.subevent,
             voucher=self.voucher,
-            channel=self.request.sales_channel.identifier,
+            channel=self.request.sales_channel,
             memberships=(
                 self.request.customer.usable_memberships(
                     for_event=self.subevent or self.request.event,
@@ -568,16 +687,16 @@ class RedeemView(CustomerRequiredMixin, NoSearchIndexViewMixin, EventViewMixin, 
 
         # Calculate how many options the user still has. If there is only one option, we can
         # check the box right away ;)
-        context['options'] = sum([(len(item.available_variations) if item.has_variations else 1)
-                                  for item in items])
+        context['itemnum'] = get_item_option_count(items)
 
         context['allfree'] = all(
-            item.display_price.gross == Decimal('0.00') for item in items if not item.has_variations
+            item.display_price.gross == Decimal('0.00') and not item.mandatory_priced_addons
+            for item in items if not item.has_variations
         ) and all(
             all(
                 var.display_price.gross == Decimal('0.00')
                 for var in item.available_variations
-            )
+            ) and not item.mandatory_priced_addons
             for item in items if item.has_variations
         )
 
@@ -592,7 +711,8 @@ class RedeemView(CustomerRequiredMixin, NoSearchIndexViewMixin, EventViewMixin, 
 
         context['new_tab'] = (
             'require_cookie' in self.request.GET and
-            settings.SESSION_COOKIE_NAME not in self.request.COOKIES
+            settings.SESSION_COOKIE_NAME not in self.request.COOKIES and
+            '__Host-' + settings.SESSION_COOKIE_NAME not in self.request.COOKIES
             # Cookies are not supported! Lets just make the form open in a new tab
         )
 
@@ -600,13 +720,18 @@ class RedeemView(CustomerRequiredMixin, NoSearchIndexViewMixin, EventViewMixin, 
             context['cart_redirect'] = eventreverse(self.request.event, 'presale:event.checkout.start',
                                                     kwargs={'cart_namespace': kwargs.get('cart_namespace') or ''})
         else:
-            context['cart_redirect'] = eventreverse(self.request.event, 'presale:event.index',
-                                                    kwargs={'cart_namespace': kwargs.get('cart_namespace') or ''})
+            if 'next' in self.request.GET and url_has_allowed_host_and_scheme(self.request.GET.get("next"), allowed_hosts=None):
+                context['cart_redirect'] = self.request.GET.get('next')
+            else:
+                context['cart_redirect'] = eventreverse(self.request.event, 'presale:event.index',
+                                                        kwargs={'cart_namespace': kwargs.get('cart_namespace') or ''})
         if context['cart_redirect'].startswith('https:'):
             context['cart_redirect'] = '/' + context['cart_redirect'].split('/', 3)[3]
         return context
 
     def dispatch(self, request, *args, **kwargs):
+        from pretix.base.payment import GiftCardPayment, GiftCardPaymentForm
+
         err = None
         v = request.GET.get('voucher')
 
@@ -614,6 +739,7 @@ class RedeemView(CustomerRequiredMixin, NoSearchIndexViewMixin, EventViewMixin, 
             v = v.strip()
             try:
                 self.voucher = Voucher.objects.get(code__iexact=v, event=request.event)
+                # Sideburn: voucher helpers (SID-95).
                 if self.voucher.is_fully_redeemed():
                     err = error_messages['voucher_redeemed']
                 elif self.voucher.is_expired():
@@ -629,17 +755,52 @@ class RedeemView(CustomerRequiredMixin, NoSearchIndexViewMixin, EventViewMixin, 
                 if v_avail < 1 and not err:
                     err = error_messages['voucher_redeemed_cart'] % self.request.event.settings.reservation_time
             except Voucher.DoesNotExist:
-                if self.request.event.organizer.accepted_gift_cards.filter(secret__iexact=request.GET.get("voucher")).exists():
-                    err = error_messages['gift_card']
-                else:
+                try:
+                    gc = request.event.organizer.accepted_gift_cards.get(secret=v)
+                    gcp = GiftCardPayment(request.event)
+                    if not gcp.is_enabled or not gcp.is_allowed(request, Decimal("1.00")):
+                        err = error_messages['voucher_invalid']
+                    else:
+                        cs = cart_session(request)
+                        used_cards = [
+                            p.get('info_data', {}).get('gift_card')
+                            for p in cs.get('payments', [])
+                            if p.get('info_data', {}).get('gift_card')
+                        ]
+                        form = GiftCardPaymentForm(
+                            event=request.event,
+                            used_cards=used_cards,
+                            positions=get_cart(request),
+                            testmode=request.event.testmode,
+                            data={'code': v},
+                        )
+                        form.fields = gcp.payment_form_fields
+                        if not form.is_valid():
+                            # raise first validation-error in form
+                            raise next(iter(form.errors.as_data().values()))[0]
+                        gcp._add_giftcard_to_cart(cs, gc)
+                        messages.success(
+                            request,
+                            _("The gift card has been saved to your cart. Please now select the products "
+                              "you want to purchase.")
+                        )
+                        return redirect_to_url(self.get_next_url())
+                except GiftCard.DoesNotExist:
                     err = error_messages['voucher_invalid']
+                except ValidationError as e:
+                    err = str(e.message)
         else:
-            return render(request, 'pretixpresale/event/voucher_form.html')
+            context = {}
+            context['cart'] = self.get_cart()
+            context['show_cart'] = context['cart']['positions']
+            return render(request, 'pretixpresale/event/voucher_form.html', context)
 
-        if request.event.presale_start and now() < request.event.presale_start:
-            err = error_messages['not_started']
-        if request.event.presale_end and now() > request.event.presale_end:
+        if request.event.presale_has_ended or (
+                request.event.presale_end and time_machine_now() > request.event.presale_end):
             err = error_messages['ended']
+        elif not request.event.presale_is_running or (
+                request.event.presale_start and time_machine_now() < request.event.presale_start):
+            err = error_messages['not_started']
 
         self.subevent = None
         if request.event.has_subevents:
@@ -654,8 +815,12 @@ class RedeemView(CustomerRequiredMixin, NoSearchIndexViewMixin, EventViewMixin, 
                 self.subevent = self.voucher.subevent
 
             if not err and not self.subevent:
-                return redirect(eventreverse(self.request.event, 'presale:event.index',
-                                kwargs={'cart_namespace': kwargs.get('cart_namespace') or ''}) + '?voucher=' + quote(self.voucher.code))
+                return redirect_to_url(
+                    eventreverse(
+                        self.request.event, 'presale:event.index',
+                        kwargs={'cart_namespace': kwargs.get('cart_namespace') or ''}
+                    ) + '?voucher=' + quote(self.voucher.code)
+                )
         else:
             pass
 
@@ -672,7 +837,7 @@ class RedeemView(CustomerRequiredMixin, NoSearchIndexViewMixin, EventViewMixin, 
 
     def get(self, request, *args, **kwargs):
         if 'iframe' in request.GET and 'require_cookie' not in request.GET:
-            return redirect(request.get_full_path() + '&require_cookie=1')
+            return redirect_to_url(request.get_full_path() + '&require_cookie=1')
 
         if len(self.request.GET.get('widget_data', '{}')) > 3:
             # We've been passed data from a widget, we need to create a cart session to store it.
@@ -684,18 +849,27 @@ class RedeemView(CustomerRequiredMixin, NoSearchIndexViewMixin, EventViewMixin, 
 class AnswerDownload(EventViewMixin, View):
     def get(self, request, *args, **kwargs):
         answid = kwargs.get('answer')
+        token = request.GET.get('token', '')
+        cart_id = get_or_create_cart_id(self.request)
         answer = get_object_or_404(
             QuestionAnswer,
-            cartposition__cart_id=get_or_create_cart_id(self.request),
+            Q(cartposition__cart_id=cart_id) | Q(checkoutsession__cart_id=cart_id),
             id=answid
         )
         if not answer.file:
             return Http404()
+        if not check_token(request, answer, token):
+            raise Http404(_("This link is no longer valid. Please go back, refresh the page, and try again."))
 
-        ftype, _ = mimetypes.guess_type(answer.file.name)
-        resp = FileResponse(answer.file, content_type=ftype or 'application/binary')
-        resp['Content-Disposition'] = 'attachment; filename="{}-cart-{}"'.format(
+        ftype, _1 = mimetypes.guess_type(answer.file.name)
+        filename = '{}-cart-{}'.format(
             self.request.event.slug.upper(),
             os.path.basename(answer.file.name).split('.', 1)[1]
-        ).encode("ascii", "ignore")
+        )
+        resp = FileResponse(
+            answer.file,
+            filename=filename,
+            as_attachment=True,
+            content_type=ftype or 'application/binary'
+        )
         return resp

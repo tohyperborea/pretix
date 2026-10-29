@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -81,6 +81,8 @@ TEST_VOUCHER_RES = {
     'all_bundles_included': False,
     'subevent': None,
     'seat': None,
+    'budget': None,
+    'budget_used': "0.00",
 }
 
 
@@ -89,6 +91,7 @@ def test_voucher_list(token_client, organizer, event, voucher, item, quota, sube
     res = dict(TEST_VOUCHER_RES)
     res['item'] = item.pk
     res['id'] = voucher.pk
+    res['created'] = voucher.created.isoformat().replace('+00:00', 'Z')
     res['code'] = voucher.code
     q2 = copy.copy(quota)
     q2.pk = None
@@ -109,6 +112,15 @@ def test_voucher_list(token_client, organizer, event, voucher, item, quota, sube
     assert [res] == resp.data['results']
     resp = token_client.get(
         '/api/v1/organizers/{}/events/{}/vouchers/?code=ABC'.format(organizer.slug, event.slug)
+    )
+    assert [] == resp.data['results']
+
+    resp = token_client.get(
+        '/api/v1/organizers/{}/events/{}/vouchers/?search={}'.format(organizer.slug, event.slug, voucher.code[:3])
+    )
+    assert [res] == resp.data['results']
+    resp = token_client.get(
+        '/api/v1/organizers/{}/events/{}/vouchers/?code=RAvRcnbDehWD59oywV5x'.format(organizer.slug, event.slug)
     )
     assert [] == resp.data['results']
 
@@ -262,6 +274,7 @@ def test_voucher_detail(token_client, organizer, event, voucher, item):
     res['item'] = item.pk
     res['id'] = voucher.pk
     res['code'] = voucher.code
+    res['created'] = voucher.created.isoformat().replace('+00:00', 'Z')
 
     resp = token_client.get('/api/v1/organizers/{}/events/{}/vouchers/{}/'.format(organizer.slug, event.slug,
                                                                                   voucher.pk))
@@ -960,6 +973,8 @@ def test_redeemed_is_not_writable(token_client, organizer, event, item):
 
 @pytest.mark.django_db
 def test_create_multiple_vouchers(token_client, organizer, event, item):
+    with scopes_disabled():
+        event.quotas.create(name="Q", size=100).items.add(item)
     resp = token_client.post(
         '/api/v1/organizers/{}/events/{}/vouchers/batch_create/'.format(organizer.slug, event.slug),
         data=[
@@ -1008,6 +1023,8 @@ def test_create_multiple_vouchers(token_client, organizer, event, item):
 
 @pytest.mark.django_db
 def test_create_multiple_vouchers_one_invalid(token_client, organizer, event, item):
+    with scopes_disabled():
+        event.quotas.create(name="Q", size=100).items.add(item)
     resp = token_client.post(
         '/api/v1/organizers/{}/events/{}/vouchers/batch_create/'.format(organizer.slug, event.slug),
         data=[
@@ -1051,6 +1068,8 @@ def test_create_multiple_vouchers_one_invalid(token_client, organizer, event, it
 
 @pytest.mark.django_db
 def test_create_multiple_vouchers_duplicate_code(token_client, organizer, event, item):
+    with scopes_disabled():
+        event.quotas.create(name="Q", size=100).items.add(item)
     resp = token_client.post(
         '/api/v1/organizers/{}/events/{}/vouchers/batch_create/'.format(organizer.slug, event.slug),
         data=[
@@ -1092,6 +1111,52 @@ def test_create_multiple_vouchers_duplicate_code(token_client, organizer, event,
         assert Voucher.objects.count() == 0
 
 
+@pytest.mark.django_db
+def test_create_multiple_vouchers_autogenerate_codes(token_client, organizer, event, item):
+    with scopes_disabled():
+        event.quotas.create(name="Q", size=100).items.add(item)
+    resp = token_client.post(
+        '/api/v1/organizers/{}/events/{}/vouchers/batch_create/'.format(organizer.slug, event.slug),
+        data=[
+            {
+                'max_usages': 1,
+                'valid_until': None,
+                'block_quota': False,
+                'allow_ignore_quota': False,
+                'price_mode': 'set',
+                'value': '12.00',
+                'item': item.pk,
+                'variation': None,
+                'quota': None,
+                'tag': 'Foo',
+                'comment': '',
+                'subevent': None
+            },
+            {
+                'max_usages': 1,
+                'valid_until': None,
+                'block_quota': True,
+                'allow_ignore_quota': False,
+                'price_mode': 'set',
+                'value': '12.00',
+                'item': item.pk,
+                'variation': None,
+                'quota': None,
+                'tag': 'Foo',
+                'comment': '',
+                'subevent': None
+            }
+        ], format='json'
+    )
+    assert resp.status_code == 201
+    with scopes_disabled():
+        assert Voucher.objects.count() == 2
+        v1 = Voucher.objects.get(code=resp.data[0]['code'])
+        assert not v1.block_quota
+        v2 = Voucher.objects.get(code=resp.data[1]['code'])
+        assert v2.block_quota
+
+
 @pytest.fixture
 def seatingplan(organizer, event):
     plan = SeatingPlan.objects.create(
@@ -1109,6 +1174,8 @@ def seat1(item, event):
 
 @pytest.mark.django_db
 def test_create_multiple_vouchers_duplicate_seat(token_client, organizer, event, item, seat1, seatingplan):
+    with scopes_disabled():
+        event.quotas.create(name="Q", size=100).items.add(item)
     resp = token_client.post(
         '/api/v1/organizers/{}/events/{}/vouchers/batch_create/'.format(organizer.slug, event.slug),
         data=[
@@ -1165,6 +1232,14 @@ def test_set_seat_ok(token_client, organizer, event, seatingplan, seat1, item):
     with scopes_disabled():
         v.refresh_from_db()
         assert v.seat == seat1
+
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/seats/{}/'.format(organizer.slug, event.slug, seat1.pk))
+    assert resp.status_code == 200
+    assert resp.data['voucher'] == v.pk
+
+    resp = token_client.get('/api/v1/organizers/{}/events/{}/seats/{}/?expand=voucher'.format(organizer.slug, event.slug, seat1.pk))
+    assert resp.status_code == 200
+    assert resp.data['voucher']['id'] == v.pk
 
 
 @pytest.mark.django_db

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -51,15 +51,14 @@ def gift_card(organizer):
 @pytest.fixture
 def admin_user(organizer):
     u = User.objects.create_user('dummy@dummy.dummy', 'dummy')
-    admin_team = Team.objects.create(organizer=organizer, can_manage_gift_cards=True, name='Admin team',
-                                     can_change_organizer_settings=True)
+    admin_team = Team.objects.create(organizer=organizer, name='Admin team', all_organizer_permissions=True)
     admin_team.members.add(u)
     return u
 
 
 @pytest.fixture
 def team2(admin_user, organizer2):
-    admin_team = Team.objects.create(organizer=organizer2, can_manage_gift_cards=True, name='Admin team')
+    admin_team = Team.objects.create(organizer=organizer2, name='Admin team', all_organizer_permissions=True)
     admin_team.members.add(admin_user)
 
 
@@ -133,7 +132,8 @@ def test_card_detail_view_transact_revert_refund(organizer, admin_user, gift_car
             code='FOO', event=event, email='dummy@dummy.test',
             status=Order.STATUS_CANCELED,
             datetime=now(), expires=now() + timedelta(days=10),
-            total=14, locale='en'
+            total=14, locale='en',
+            sales_channel=event.organizer.sales_channels.get(identifier="web"),
         )
         o.payments.create(
             amount=o.total, provider='banktransfer', state=OrderPayment.PAYMENT_STATE_CONFIRMED
@@ -212,8 +212,8 @@ def test_typeahead(organizer, admin_user, client, gift_card):
     assert d == {"results": [{"id": gift_card.pk, "text": gift_card.secret}], "pagination": {"more": False}}
 
     # Unprivileged user can only do exact match
-    team.can_manage_gift_cards = False
-    team.can_manage_reusable_media = True
+    team.all_organizer_permissions = False
+    team.limit_organizer_permissions = {"organizer.reusablemedia:write": True, "organizer.reusablemedia:read": True}
     team.save()
 
     r = client.get('/control/organizer/dummy/giftcards/select2?query=' + gift_card.secret[0:3])

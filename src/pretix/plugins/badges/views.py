@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -21,11 +21,13 @@
 #
 import json
 from datetime import timedelta
+from decimal import Decimal
 from io import BytesIO
 
 from django.contrib import messages
 from django.contrib.staticfiles import finders
 from django.core.files import File
+from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.db import transaction
 from django.http import Http404
@@ -37,6 +39,7 @@ from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
 from django.views import View
 from django.views.generic import CreateView, DetailView, ListView
+from pypdf import PdfWriter
 from reportlab.lib import pagesizes
 from reportlab.pdfgen import canvas
 
@@ -49,13 +52,15 @@ from pretix.helpers.models import modelcopy
 from pretix.plugins.badges.forms import BadgeLayoutForm
 from pretix.plugins.badges.tasks import badges_create_pdf
 
+from ...base.permissions import AnyPermissionOf
 from ...helpers.compat import CompatDeleteView
 from .models import BadgeLayout
+from .templates import TEMPLATES
 
 
 class LayoutListView(EventPermissionRequiredMixin, ListView):
     model = BadgeLayout
-    permission = ('can_change_event_settings', 'can_view_orders')
+    permission = AnyPermissionOf('event.settings.general:write', 'event.orders:read')
     template_name = 'pretixplugins/badges/index.html'
     context_object_name = 'layouts'
 
@@ -67,9 +72,15 @@ class LayoutCreate(EventPermissionRequiredMixin, CreateView):
     model = BadgeLayout
     form_class = BadgeLayoutForm
     template_name = 'pretixplugins/badges/edit.html'
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
     context_object_name = 'layout'
     success_url = '/ignored'
+
+    def get_form(self, form_class=None):
+        form = super().get_form(form_class)
+        if self.copy_from:
+            del form.fields['template']
+        return form
 
     @transaction.atomic
     def form_valid(self, form):
@@ -77,8 +88,20 @@ class LayoutCreate(EventPermissionRequiredMixin, CreateView):
         if not self.request.event.badge_layouts.filter(default=True).exists():
             form.instance.default = True
         messages.success(self.request, _('The new badge layout has been created.'))
+        if not self.copy_from:
+            form.instance.layout = json.dumps(TEMPLATES[form.cleaned_data["template"]]["layout"])
         super().form_valid(form)
-        if form.instance.background and form.instance.background.name:
+        if not self.copy_from:
+            p = PdfWriter()
+            p.add_blank_page(
+                width=Decimal('%.5f' % TEMPLATES[form.cleaned_data["template"]]["pagesize"][0]),
+                height=Decimal('%.5f' % TEMPLATES[form.cleaned_data["template"]]["pagesize"][1]),
+            )
+            buffer = BytesIO()
+            p.write(buffer)
+            buffer.seek(0)
+            form.instance.background.save('background.pdf', ContentFile(buffer.read()))
+        elif form.instance.background and form.instance.background.name:
             form.instance.background.save('background.pdf', form.instance.background)
         form.instance.log_action('pretix.plugins.badges.layout.added', user=self.request.user,
                                  data=dict(form.cleaned_data))
@@ -117,7 +140,7 @@ class LayoutCreate(EventPermissionRequiredMixin, CreateView):
 
 class LayoutSetDefault(EventPermissionRequiredMixin, DetailView):
     model = BadgeLayout
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
 
     def get_object(self, queryset=None) -> BadgeLayout:
         try:
@@ -126,6 +149,9 @@ class LayoutSetDefault(EventPermissionRequiredMixin, DetailView):
             )
         except BadgeLayout.DoesNotExist:
             raise Http404(_("The requested badge layout does not exist."))
+
+    def get(self, request, *args, **kwargs):
+        return self.http_method_not_allowed(request, *args, **kwargs)
 
     @transaction.atomic
     def post(self, request, *args, **kwargs):
@@ -146,7 +172,7 @@ class LayoutSetDefault(EventPermissionRequiredMixin, DetailView):
 class LayoutDelete(EventPermissionRequiredMixin, CompatDeleteView):
     model = BadgeLayout
     template_name = 'pretixplugins/badges/delete.html'
-    permission = 'can_change_event_settings'
+    permission = 'event.settings.general:write'
     context_object_name = 'layout'
 
     def get_object(self, queryset=None) -> BadgeLayout:
@@ -244,7 +270,7 @@ class LayoutEditorView(BaseEditorView):
 
 class OrderPrintDo(EventPermissionRequiredMixin, AsyncAction, View):
     task = badges_create_pdf
-    permission = 'can_view_orders'
+    permission = 'event.orders:read'
     known_errortypes = ['OrderError', 'ExportError']
 
     def get_success_message(self, value):

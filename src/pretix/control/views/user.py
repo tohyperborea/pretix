@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -35,32 +35,42 @@
 import base64
 import json
 import logging
-import os
 import time
 from collections import defaultdict
-from urllib.parse import quote, urlparse
+from urllib.parse import quote
 
 import webauthn
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.contenttypes.models import ContentType
+from django.core.exceptions import BadRequest, PermissionDenied
+from django.db import transaction
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils.crypto import get_random_string
+from django.utils.decorators import method_decorator
 from django.utils.functional import cached_property
+from django.utils.html import format_html
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
 from django.views import View
+from django.views.decorators.cache import never_cache
 from django.views.generic import FormView, ListView, TemplateView, UpdateView
+from django_otp import devices_for_user
 from django_otp.plugins.otp_static.models import StaticDevice
 from django_otp.plugins.otp_totp.models import TOTPDevice
 from django_scopes import scopes_disabled
+from webauthn.helpers import generate_challenge, generate_user_handle
 
 from pretix.base.auth import get_auth_backends
-from pretix.base.forms.auth import ReauthForm
-from pretix.base.forms.user import User2FADeviceAddForm, UserSettingsForm
+from pretix.base.forms.auth import ConfirmationCodeForm, ReauthForm
+from pretix.base.forms.user import (
+    User2FADeviceAddForm, UserEmailChangeForm, UserPasswordChangeForm,
+    UserSettingsForm,
+)
 from pretix.base.models import (
     Event, LogEntry, NotificationSetting, U2FDevice, User, WebAuthnDevice,
 )
@@ -70,20 +80,36 @@ from pretix.control.forms.users import StaffSessionForm
 from pretix.control.permissions import (
     AdministratorPermissionRequiredMixin, StaffMemberRequiredMixin,
 )
-from pretix.control.views.auth import get_u2f_appid
+from pretix.control.views.auth import get_u2f_appid, get_webauthn_rp_id
 from pretix.helpers.http import redirect_to_url
-from pretix.helpers.webauthn import generate_challenge, generate_ukey
+from pretix.helpers.ratelimit import rate_limit, rate_limit_reset
+from pretix.helpers.security import session_reauth
+from pretix.helpers.u2f import websafe_encode
 
-REAL_DEVICE_TYPES = (TOTPDevice, WebAuthnDevice, U2FDevice)
 logger = logging.getLogger(__name__)
 
 
 class RecentAuthenticationRequiredMixin:
-    max_time = 3600
+    max_time = 900
 
+    @method_decorator(never_cache)
     def dispatch(self, request, *args, **kwargs):
         tdelta = time.time() - request.session.get('pretix_auth_login_time', 0)
         if tdelta > self.max_time:
+
+            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                # It's not useful to return a 302 redirect on a XMLHttpRequest request,  because
+                # the XMLHttpRequest is unable to detect redirects.
+                return HttpResponse(
+                    "Authentication required",
+                    status=401,
+                    headers={
+                        # Appending ?next= is handled by client, because it should be the top-level context url,
+                        # not the URL called in the background
+                        "X-Login-Url": reverse('control:user.reauth')
+                    }
+                )
+
             return redirect(reverse('control:user.reauth') + '?next=' + quote(request.get_full_path()))
         return super().dispatch(request, *args, **kwargs)
 
@@ -105,25 +131,41 @@ class ReauthView(TemplateView):
                 devices = U2FDevice.objects.filter(user=self.request.user)
 
             for d in devices:
+                credential_current_sign_count = d.sign_count if isinstance(d, WebAuthnDevice) else 0
                 try:
-                    wu = d.webauthnuser
-
-                    if isinstance(d, U2FDevice):
-                        # RP_ID needs to be appId for U2F devices, but we can't
-                        # set it that way in U2FDevice.webauthnuser, since that
-                        # breaks the frontend part.
-                        wu.rp_id = settings.SITE_URL
-
-                    webauthn_assertion_response = webauthn.WebAuthnAssertionResponse(
-                        wu,
-                        resp,
-                        challenge,
-                        settings.SITE_URL,
-                        uv_required=False  # User Verification
+                    webauthn_assertion_response = webauthn.verify_authentication_response(
+                        credential=resp,
+                        expected_challenge=base64.b64decode(challenge),
+                        expected_rp_id=get_webauthn_rp_id(self.request),
+                        expected_origin=settings.SITE_URL,
+                        credential_public_key=d.webauthnpubkey,
+                        credential_current_sign_count=credential_current_sign_count,
                     )
-                    sign_count = webauthn_assertion_response.verify()
+                    sign_count = webauthn_assertion_response.new_sign_count
+                    if sign_count < credential_current_sign_count:
+                        raise Exception("Possible replay attack, sign count not higher")
                 except Exception:
-                    logger.exception('U2F login failed')
+                    if isinstance(d, U2FDevice):
+                        # https://www.w3.org/TR/webauthn/#sctn-appid-extension says
+                        # "When verifying the assertion, expect that the rpIdHash MAY be the hash of the AppID instead of the RP ID."
+                        try:
+                            webauthn_assertion_response = webauthn.verify_authentication_response(
+                                credential=resp,
+                                expected_challenge=base64.b64decode(challenge),
+                                expected_rp_id=get_u2f_appid(self.request),
+                                expected_origin=settings.SITE_URL,
+                                credential_public_key=d.webauthnpubkey,
+                                credential_current_sign_count=credential_current_sign_count,
+                            )
+                            if webauthn_assertion_response.new_sign_count < 1:
+                                raise Exception("Possible replay attack, sign count set")
+                        except Exception:
+                            logger.exception('U2F login failed')
+                        else:
+                            valid = True
+                            break
+                    else:
+                        logger.exception('Webauthn login failed')
                 else:
                     if isinstance(d, WebAuthnDevice):
                         d.sign_count = sign_count
@@ -134,9 +176,7 @@ class ReauthView(TemplateView):
         valid = valid or self.form.is_valid()
 
         if valid:
-            t = int(time.time())
-            request.session['pretix_auth_login_time'] = t
-            request.session['pretix_auth_last_used'] = t
+            session_reauth(request)
             next_url = get_auth_backends()[request.user.auth_backend].get_next_url(request)
             if next_url and url_has_allowed_host_and_scheme(next_url, allowed_hosts=None):
                 return redirect_to_url(next_url)
@@ -150,9 +190,7 @@ class ReauthView(TemplateView):
         u = backend.request_authenticate(request)
         if u and u == request.user:
             next_url = backend.get_next_url(request)
-            t = int(time.time())
-            request.session['pretix_auth_login_time'] = t
-            request.session['pretix_auth_last_used'] = t
+            session_reauth(request)
             if next_url and url_has_allowed_host_and_scheme(next_url, allowed_hosts=None):
                 return redirect_to_url(next_url)
             return redirect(reverse('control:index'))
@@ -162,23 +200,24 @@ class ReauthView(TemplateView):
         ctx = super().get_context_data()
         if 'webauthn_challenge' in self.request.session:
             del self.request.session['webauthn_challenge']
-        challenge = generate_challenge(32)
-        self.request.session['webauthn_challenge'] = challenge
+        challenge = generate_challenge()
+        self.request.session['webauthn_challenge'] = base64.b64encode(challenge).decode()
         devices = [
-            device.webauthnuser for device in WebAuthnDevice.objects.filter(confirmed=True, user=self.request.user)
+            device.webauthndevice for device in WebAuthnDevice.objects.filter(confirmed=True, user=self.request.user)
         ] + [
-            device.webauthnuser for device in U2FDevice.objects.filter(confirmed=True, user=self.request.user)
+            device.webauthndevice for device in U2FDevice.objects.filter(confirmed=True, user=self.request.user)
         ]
         if devices:
-            webauthn_assertion_options = webauthn.WebAuthnAssertionOptions(
-                devices,
-                challenge
+            auth_options = webauthn.generate_authentication_options(
+                rp_id=get_webauthn_rp_id(self.request),
+                challenge=challenge,
+                allow_credentials=devices,
             )
-            ad = webauthn_assertion_options.assertion_dict
-            ad['extensions'] = {
-                'appid': get_u2f_appid(self.request)
-            }
-            ctx['jsondata'] = json.dumps(ad)
+
+            # Backwards compatibility to U2F
+            j = json.loads(webauthn.options_to_json(auth_options))
+            j["extensions"] = {"appid": get_u2f_appid(self.request)}
+            ctx['jsondata'] = json.dumps(j)
         ctx['form'] = self.form
         return ctx
 
@@ -213,30 +252,13 @@ class UserSettings(UpdateView):
         messages.error(self.request, _('Your changes could not be saved. See below for details.'))
         return super().form_invalid(form)
 
+    @transaction.atomic
     def form_valid(self, form):
         messages.success(self.request, _('Your changes have been saved.'))
 
         data = {}
         for k in form.changed_data:
-            if k not in ('old_pw', 'new_pw_repeat'):
-                if 'new_pw' == k:
-                    data['new_pw'] = True
-                else:
-                    data[k] = form.cleaned_data[k]
-
-        msgs = []
-
-        if 'new_pw' in form.changed_data:
-            self.request.user.needs_password_change = False
-            msgs.append(_('Your password has been changed.'))
-
-        if 'email' in form.changed_data:
-            msgs.append(_('Your email address has been changed to {email}.').format(email=form.cleaned_data['email']))
-
-        if msgs:
-            self.request.user.send_security_notice(msgs, email=form.cleaned_data['email'])
-            if self._old_email != form.cleaned_data['email']:
-                self.request.user.send_security_notice(msgs, email=self._old_email)
+            data[k] = form.cleaned_data[k]
 
         sup = super().form_valid(form)
         self.request.user.log_action('pretix.user.settings.changed', user=self.request.user, data=data)
@@ -283,28 +305,24 @@ class User2FAMainView(RecentAuthenticationRequiredMixin, TemplateView):
         ctx = super().get_context_data()
 
         try:
-            ctx['static_tokens'] = StaticDevice.objects.get(user=self.request.user, name='emergency').token_set.all()
+            ctx['static_tokens_device'] = StaticDevice.objects.get(user=self.request.user, name='emergency')
         except StaticDevice.MultipleObjectsReturned:
-            ctx['static_tokens'] = StaticDevice.objects.filter(
+            ctx['static_tokens_device'] = StaticDevice.objects.filter(
                 user=self.request.user, name='emergency'
-            ).first().token_set.all()
+            ).first()
         except StaticDevice.DoesNotExist:
-            d = StaticDevice.objects.create(user=self.request.user, name='emergency')
-            for i in range(10):
-                d.token_set.create(token=get_random_string(length=12, allowed_chars='1234567890'))
-            ctx['static_tokens'] = d.token_set.all()
+            ctx['static_tokens_device'] = None
 
-        ctx['devices'] = []
-        for dt in REAL_DEVICE_TYPES:
-            objs = list(dt.objects.filter(user=self.request.user, confirmed=True))
-            for obj in objs:
-                if dt == TOTPDevice:
-                    obj.devicetype = 'totp'
-                elif dt == U2FDevice:
-                    obj.devicetype = 'u2f'
-                elif dt == WebAuthnDevice:
-                    obj.devicetype = 'webauthn'
-            ctx['devices'] += objs
+        ctx['devices'] = [d for d in devices_for_user(self.request.user) if not isinstance(d, StaticDevice)]
+
+        ctx['obligatory'] = None
+        if settings.PRETIX_OBLIGATORY_2FA is True:
+            ctx['obligatory'] = 'system'
+        elif settings.PRETIX_OBLIGATORY_2FA == "staff" and self.request.user.is_staff:
+            ctx['obligatory'] = 'staff'
+        elif teams := self.request.user.teams.filter(require_2fa=True).select_related('organizer'):
+            ctx['obligatory'] = 'team'
+            ctx['obligatory_teams'] = teams
 
         return ctx
 
@@ -314,9 +332,9 @@ class User2FADeviceAddView(RecentAuthenticationRequiredMixin, FormView):
     template_name = 'pretixcontrol/user/2fa_add.html'
 
     def form_valid(self, form):
-        if form.cleaned_data['devicetype'] == 'totp':
+        if form.cleaned_data['devicetype'] == 'otp_totp.totpdevice':
             dev = TOTPDevice.objects.create(user=self.request.user, confirmed=False, name=form.cleaned_data['name'])
-        elif form.cleaned_data['devicetype'] == 'webauthn':
+        elif form.cleaned_data['devicetype'] == 'pretixbase.webauthndevice':
             if not self.request.is_secure():
                 messages.error(self.request,
                                _('Security devices are only available if pretix is served via HTTPS.'))
@@ -336,11 +354,11 @@ class User2FADeviceDeleteView(RecentAuthenticationRequiredMixin, TemplateView):
 
     @cached_property
     def device(self):
-        if self.kwargs['devicetype'] == 'totp':
+        if self.kwargs['devicetype'] == 'otp_totp.totpdevice':
             return get_object_or_404(TOTPDevice, user=self.request.user, pk=self.kwargs['device'], confirmed=True)
-        elif self.kwargs['devicetype'] == 'webauthn':
+        elif self.kwargs['devicetype'] == 'pretixbase.webauthndevice':
             return get_object_or_404(WebAuthnDevice, user=self.request.user, pk=self.kwargs['device'], confirmed=True)
-        elif self.kwargs['devicetype'] == 'u2f':
+        elif self.kwargs['devicetype'] == 'pretixbase.u2fdevice':
             return get_object_or_404(U2FDevice, user=self.request.user, pk=self.kwargs['device'], confirmed=True)
 
     def get_context_data(self, **kwargs):
@@ -358,7 +376,7 @@ class User2FADeviceDeleteView(RecentAuthenticationRequiredMixin, TemplateView):
         msgs = [
             _('A two-factor authentication device has been removed from your account.')
         ]
-        if not any(dt.objects.filter(user=self.request.user, confirmed=True) for dt in REAL_DEVICE_TYPES):
+        if not any(d.confirmed for d in devices_for_user(self.request.user) if not isinstance(d, StaticDevice)):
             self.request.user.require_2fa = False
             self.request.user.save()
             self.request.user.log_action('pretix.user.settings.2fa.disabled', user=self.request.user)
@@ -387,23 +405,26 @@ class User2FADeviceConfirmWebAuthnView(RecentAuthenticationRequiredMixin, Templa
         if 'webauthn_challenge' in self.request.session:
             del self.request.session['webauthn_challenge']
 
-        challenge = generate_challenge(32)
-        ukey = generate_ukey()
+        challenge = generate_challenge()
+        ukey = generate_user_handle()
 
-        self.request.session['webauthn_challenge'] = challenge
-        self.request.session['webauthn_register_ukey'] = ukey
+        self.request.session['webauthn_challenge'] = base64.b64encode(challenge).decode()
+        self.request.session['webauthn_register_ukey'] = base64.b64encode(ukey).decode()
 
-        make_credential_options = webauthn.WebAuthnMakeCredentialOptions(
-            challenge,
-            urlparse(settings.SITE_URL).netloc,
-            urlparse(settings.SITE_URL).netloc,
-            ukey,
-            self.request.user.email,
-            str(self.request.user),
-            settings.SITE_URL,
-            attestation="none"
+        devices = [
+            device.webauthndevice for device in WebAuthnDevice.objects.filter(confirmed=True, user=self.request.user)
+        ] + [
+            device.webauthndevice for device in U2FDevice.objects.filter(confirmed=True, user=self.request.user)
+        ]
+        make_credential_options = webauthn.generate_registration_options(
+            rp_id=get_webauthn_rp_id(self.request),
+            rp_name=get_webauthn_rp_id(self.request),
+            user_id=ukey,
+            user_name=self.request.user.email,
+            challenge=challenge,
+            exclude_credentials=devices,
         )
-        ctx['jsondata'] = json.dumps(make_credential_options.registration_dict)
+        ctx['jsondata'] = webauthn.options_to_json(make_credential_options)
 
         return ctx
 
@@ -412,30 +433,13 @@ class User2FADeviceConfirmWebAuthnView(RecentAuthenticationRequiredMixin, Templa
             challenge = self.request.session['webauthn_challenge']
             ukey = self.request.session['webauthn_register_ukey']
             resp = json.loads(self.request.POST.get("token"))
-            trust_anchor_dir = os.path.normpath(os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                '../../static/webauthn_trusted_attestation_roots'  # currently does not exist
-            ))
-            # We currently do not check attestation certificates, since there's no real risk
-            # and we do not have any policies specifying what devices can be used. (Also, we
-            # didn't get it to work.)
-            # Read more: https://fidoalliance.org/fido-technotes-the-truth-about-attestation/
-            trusted_attestation_cert_required = False
-            self_attestation_permitted = True
-            none_attestation_permitted = True
 
-            webauthn_registration_response = webauthn.WebAuthnRegistrationResponse(
-                urlparse(settings.SITE_URL).netloc,
-                settings.SITE_URL,
-                resp,
-                challenge,
-                trust_anchor_dir,
-                trusted_attestation_cert_required,
-                self_attestation_permitted,
-                none_attestation_permitted,
-                uv_required=False
+            registration_verification = webauthn.verify_registration_response(
+                credential=resp,
+                expected_challenge=base64.b64decode(challenge),
+                expected_rp_id=get_webauthn_rp_id(self.request),
+                expected_origin=settings.SITE_URL,
             )
-            webauthn_credential = webauthn_registration_response.verify()
 
             # Check that the credentialId is not yet registered to any other user.
             # If registration is requested for a credential that is already registered
@@ -443,28 +447,25 @@ class User2FADeviceConfirmWebAuthnView(RecentAuthenticationRequiredMixin, Templa
             # ceremony, or it MAY decide to accept the registration, e.g. while deleting
             # the older registration.
             credential_id_exists = WebAuthnDevice.objects.filter(
-                credential_id=webauthn_credential.credential_id
+                credential_id=registration_verification.credential_id
             ).first()
             if credential_id_exists:
                 messages.error(request, _('This security device is already registered.'))
-                return redirect(reverse('control:user.settings.2fa.confirm.webauthn', kwargs={
+                return redirect(reverse('control:user.settings.2fa.confirm.pretixbase.webauthndevice', kwargs={
                     'device': self.device.pk
                 }))
 
-            webauthn_credential.credential_id = str(webauthn_credential.credential_id, "utf-8")
-            webauthn_credential.public_key = str(webauthn_credential.public_key, "utf-8")
-
-            self.device.credential_id = webauthn_credential.credential_id
-            self.device.ukey = ukey
-            self.device.pub_key = webauthn_credential.public_key
-            self.device.sign_count = webauthn_credential.sign_count
-            self.device.rp_id = urlparse(settings.SITE_URL).netloc
+            self.device.credential_id = websafe_encode(registration_verification.credential_id)
+            self.device.ukey = websafe_encode(ukey)
+            self.device.pub_key = websafe_encode(registration_verification.credential_public_key)
+            self.device.sign_count = registration_verification.sign_count
+            self.device.rp_id = get_webauthn_rp_id(request)
             self.device.icon_url = settings.SITE_URL
             self.device.confirmed = True
             self.device.save()
             self.request.user.log_action('pretix.user.settings.2fa.device.added', user=self.request.user, data={
                 'id': self.device.pk,
-                'devicetype': 'u2f',
+                'devicetype': 'pretixbase.webauthndevice',
                 'name': self.device.name,
             })
             notices = [
@@ -492,7 +493,7 @@ class User2FADeviceConfirmWebAuthnView(RecentAuthenticationRequiredMixin, Templa
         except Exception:
             messages.error(request, _('The registration could not be completed. Please try again.'))
             logger.exception('WebAuthn registration failed')
-            return redirect(reverse('control:user.settings.2fa.confirm.webauthn', kwargs={
+            return redirect(reverse('control:user.settings.2fa.confirm.pretixbase.webauthndevice', kwargs={
                 'device': self.device.pk
             }))
 
@@ -526,7 +527,7 @@ class User2FADeviceConfirmTOTPView(RecentAuthenticationRequiredMixin, TemplateVi
             self.request.user.log_action('pretix.user.settings.2fa.device.added', user=self.request.user, data={
                 'id': self.device.pk,
                 'name': self.device.name,
-                'devicetype': 'totp'
+                'devicetype': 'otp_totp.totpdevice'
             })
             notices = [
                 _('A new two-factor authentication device has been added to your account.')
@@ -552,16 +553,38 @@ class User2FADeviceConfirmTOTPView(RecentAuthenticationRequiredMixin, TemplateVi
         else:
             messages.error(request, _('The code you entered was not valid. If this problem persists, please check '
                                       'that the date and time of your phone are configured correctly.'))
-            return redirect(reverse('control:user.settings.2fa.confirm.totp', kwargs={
+            return redirect(reverse('control:user.settings.2fa.confirm.otp_totp.totpdevice', kwargs={
                 'device': self.device.pk
             }))
+
+
+class User2FALeaveTeamsView(RecentAuthenticationRequiredMixin, TemplateView):
+    template_name = 'pretixcontrol/user/2fa_leaveteams.html'
+
+    @transaction.atomic
+    def post(self, request, *args, **kwargs):
+        for team in self.request.user.teams.filter(require_2fa=True).select_related('organizer'):
+            team.members.remove(self.request.user)
+            team.log_action(
+                'pretix.team.member.removed', user=self.request.user, data={
+                    'email': self.request.user.email,
+                    'user': self.request.user.pk
+                }
+            )
+        messages.success(request, _('You have left all teams that require two-factor authentication.'))
+        return redirect(reverse('control:user.settings.2fa'))
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data()
+        ctx['obligatory_teams'] = self.request.user.teams.filter(require_2fa=True).select_related('organizer')
+        return ctx
 
 
 class User2FAEnableView(RecentAuthenticationRequiredMixin, TemplateView):
     template_name = 'pretixcontrol/user/2fa_enable.html'
 
     def dispatch(self, request, *args, **kwargs):
-        if not any(dt.objects.filter(user=self.request.user, confirmed=True) for dt in REAL_DEVICE_TYPES):
+        if not any(d.confirmed for d in devices_for_user(self.request.user) if not isinstance(d, StaticDevice)):
             messages.error(request, _('Please configure at least one device before enabling two-factor '
                                       'authentication.'))
             return redirect(reverse('control:user.settings.2fa'))
@@ -610,8 +633,14 @@ class User2FARegenerateEmergencyView(RecentAuthenticationRequiredMixin, Template
         ])
         self.request.user.update_session_token()
         update_session_auth_hash(self.request, self.request.user)
-        messages.success(request, _('Your emergency codes have been newly generated. Remember to store them in a safe '
-                                    'place in case you lose access to your devices.'))
+        messages.success(
+            request,
+            _('Your emergency codes have been newly generated. Remember to store them in a safe '
+              'place in case you lose access to your devices. You will not be able to view them '
+              'again here.\n\nYour emergency codes:\n{tokens}').format(
+                tokens='- ' + '\n- '.join(t.token for t in d.token_set.all())
+            )
+        )
         return redirect(reverse('control:user.settings.2fa'))
 
 
@@ -677,9 +706,9 @@ class UserNotificationsEditView(TemplateView):
 
             messages.success(request, _('Your notification settings have been saved.'))
             if request.user.notifications_send:
-                self.request.user.log_action('pretix.user.settings.notifications.disabled', user=self.request.user)
-            else:
                 self.request.user.log_action('pretix.user.settings.notifications.enabled', user=self.request.user)
+            else:
+                self.request.user.log_action('pretix.user.settings.notifications.disabled', user=self.request.user)
             return redirect(
                 reverse('control:user.settings.notifications') +
                 ('?event={}'.format(self.event.pk) if self.event else '')
@@ -801,3 +830,165 @@ class EditStaffSession(StaffMemberRequiredMixin, UpdateView):
             return get_object_or_404(StaffSession, pk=self.kwargs['id'])
         else:
             return get_object_or_404(StaffSession, pk=self.kwargs['id'], user=self.request.user)
+
+
+class UserPasswordChangeView(FormView):
+    max_time = 300
+
+    form_class = UserPasswordChangeForm
+    template_name = 'pretixcontrol/user/change_password.html'
+
+    def get_form_kwargs(self):
+        if self.request.user.auth_backend != 'native':
+            raise PermissionDenied
+
+        return {
+            **super().get_form_kwargs(),
+            "user": self.request.user,
+        }
+
+    def form_valid(self, form):
+        with transaction.atomic():
+            self.request.user.set_password(form.cleaned_data['new_pw'])
+            self.request.user.needs_password_change = False
+            self.request.user.save()
+            msgs = []
+            msgs.append(_('Your password has been changed.'))
+            self.request.user.send_security_notice(msgs)
+            rate_limit_reset("pwreset", self.request.user.pk)
+
+            self.request.user.log_action('pretix.user.settings.changed', user=self.request.user, data={'new_pw': True})
+
+            update_session_auth_hash(self.request, self.request.user)
+
+        messages.success(self.request, _('Your changes have been saved.'))
+        return redirect(self.get_success_url())
+
+    def form_invalid(self, form):
+        messages.error(self.request, _('We could not save your changes. See below for details.'))
+        return super().form_invalid(form)
+
+    def get_success_url(self):
+        if "next" in self.request.GET and url_has_allowed_host_and_scheme(self.request.GET.get("next"), allowed_hosts=None):
+            return self.request.GET.get("next")
+        return reverse('control:user.settings')
+
+
+class UserEmailChangeView(RecentAuthenticationRequiredMixin, FormView):
+    max_time = 300
+
+    form_class = UserEmailChangeForm
+    template_name = 'pretixcontrol/user/change_email.html'
+
+    def get_form_kwargs(self):
+        if self.request.user.auth_backend != 'native':
+            raise PermissionDenied
+
+        return {
+            **super().get_form_kwargs(),
+            "request": self.request,
+            "user": self.request.user,
+        }
+
+    def get_initial(self):
+        return {
+            "old_email": self.request.user.email
+        }
+
+    def form_valid(self, form):
+        self.request.user.send_confirmation_code(
+            session=self.request.session,
+            reason='email_change',
+            email=form.cleaned_data['new_email'],
+            state=form.cleaned_data['new_email'],
+        )
+        self.request.session['email_confirmation_destination'] = form.cleaned_data['new_email']
+        return redirect(reverse('control:user.settings.email.confirm', kwargs={}) + '?reason=email_change')
+
+    def form_invalid(self, form):
+        messages.error(self.request, _('We could not save your changes. See below for details.'))
+        return super().form_invalid(form)
+
+
+class UserEmailVerifyView(View):
+    def post(self, request, *args, **kwargs):
+        if self.request.user.is_verified:
+            messages.success(self.request, _('Your email address was already verified.'))
+            return redirect(reverse('control:user.settings', kwargs={}))
+
+        if rate_limit("emailverify", self.request.user.pk, max_num=2, expire_time=300):
+            messages.error(self.request, _("For security reasons, please wait 5 minutes before you try again."))
+            return redirect(reverse('control:user.settings', kwargs={}))
+
+        self.request.user.send_confirmation_code(
+            session=self.request.session,
+            reason='email_verify',
+            email=self.request.user.email,
+            state=self.request.user.email,
+        )
+        self.request.session['email_confirmation_destination'] = self.request.user.email
+        return redirect(reverse('control:user.settings.email.confirm', kwargs={}) + '?reason=email_verify')
+
+
+class UserEmailConfirmView(FormView):
+    form_class = ConfirmationCodeForm
+    template_name = 'pretixcontrol/user/confirmation_code_dialog.html'
+
+    def get_context_data(self, **kwargs):
+        return {
+            **super().get_context_data(**kwargs),
+            "cancel_url": reverse('control:user.settings', kwargs={}),
+            "message": format_html(
+                _("Please enter the confirmation code we sent to your email address <strong>{email}</strong>."),
+                email=self.request.session.get('email_confirmation_destination', ''),
+            ),
+        }
+
+    @transaction.atomic()
+    def form_valid(self, form):
+        reason = self.request.GET.get('reason')
+        if reason not in ('email_change', 'email_verify'):
+            raise PermissionDenied
+        try:
+            new_email = self.request.user.check_confirmation_code(
+                session=self.request.session,
+                reason=reason,
+                code=form.cleaned_data['code'],
+            )
+        except PermissionDenied:
+            return self.form_invalid(form)
+        except BadRequest:
+            messages.error(self.request, _(
+                'We were unable to verify your confirmation code. Please try again.'
+            ))
+            return redirect(reverse('control:user.settings', kwargs={}))
+
+        log_data = {
+            'email': new_email,
+            'email_verified': True,
+        }
+        if reason == 'email_change':
+            msgs = []
+            msgs.append(_('Your email address has been changed to {email}.').format(email=new_email))
+            log_data['old_email'] = old_email = self.request.user.email
+            self.request.user.send_security_notice(msgs, email=old_email)
+            self.request.user.send_security_notice(msgs, email=new_email)
+            log_action = 'pretix.user.email.changed'
+        else:
+            log_action = 'pretix.user.email.confirmed'
+
+        self.request.user.email = new_email
+        self.request.user.is_verified = True
+        self.request.user.save()
+        self.request.user.log_action(log_action, user=self.request.user, data=log_data)
+        update_session_auth_hash(self.request, self.request.user)
+
+        if reason == 'email_change':
+            messages.success(self.request, _('Your email address has been changed successfully.'))
+        else:
+            messages.success(self.request, _('Your email address has been confirmed successfully.'))
+        return redirect(reverse('control:user.settings', kwargs={}))
+
+    def form_invalid(self, form):
+        messages.error(self.request, _('The entered confirmation code is not correct. Please try again.'))
+        return super().form_invalid(form)

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -38,7 +38,6 @@ from pretix.base.models import (
     fields,
 )
 from pretix.base.models.base import LoggingMixin
-from pretix.base.services.mail import SendMailException
 
 
 class ScheduledMail(models.Model):
@@ -133,10 +132,10 @@ class ScheduledMail(models.Model):
 
         if self.rule.checked_in_status == "no_checkin":
             filter_orders_by_op = True
-            op_qs = op_qs.filter(~Exists(Checkin.objects.filter(position_id=OuterRef('pk'))))
+            op_qs = op_qs.filter(~Exists(Checkin.objects.filter(position_id=OuterRef('pk'), list__consider_tickets_used=True)))
         elif self.rule.checked_in_status == "checked_in":
             filter_orders_by_op = True
-            op_qs = op_qs.filter(Exists(Checkin.objects.filter(position_id=OuterRef('pk'))))
+            op_qs = op_qs.filter(Exists(Checkin.objects.filter(position_id=OuterRef('pk'), list__consider_tickets_used=True)))
 
         status_q = Q(status__in=self.rule.restrict_to_status)
         if 'n__pending_approval' in self.rule.restrict_to_status:
@@ -163,6 +162,8 @@ class ScheduledMail(models.Model):
         send_to_orders = self.rule.send_to in (Rule.CUSTOMERS, Rule.BOTH)
         send_to_attendees = self.rule.send_to in (Rule.ATTENDEES, Rule.BOTH)
 
+        position_ids = op_qs.values_list('id', flat=True)
+
         for o in orders:
             with language(o.locale, e.settings.region):
                 positions = list(o.positions.all())
@@ -174,14 +175,16 @@ class ScheduledMail(models.Model):
                     ia = InvoiceAddress(order=o)
 
                 if send_to_orders and o.email:
-                    email_ctx = get_email_context(event=e, order=o, invoice_address=ia)
-                    try:
-                        o.send_mail(self.rule.subject, self.rule.template, email_ctx,
-                                    attach_ical=self.rule.attach_ical,
-                                    log_entry_type='pretix.plugins.sendmail.rule.order.email.sent')
-                        o_sent = True
-                    except SendMailException:
-                        ...  # ¯\_(ツ)_/¯
+                    email_ctx = get_email_context(
+                        event=e,
+                        order=o,
+                        invoice_address=ia,
+                        event_or_subevent=self.subevent or e,
+                    )
+                    o.send_mail(self.rule.subject, self.rule.template, email_ctx,
+                                attach_ical=self.rule.attach_ical,
+                                log_entry_type='pretix.plugins.sendmail.rule.order.email.sent')
+                    o_sent = True
 
                 if send_to_attendees:
                     if not self.rule.all_products:
@@ -190,20 +193,29 @@ class ScheduledMail(models.Model):
                         positions = [p for p in positions if p.subevent_id == self.subevent_id]
 
                     for p in positions:
-                        try:
+                        if p.id in position_ids:
                             if p.attendee_email and (p.attendee_email != o.email or not o_sent):
-                                email_ctx = get_email_context(event=e, order=o, invoice_address=ia, position=p)
+                                email_ctx = get_email_context(
+                                    event=e,
+                                    order=o,
+                                    invoice_address=ia,
+                                    position=p,
+                                    event_or_subevent=self.subevent or e,
+                                )
                                 p.send_mail(self.rule.subject, self.rule.template, email_ctx,
                                             attach_ical=self.rule.attach_ical,
                                             log_entry_type='pretix.plugins.sendmail.rule.order.position.email.sent')
                             elif not o_sent and o.email:
-                                email_ctx = get_email_context(event=e, order=o, invoice_address=ia)
+                                email_ctx = get_email_context(
+                                    event=e,
+                                    order=o,
+                                    invoice_address=ia,
+                                    event_or_subevent=self.subevent or e,
+                                )
                                 o.send_mail(self.rule.subject, self.rule.template, email_ctx,
                                             attach_ical=self.rule.attach_ical,
                                             log_entry_type='pretix.plugins.sendmail.rule.order.email.sent')
                                 o_sent = True
-                        except SendMailException:
-                            ...  # ¯\_(ツ)_/¯
 
                 self.last_successful_order_id = o.pk
 
@@ -261,7 +273,7 @@ class Rule(models.Model, LoggingMixin):
 
     date_is_absolute = models.BooleanField(default=True, blank=True)
     offset_to_event_end = models.BooleanField(default=False, blank=True)  # no verbose name because not actually
-    offset_is_after = models.BooleanField(default=False, blank=True)      # displayed in any forms
+    offset_is_after = models.BooleanField(default=False, blank=True)  # displayed in any forms
 
     send_to = models.CharField(max_length=10, choices=SEND_TO_CHOICES, default=CUSTOMERS, verbose_name=_('Send email to'))
 

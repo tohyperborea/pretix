@@ -13,7 +13,7 @@
         {% csrf_token %}
         <div class="panel-group" id="questions_accordion">
             {% if invoice_address_asked or event.settings.invoice_name_required %}
-                {% if invoice_address_asked and not request.GET.generate_invoice == "true" and not event.settings.invoice_reissue_after_modify %}
+                {% if invoice_address_asked and not request.GET.generate_invoice == "true" and not invoice_generation_selfservice %}
                     <div class="alert alert-info">
                         {% blocktrans trimmed %}
                             Modifying your invoice address will not automatically generate a new invoice.
@@ -33,18 +33,30 @@
                                     {% trans "Contact information" %}
                                 {% endif %}
                             </strong>
-                            <i class="fa fa-angle-down collapse-indicator" aria-hidden="true"></i>
                         </h4>
                     </summary>
-                    <div id="invoice" class="panel-collapse">
+                    <div id="invoice" class="panel-collapse"
+                         data-address-information-url="{% url "js_helpers.address_form" %}?invoice=true&amp;organizer={{ event.organizer.slug|urlencode }}&amp;event={{ event.slug|urlencode }}&amp;locale={{ request.LANGUAGE_CODE }}">
                         <div class="panel-body">
                             {% if event.settings.invoice_address_explanation_text %}
                                 <div>
                                     {{ event.settings.invoice_address_explanation_text|rich_text }}
                                 </div>
                             {% endif %}
-                            {% bootstrap_form invoice_form layout="horizontal" %}
+                            {% bootstrap_form invoice_form layout="checkout" %}
                         </div>
+                    </div>
+                </details>
+            {% endif %}
+            {% if order_questions_form.fields %}
+                <details class="panel panel-default" open>
+                    <summary class="panel-heading">
+                        <h3 class="panel-title">
+                            <strong>{% trans "Additional order information" %}</strong>
+                        </h3>
+                    </summary>
+                    <div class="panel-body">
+                        {% bootstrap_form order_questions_form layout="checkout" %}
                     </div>
                 </details>
             {% endif %}
@@ -55,7 +67,6 @@
                             <strong>{{ pos.item.name }}{% if pos.variation %}
                                 – {{ pos.variation }}
                             {% endif %}</strong>
-                            <i class="fa fa-angle-down collapse-indicator" aria-hidden="true"></i>
                         </h4>
                     </summary>
                     <div id="cp{{ pos.id }}">
@@ -63,7 +74,9 @@
                             {% for form in forms %}
                                 {% if form.pos.item != pos.item %}
                                     {# Add-Ons #}
-                                    <legend>+ {{ form.pos.item.name }}</legend>
+                                    <legend>+ {{ form.pos.item.name }}{% if form.pos.variation %}
+                                    – {{ form.pos.variation.value }}
+                                    {% endif %}</legend>
                                 {% endif %}
                                 {% bootstrap_form form layout="checkout" %}
                             {% endfor %}

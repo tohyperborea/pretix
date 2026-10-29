@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -26,13 +26,13 @@ from collections import defaultdict
 from django.dispatch import receiver
 from django.template.loader import get_template
 from django.urls import resolve, reverse
-from django.utils.html import escape
+from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _
 
+from pretix.base.logentrytypes import EventLogEntryType, log_entry_types
 from pretix.base.models import Event, Order
 from pretix.base.signals import (
-    event_copy_data, item_copy_data, logentry_display, logentry_object_link,
-    register_data_exporters,
+    event_copy_data, item_copy_data, register_data_exporters,
 )
 from pretix.control.signals import (
     item_forms, nav_event, order_info, order_position_buttons,
@@ -45,8 +45,8 @@ from pretix.plugins.badges.models import BadgeItem, BadgeLayout
 def control_nav_import(sender, request=None, **kwargs):
     url = resolve(request.path_info)
     p = (
-        request.user.has_event_permission(request.organizer, request.event, 'can_change_settings', request)
-        or request.user.has_event_permission(request.organizer, request.event, 'can_view_orders', request)
+        request.user.has_event_permission(request.organizer, request.event, 'event.settings.general:write', request)
+        or request.user.has_event_permission(request.organizer, request.event, 'event.orders:read', request)
     )
     if not p:
         return []
@@ -128,8 +128,8 @@ def register_pdf(sender, **kwargs):
 
 
 def _cached_rendermap(event):
-    if hasattr(event, '_cached_renderermap'):
-        return event._cached_renderermap
+    if hasattr(event, '_badges_cached_renderermap'):
+        return event._badges_cached_renderermap
     renderermap = {
         bi.item_id: bi.layout_id
         for bi in BadgeItem.objects.select_related('layout').filter(item__event=event)
@@ -138,9 +138,9 @@ def _cached_rendermap(event):
         default_renderer = event.badge_layouts.get(default=True).pk
     except BadgeLayout.DoesNotExist:
         default_renderer = None
-    event._cached_renderermap = defaultdict(lambda: default_renderer)
-    event._cached_renderermap.update(renderermap)
-    return event._cached_renderermap
+    event._badges_cached_renderermap = defaultdict(lambda: default_renderer)
+    event._badges_cached_renderermap.update(renderermap)
+    return event._badges_cached_renderermap
 
 
 @receiver(order_position_buttons, dispatch_uid="badges_control_order_buttons")
@@ -154,7 +154,7 @@ def control_order_position_info(sender: Event, position, request, order: Order, 
         'event': sender,
         'position': position
     }
-    return template.render(ctx, request=request).strip()
+    return mark_safe(template.render(ctx, request=request).strip())
 
 
 @receiver(order_info, dispatch_uid="badges_control_order_info")
@@ -173,35 +173,13 @@ def control_order_info(sender: Event, request, order: Order, **kwargs):
     return template.render(ctx, request=request)
 
 
-@receiver(signal=logentry_display, dispatch_uid="badges_logentry_display")
-def badges_logentry_display(sender, logentry, **kwargs):
-    if not logentry.action_type.startswith('pretix.plugins.badges'):
-        return
-
-    plains = {
-        'pretix.plugins.badges.layout.added': _('Badge layout created.'),
-        'pretix.plugins.badges.layout.deleted': _('Badge layout deleted.'),
-        'pretix.plugins.badges.layout.changed': _('Badge layout changed.'),
-    }
-
-    if logentry.action_type in plains:
-        return plains[logentry.action_type]
-
-
-@receiver(signal=logentry_object_link, dispatch_uid="badges_logentry_object_link")
-def badges_logentry_object_link(sender, logentry, **kwargs):
-    if not logentry.action_type.startswith('pretix.plugins.badges.layout') or not isinstance(logentry.content_object,
-                                                                                             BadgeLayout):
-        return
-
-    a_text = _('Badge layout {val}')
-    a_map = {
-        'href': reverse('plugins:badges:edit', kwargs={
-            'event': sender.slug,
-            'organizer': sender.organizer.slug,
-            'layout': logentry.content_object.id
-        }),
-        'val': escape(logentry.content_object.name),
-    }
-    a_map['val'] = '<a href="{href}">{val}</a>'.format_map(a_map)
-    return a_text.format_map(a_map)
+@log_entry_types.new_from_dict({
+    'pretix.plugins.badges.layout.added': _('Badge layout created.'),
+    'pretix.plugins.badges.layout.deleted': _('Badge layout deleted.'),
+    'pretix.plugins.badges.layout.changed': _('Badge layout changed.'),
+})
+class BadgeLogEntryType(EventLogEntryType):
+    object_type = BadgeLayout
+    object_link_wrapper = _('Badge layout {val}')
+    object_link_viewname = 'plugins:badges:edit'
+    object_link_argname = 'layout'

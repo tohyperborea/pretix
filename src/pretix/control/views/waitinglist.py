@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -34,7 +34,6 @@
 
 import csv
 import io
-import random
 
 from django.contrib import messages
 from django.db import transaction
@@ -49,13 +48,12 @@ from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _, pgettext
 from django.views import View
 from django.views.generic import ListView
-from django.views.generic.edit import DeleteView
 
-from pretix.base.models import Item, Quota, WaitingListEntry
+from pretix.base.models import Item, LogEntry, Quota, WaitingListEntry
 from pretix.base.models.waitinglist import WaitingListException
 from pretix.base.services.waitinglist import assign_automatically
 from pretix.base.views.tasks import AsyncAction
-from pretix.control.forms.waitinglist import WaitingListEntryTransferForm
+from pretix.control.forms.waitinglist import WaitingListEntryEditForm
 from pretix.control.permissions import EventPermissionRequiredMixin
 from pretix.control.views import PaginationMixin
 
@@ -66,7 +64,7 @@ from . import UpdateView
 class AutoAssign(EventPermissionRequiredMixin, AsyncAction, View):
     task = assign_automatically
     known_errortypes = ['WaitingListError']
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
 
     def get_success_message(self, value):
         return _('{num} vouchers have been created and sent out via email.').format(num=value)
@@ -99,21 +97,6 @@ class WaitingListQuerySetMixin:
         ).select_related('item', 'variation', 'voucher').prefetch_related(
             'item__quotas', 'variation__quotas'
         )
-
-        if self.request_data.get("email", "") != "":
-            ms = self.request_data.get("email", "")
-            ms_list = ms.split(",")
-            mainq = Q()
-            for m in ms_list:
-                mainq = mainq | Q(email=m)
-            qs = qs.filter(mainq)
-
-
-        if self.request_data.get("name", "") != "":
-            n = self.request_data.get("name", "")
-            qs_list = [w.id for w in qs if w.name is not None and n.casefold() in w.name.casefold()]
-            qs = WaitingListEntry.objects.filter(id__in=qs_list)
-
 
         s = self.request_data.get("status", "")
         if s == 's':
@@ -155,19 +138,28 @@ class WaitingListQuerySetMixin:
         elif force_filtered and '__ALL' not in self.request_data:
             qs = qs.none()
 
-        if self.request_data.get("ordering", "") != "":
-            o = self.request_data.get("ordering", "")
-            if o == "name":
-                qs = sorted(qs, key=lambda w: w.name, reverse=False)
-            elif o == "-name":
-                qs = sorted(qs, key=lambda w: w.name, reverse=True)
+        if self.request_data.get("search", "") != "":
+            s = self.request_data.get("search", "")
+            search_q = Q(email__icontains=s)
+
+            if self.request.event.settings.waiting_list_names_asked:
+                search_q = search_q | Q(name_cached__icontains=s)
+            if self.request.event.settings.waiting_list_phones_asked:
+                search_q = search_q | Q(phone__icontains=s)
+
+            qs = qs.filter(search_q)
+
+        # Sideburn: sort by name from the column header links.
+        o = self.request_data.get("ordering", "")
+        if o in ("name", "-name"):
+            qs = qs.order_by(o.replace("name", "name_cached"))
 
         return qs
 
 
 class WaitingListActionView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, View):
     model = WaitingListEntry
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
 
     def _redirect_back(self):
         if "next" in self.request.GET and url_has_allowed_host_and_scheme(self.request.GET.get("next"), allowed_hosts=None):
@@ -184,10 +176,15 @@ class WaitingListActionView(EventPermissionRequiredMixin, WaitingListQuerySetMix
                 'forbidden': self.get_queryset().filter(voucher__isnull=False),
             })
         elif request.POST.get('action') == 'delete_confirm':
-            for obj in self.get_queryset():
-                # if not obj.voucher_id:
-                obj.log_action('pretix.event.orders.waitinglist.deleted', user=self.request.user)
-                obj.delete()
+            with transaction.atomic():
+                log_entries = []
+                to_delete = []
+                for obj in self.get_queryset(force_filtered=True):
+                    if not obj.voucher_id:
+                        log_entries.append(obj.log_action('pretix.event.orders.waitinglist.deleted', user=self.request.user, save=False))
+                        to_delete.append(obj.pk)
+                WaitingListEntry.objects.filter(id__in=to_delete).delete()
+                LogEntry.bulk_create_and_postprocess(log_entries)
             messages.success(request, _('The selected entries have been deleted.'))
             return self._redirect_back()
 
@@ -210,16 +207,17 @@ class WaitingListActionView(EventPermissionRequiredMixin, WaitingListQuerySetMix
 
         if 'move_top' in request.POST:
             try:
-                wle = WaitingListEntry.objects.get(
-                    pk=request.POST.get('move_top'), event=self.request.event,
-                )
-                wle.priority = self.request.event.waitinglistentries.aggregate(m=Max('priority'))['m'] + 1
-                wle.save(update_fields=['priority'])
-                wle.log_action(
-                    'pretix.event.orders.waitinglist.changed',
-                    data={'priority': wle.priority},
-                    user=self.request.user,
-                )
+                with transaction.atomic():
+                    wle = WaitingListEntry.objects.get(
+                        pk=request.POST.get('move_top'), event=self.request.event,
+                    )
+                    wle.priority = self.request.event.waitinglistentries.aggregate(m=Max('priority'))['m'] + 1
+                    wle.save(update_fields=['priority'])
+                    wle.log_action(
+                        'pretix.event.orders.waitinglist.changed',
+                        data={'priority': wle.priority},
+                        user=self.request.user,
+                    )
                 messages.success(request, _('The waiting list entry has been moved to the top.'))
                 return self._redirect_back()
             except WaitingListEntry.DoesNotExist:
@@ -228,16 +226,17 @@ class WaitingListActionView(EventPermissionRequiredMixin, WaitingListQuerySetMix
 
         if 'move_end' in request.POST:
             try:
-                wle = WaitingListEntry.objects.get(
-                    pk=request.POST.get('move_end'), event=self.request.event,
-                )
-                wle.priority = self.request.event.waitinglistentries.aggregate(m=Min('priority'))['m'] - 1
-                wle.save(update_fields=['priority'])
-                wle.log_action(
-                    'pretix.event.orders.waitinglist.changed',
-                    data={'priority': wle.priority},
-                    user=self.request.user,
-                )
+                with transaction.atomic():
+                    wle = WaitingListEntry.objects.get(
+                        pk=request.POST.get('move_end'), event=self.request.event,
+                    )
+                    wle.priority = self.request.event.waitinglistentries.aggregate(m=Min('priority'))['m'] - 1
+                    wle.save(update_fields=['priority'])
+                    wle.log_action(
+                        'pretix.event.orders.waitinglist.changed',
+                        data={'priority': wle.priority},
+                        user=self.request.user,
+                    )
                 messages.success(request, _('The waiting list entry has been moved to the end of the list.'))
                 return self._redirect_back()
             except WaitingListEntry.DoesNotExist:
@@ -250,12 +249,12 @@ class WaitingListView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, Pa
     model = WaitingListEntry
     context_object_name = 'entries'
     template_name = 'pretixcontrol/waitinglist/index.html'
-    permission = 'can_view_orders'
+    permission = 'event.orders:read'
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx['items'] = Item.objects.filter(event=self.request.event)
-        ctx['filtered'] = ("status" in self.request.GET or "item" in self.request.GET)
+        ctx['filtered'] = any(param in self.request.GET for param in ("status", "item", "search"))
 
         itemvar_cache = {}
         quota_cache = {}
@@ -266,9 +265,9 @@ class WaitingListView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, Pa
             else:
                 ev = (wle.subevent or self.request.event)
                 disabled = (
-                        not ev.presale_is_running or
-                        (wle.subevent and not wle.subevent.active) or
-                        not wle.item.is_available()
+                    not ev.presale_is_running or
+                    (wle.subevent and not wle.subevent.active) or
+                    not wle.item.is_available()
                 )
                 if disabled:
                     wle.availability = (0, "forbidden")
@@ -278,8 +277,7 @@ class WaitingListView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, Pa
                         if wle.variation
                         else wle.item.check_quotas(count_waitinglist=False, subevent=wle.subevent, _cache=quota_cache)
                     )
-                if wle.availability[0] == Quota.AVAILABILITY_OK and ev.seat_category_mappings.filter(
-                        product=wle.item).exists():
+                if wle.availability[0] == Quota.AVAILABILITY_OK and ev.seat_category_mappings.filter(product=wle.item).exists():
                     # See comment in WaitingListEntry.send_voucher() for rationale
                     num_free_seats_for_product = ev.free_seats().filter(product=wle.item).count()
                     num_valid_vouchers_for_product = self.request.event.vouchers.filter(
@@ -287,12 +285,13 @@ class WaitingListView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, Pa
                         block_quota=True,
                         item_id=wle.item_id,
                         subevent=wle.subevent_id,
-                        waitinglistentries__isnull=False
+                        waitinglistentries__isnull=False,
+                        seat__isnull=True
                     ).aggregate(free=Sum(F('max_usages') - F('redeemed')))['free'] or 0
                     free_seats = num_free_seats_for_product - num_valid_vouchers_for_product
                     wle.availability = (
-                        Quota.AVAILABILITY_GONE if free_seats == 0 else wle.availability[0],
-                        min(free_seats, wle.availability[1])
+                        Quota.AVAILABILITY_GONE if free_seats < 1 else wle.availability[0],
+                        min(free_seats, wle.availability[1]) if wle.availability[1] is not None else free_seats,
                     )
 
                 itemvar_cache[(wle.item, wle.variation, wle.subevent)] = wle.availability
@@ -303,8 +302,8 @@ class WaitingListView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, Pa
         ctx['estimate'] = self.get_sales_estimate()
 
         ctx['running'] = (
-                self.request.event.live
-                and (self.request.event.has_subevents or self.request.event.presale_is_running)
+            self.request.event.live
+            and (self.request.event.has_subevents or self.request.event.presale_is_running)
         )
 
         return ctx
@@ -322,116 +321,14 @@ class WaitingListView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, Pa
     def get(self, request, *args, **kwargs):
         if request.GET.get("download", "") == "yes":
             return self._download_csv()
-        elif request.GET.get("lottery", "") == "run" or request.GET.get("lottery", "") == "revert":
-            item_id = request.GET.get("item", "")
-            if not item_id:
-                messages.error(request, _('You must select a product to run or revert its lottery.'))
-                return redirect(reverse('control:event.orders.waitinglist', kwargs={
-                    'event': self.request.event.slug,
-                    'organizer': self.request.event.organizer.slug
-                }))
-            try:
-                item = Item.objects.get(pk=item_id, event=self.request.event)
-            except (ValueError, Item.DoesNotExist):
-                messages.error(request, _('Invalid product selected.'))
-                return redirect(reverse('control:event.orders.waitinglist', kwargs={
-                    'event': self.request.event.slug,
-                    'organizer': self.request.event.organizer.slug
-                }))
-            revert = request.GET.get("lottery", "") == "revert"
-            return self._run_lottery(item_id=item_id, revert=revert)
         return super().get(request, *args, **kwargs)
-
-    def _run_lottery(self, item_id, revert=False):
-        output = io.StringIO()
-        writer = csv.writer(output, quoting=csv.QUOTE_NONNUMERIC, delimiter=",")
-
-        # Get queryset and filter to only the specified item
-        qs = self.get_queryset().filter(item_id=item_id)
-        
-        if not qs.exists():
-            messages.error(self.request, _('No waiting list entries found for the selected product.'))
-            return redirect(reverse('control:event.orders.waitinglist', kwargs={
-                'event': self.request.event.slug,
-                'organizer': self.request.event.organizer.slug
-            }))
-        
-        qs = sorted(qs, key=lambda o: o.created,reverse=True)
-        priority_count = len(qs)
-        new_priorities = list(range(1, priority_count + 1))
-
-        if revert==False:
-            random.shuffle(new_priorities)
-            print(f"new_priority list: {new_priorities}")
-        new_priorities_iter = iter(new_priorities)
-
-        for w in qs:
-            w.old_priority = w.priority
-            w.priority = next(new_priorities_iter)
-            print(f"{w} created {w.created.isoformat(),} old priority {w.old_priority}, new {w.priority}")
-            w.save(update_fields=['priority'])
-            # w.save(update_fields=['old_priority'])
-
-        qs = sorted(qs, key=lambda o: o.priority, reverse=True)
-
-        # Set or delete lottery date for the specific item
-        if not revert:
-            self.request.event.settings.set(f'lottery_date_for_item_{item_id}', now().isoformat())
-        else:
-            self.request.event.settings.delete(f'lottery_date_for_item_{item_id}')
-
-        headers = [
-            _('Name'), _('E-mail address'), _('Phone number'), _('Product'), _('On list since'), _('Status'),
-            _('Voucher code'),
-            _('Language'), _('Priority'), 'OldPriority'
-        ]
-        # if self.request.event.has_subevents:
-        #     headers.append(pgettext('subevent', 'Date'))
-        writer.writerow(headers)
-
-        for w in qs:
-            if w.item:
-                if w.variation:
-                    prod = '%s – %s' % (str(w.item), str(w.variation))
-                else:
-                    prod = '%s' % str(w.item)
-            if w.voucher:
-                if w.voucher.redeemed >= w.voucher.max_usages:
-                    status = _('Voucher redeemed')
-                elif not w.voucher.is_active():
-                    status = _('Voucher expired')
-                else:
-                    status = _('Voucher assigned')
-            else:
-                status = _('Waiting')
-
-            row = [
-                w.name,
-                w.email,
-                w.phone,
-                prod,
-                w.created.isoformat(),
-                status,
-                w.voucher.code if w.voucher else '',
-                w.locale,
-                str(w.priority),
-                str(w.old_priority)
-            ]
-            if self.request.event.has_subevents:
-                row.append(str(w.subevent))
-            writer.writerow(row)
-
-        r = HttpResponse(output.getvalue().encode("utf-8"), content_type='text/csv')
-        r['Content-Disposition'] = 'attachment; filename="{}.csv"'.format(self.get_lottery_filename(revert=revert))
-        return r
 
     def _download_csv(self):
         output = io.StringIO()
         writer = csv.writer(output, quoting=csv.QUOTE_NONNUMERIC, delimiter=",")
 
         headers = [
-            _('Name'), _('E-mail address'), _('Phone number'), _('Product'), _('On list since'), _('Status'),
-            _('Voucher code'),
+            _('Name'), _('Email address'), _('Phone number'), _('Product'), _('On list since'), _('Status'), _('Voucher code'),
             _('Language'), _('Priority')
         ]
         if self.request.event.has_subevents:
@@ -476,24 +373,18 @@ class WaitingListView(EventPermissionRequiredMixin, WaitingListQuerySetMixin, Pa
     def get_filename(self):
         return '{}_waitinglist'.format(self.request.event.slug)
 
-    def get_lottery_filename(self, revert):
-        if revert:
-            return '{}_lottery_results_REVERTED'.format(self.request.event.slug)
-        else:
-            return '{}_lottery_results'.format(self.request.event.slug)
-
 
 class EntryDelete(EventPermissionRequiredMixin, CompatDeleteView):
     model = WaitingListEntry
     template_name = 'pretixcontrol/waitinglist/delete.html'
-    permission = 'can_change_orders'
+    permission = 'event.orders:write'
     context_object_name = 'entry'
 
     def get_object(self, queryset=None) -> WaitingListEntry:
         try:
             return self.request.event.waitinglistentries.get(
                 id=self.kwargs['entry'],
-                # voucher__isnull=True,
+                voucher__isnull=True,
             )
         except WaitingListEntry.DoesNotExist:
             raise Http404(_("The requested entry does not exist."))
@@ -516,25 +407,20 @@ class EntryDelete(EventPermissionRequiredMixin, CompatDeleteView):
         })
 
 
-class EntryTransfer(EventPermissionRequiredMixin, UpdateView):
+class EntryEdit(EventPermissionRequiredMixin, UpdateView):
     model = WaitingListEntry
-    template_name = 'pretixcontrol/waitinglist/transfer.html'
-    permission = 'can_change_orders'
-    form_class = WaitingListEntryTransferForm
+    template_name = 'pretixcontrol/waitinglist/edit.html'
+    permission = 'event.orders:write'
+    form_class = WaitingListEntryEditForm
     context_object_name = 'entry'
-
-    def dispatch(self, request, *args, **kwargs):
-        if not self.request.event.has_subevents:
-            raise Http404(_("This is not an event series."))
-        return super().dispatch(request, *args, **kwargs)
 
     def get_object(self, queryset=None) -> WaitingListEntry:
         return get_object_or_404(WaitingListEntry, pk=self.kwargs['entry'], event=self.request.event, voucher__isnull=True)
 
     @transaction.atomic
     def form_valid(self, form):
-        messages.success(self.request, _('The waitinglist entry has been transferred.'))
         if form.has_changed():
+            messages.success(self.request, _('The waitinglist entry has been changed.'))
             self.object.log_action(
                 'pretix.event.orders.waitinglist.changed', user=self.request.user, data={
                     k: form.cleaned_data.get(k) for k in form.changed_data

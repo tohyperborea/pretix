@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -54,6 +54,7 @@ class JSONExporter(BaseExporter):
                                'import in third-party systems.')
 
     def render(self, form_data):
+        all_sales_channels = self.event.organizer.sales_channels.all()
         jo = {
             'event': {
                 'name': str(self.event.name),
@@ -85,7 +86,7 @@ class JSONExporter(BaseExporter):
                         'admission': item.admission,
                         'personalized': item.personalized,
                         'active': item.active,
-                        'sales_channels': item.sales_channels,
+                        'sales_channels': [c.identifier for c in (all_sales_channels if item.all_sales_channels else item.limit_sales_channels.all())],
                         'description': str(item.description),
                         'available_from': item.available_from,
                         'available_until': item.available_until,
@@ -96,6 +97,7 @@ class JSONExporter(BaseExporter):
                         'min_per_order': item.min_per_order,
                         'max_per_order': item.max_per_order,
                         'checkin_attention': item.checkin_attention,
+                        'checkin_text': item.checkin_text,
                         'original_price': item.original_price,
                         'issue_giftcard': item.issue_giftcard,
                         'meta_data': item.meta_data,
@@ -110,9 +112,12 @@ class JSONExporter(BaseExporter):
                                 'description': str(variation.description),
                                 'position': variation.position,
                                 'checkin_attention': variation.checkin_attention,
+                                'checkin_text': variation.checkin_text,
                                 'require_approval': variation.require_approval,
                                 'require_membership': variation.require_membership,
-                                'sales_channels': variation.sales_channels,
+                                'sales_channels': [
+                                    c.identifier for c in (all_sales_channels if variation.all_sales_channels else variation.limit_sales_channels.all())
+                                ],
                                 'available_from': variation.available_from,
                                 'available_until': variation.available_until,
                                 'hide_without_voucher': variation.hide_without_voucher,
@@ -120,6 +125,7 @@ class JSONExporter(BaseExporter):
                             } for variation in item.variations.all()
                         ]
                     } for item in self.event.items.select_related('tax_rule').prefetch_related(
+                        'limit_sales_channels',
                         Prefetch(
                             'meta_values',
                             ItemMetaValue.objects.select_related('property'),
@@ -128,6 +134,7 @@ class JSONExporter(BaseExporter):
                         Prefetch(
                             'variations',
                             queryset=ItemVariation.objects.prefetch_related(
+                                'limit_sales_channels',
                                 Prefetch(
                                     'meta_values',
                                     ItemVariationMetaValue.objects.select_related('property'),
@@ -164,7 +171,8 @@ class JSONExporter(BaseExporter):
                         'custom_followup_at': order.custom_followup_at,
                         'require_approval': order.require_approval,
                         'checkin_attention': order.checkin_attention,
-                        'sales_channel': order.sales_channel,
+                        'checkin_text': order.checkin_text,
+                        'sales_channel': order.sales_channel.identifier,
                         'expires': order.expires,
                         'datetime': order.datetime,
                         'fees': [

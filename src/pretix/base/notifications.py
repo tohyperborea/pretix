@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -43,7 +43,7 @@ from django.utils.translation import gettext_lazy as _, pgettext_lazy
 from pretix.base.models import Event, LogEntry
 from pretix.base.signals import register_notification_types
 from pretix.base.templatetags.money import money_filter
-from pretix.helpers.urls import build_absolute_uri
+from pretix.helpers.urls import mainreverse_absolute
 
 logger = logging.getLogger(__name__)
 _ALL_TYPES = None
@@ -151,7 +151,7 @@ def get_all_notification_types(event=None):
 
 
 class ParametrizedOrderNotificationType(NotificationType):
-    required_permission = "can_view_orders"
+    required_permission = "event.orders:read"
 
     def __init__(self, event, action_type, verbose_name, title):
         self._action_type = action_type
@@ -170,7 +170,7 @@ class ParametrizedOrderNotificationType(NotificationType):
     def build_notification(self, logentry: LogEntry):
         order = logentry.content_object
 
-        order_url = build_absolute_uri(
+        order_url = mainreverse_absolute(
             'control:event.order',
             kwargs={
                 'organizer': logentry.event.organizer.slug,

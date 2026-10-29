@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -43,6 +43,7 @@ def order1_expired(event, organizer, item):
         code='FOO', event=event, email='dummy@dummy.test',
         status=Order.STATUS_EXPIRED, locale='en',
         datetime=now(), expires=now() - timedelta(days=10),
+        sales_channel=organizer.sales_channels.get(identifier="web"),
         total=Decimal('0.00'),
     )
     OrderPosition.objects.create(
@@ -62,6 +63,7 @@ def order2_expired(event, organizer, item, customer):
         code='BAR', event=event, email='dummy@dummy.test',
         status=Order.STATUS_EXPIRED, locale='en',
         datetime=now(), expires=now() - timedelta(days=10),
+        sales_channel=organizer.sales_channels.get(identifier="web"),
         total=Decimal('0.00'),
     )
     OrderPosition.objects.create(

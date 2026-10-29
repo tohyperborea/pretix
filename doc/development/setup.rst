@@ -5,7 +5,7 @@ Development setup
 
 This tutorial helps you to get started hacking with pretix on your own computer. You need this to
 be able to contribute to pretix, but it might also be helpful if you want to write your own plugins.
-If you want to install pretix on a server for actual usage, go to the :ref:`admindocs` instead.
+If you want to install pretix on a server for actual usage, go to the `administrator documentation`_ instead.
 
 Obtain a copy of the source code
 --------------------------------
@@ -18,7 +18,7 @@ External Dependencies
 ---------------------
 Your should install the following on your system:
 
-* Python 3.5 or newer
+* Python 3.9 or newer
 * ``pip`` for Python 3 (Debian package: ``python3-pip``)
 * ``python-dev`` for Python 3 (Debian package: ``python3-dev``)
 * On Debian/Ubuntu: ``python-venv`` for Python 3 (Debian package: ``python3-venv``)
@@ -33,7 +33,7 @@ Your should install the following on your system:
 Your local python environment
 -----------------------------
 
-Please execute ``python -V`` or ``python3 -V`` to make sure you have Python 3.4
+Please execute ``python -V`` or ``python3 -V`` to make sure you have Python 3.9
 (or newer) installed. Also make sure you have pip for Python 3 installed, you can
 execute ``pip3 -V`` to check. Then use Python's internal tools to create a virtual
 environment and activate it for your current session::
@@ -53,7 +53,7 @@ Working with the code
 ---------------------
 If you do not have a recent installation of ``nodejs``, install it now::
 
-    curl -sL https://deb.nodesource.com/setup_17.x | sudo -E bash -
+    curl -sL https://deb.nodesource.com/setup_24.x | sudo -E bash -
     sudo apt install nodejs
 
 To make sure it is on your path variable, close and reopen your terminal. Now, install the Python-level dependencies of pretix::
@@ -110,6 +110,56 @@ process::
 
 However, beware that code changes will not auto-reload within Celery.
 
+Running the local development server will also automatically start a vite dev server for all control vue components.
+
+Run the widget development server
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+To locally develop the presale widget you need to start a separate vite dev server using::
+
+    npm run dev:widget
+
+You can control the org, event and much more via query parameters like this::
+
+    http://localhost:5180/?org=testorg&event=testevent
+
+The following query parameters are supported:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 20 60
+
+   * - Parameter
+     - Default
+     - Description
+   * - ``org``
+     - ``testorg``
+     - Organization slug
+   * - ``event``
+     - ``testevent``
+     - Event slug
+   * - ``host``
+     - ``http://localhost:8000``
+     - Backend host URL
+   * - ``type``
+     - ``widget``
+     - Element type: ``widget`` or ``button``
+   * - ``mode``
+     - ``dev``
+     - ``dev`` loads the Vite dev source, ``prod`` loads the built ``v2.{lang}.js``
+   * - ``lang``
+     - ``de``
+     - Language code for the prod script
+   * - ``button-text``
+     - ``Buy tickets!``
+     - Text content for the button (only used when ``type=button``)
+
+Any other query parameter is passed through as an attribute on the widget/button element.
+For example, ``?skip-ssl-check&list-type=calendar&items=123`` adds those attributes directly.
+
+
+
+
 .. _`checksandtests`:
 
 Code checks and unit tests
@@ -136,9 +186,7 @@ It is a good idea to put this command into your git hook ``.git/hooks/pre-commit
 for example, to check for any errors in any staged files when committing::
 
     #!/bin/bash
-    cd $GIT_DIR/../src
-    export GIT_WORK_TREE=../
-    export GIT_DIR=../.git
+
     source ../env/bin/activate  # Adjust to however you activate your virtual environment
     for file in $(git diff --cached --name-only | grep -E '\.py$' | grep -Ev "migrations|mt940\.py|pretix/settings\.py|make_testdata\.py|testutils/settings\.py|tests/settings\.py|pretix/base/models/__init__\.py|.*_pb2\.py")
     do
@@ -211,5 +259,16 @@ with the documentation a lot, you might find it useful to use sphinx-autobuild::
 Then, go to http://localhost:8081 for a version of the documentation that automatically re-builds
 whenever you change a source file.
 
+Working with frontend assets
+----------------------------
+
+To update the frontend styles of shops with a custom styling, run the following commands inside
+your virtual environment.::
+
+    python -m pretix collectstatic --noinput
+    python -m pretix updateassets
+
+
 .. _Django's documentation: https://docs.djangoproject.com/en/1.11/ref/django-admin/#runserver
 .. _pretixdroid: https://github.com/pretix/pretixdroid
+.. _administrator documentation: https://docs.pretix.eu/self-hosting/

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -51,6 +51,7 @@ from i18nfield.strings import LazyI18nString
 from pretix.base.forms import SafeSessionWizardView
 from pretix.base.i18n import language
 from pretix.base.models import Event, EventMetaValue, Organizer, Quota, Team
+from pretix.base.models.organizer import TeamQuerySet
 from pretix.base.services.quotas import QuotaAvailability
 from pretix.control.forms.event import (
     EventWizardBasicsForm, EventWizardCopyForm, EventWizardFoundationForm,
@@ -67,7 +68,12 @@ class EventList(PaginationMixin, ListView):
 
     def get_queryset(self):
         qs = self.request.user.get_events_with_any_permission(self.request).prefetch_related(
-            'organizer', '_settings_objects', 'organizer___settings_objects', 'organizer__meta_properties',
+            'organizer',
+            'organizer__sales_channels',
+            '_settings_objects',
+            'organizer___settings_objects',
+            'organizer__meta_properties',
+            'limit_sales_channels',
             Prefetch(
                 'meta_values',
                 EventMetaValue.objects.select_related('property'),
@@ -81,9 +87,9 @@ class EventList(PaginationMixin, ListView):
             max_to=Max('subevents__date_to'),
             max_fromto=Greatest(Max('subevents__date_to'), Max('subevents__date_from'))
         ).annotate(
-            order_from=Coalesce('min_from', 'date_from'),
+            order_from=Coalesce('max_from', 'date_from'),
             order_to=Coalesce('max_fromto', 'max_to', 'max_from', 'date_to', 'date_from'),
-        )
+        ).order_by("-order_from")
 
         qs = qs.prefetch_related(
             Prefetch('quotas',
@@ -181,15 +187,18 @@ class EventWizard(SafeSessionWizardView):
                 initial['location'] = self.clone_from.location
                 initial['timezone'] = self.clone_from.settings.timezone
                 initial['locale'] = self.clone_from.settings.locale
-                if self.clone_from.settings.tax_rate_default:
-                    initial['tax_rate'] = self.clone_from.settings.tax_rate_default.rate
+                tax_rule = self.clone_from.cached_default_tax_rule
+                if tax_rule:
+                    initial['tax_rate'] = tax_rule.rate
         if 'organizer' in self.request.GET:
             if step == 'foundation':
                 try:
                     qs = Organizer.objects.all()
                     if not self.request.user.has_active_staff_session(self.request.session.session_key):
                         qs = qs.filter(
-                            id__in=self.request.user.teams.filter(can_create_events=True).values_list('organizer', flat=True)
+                            id__in=self.request.user.teams.filter(
+                                TeamQuerySet.organizer_permission_q("organizer.events:create"),
+                            ).values_list('organizer', flat=True)
                         )
                     organizer = qs.get(slug=self.request.GET.get('organizer'))
                     initial['organizer'] = organizer
@@ -207,12 +216,7 @@ class EventWizard(SafeSessionWizardView):
             except Event.DoesNotExist:
                 allow = False
             else:
-                allow = (
-                    request.user.has_event_permission(clone_from.organizer, clone_from,
-                                                      'can_change_event_settings', request)
-                    and request.user.has_event_permission(clone_from.organizer, clone_from,
-                                                          'can_change_items', request)
-                )
+                allow = request.user.has_event_permission(clone_from.organizer, clone_from, None, request)
             if not allow:
                 messages.error(self.request, _('You do not have permission to clone this event.'))
             else:
@@ -221,7 +225,7 @@ class EventWizard(SafeSessionWizardView):
 
     def get_context_data(self, form, **kwargs):
         ctx = super().get_context_data(form, **kwargs)
-        ctx['has_organizer'] = self.request.user.teams.filter(can_create_events=True).exists()
+        ctx['has_organizer'] = self.request.user.teams.filter(TeamQuerySet.organizer_permission_q("organizer.events:create")).exists()
         if self.steps.current == 'basics':
             ctx['organizer'] = self.get_cleaned_data_for_step('foundation').get('organizer')
         return ctx
@@ -238,6 +242,7 @@ class EventWizard(SafeSessionWizardView):
         kwargs = {
             'user': self.request.user,
             'session': self.request.session,
+            'clone_from': self.clone_from,
         }
         if step != 'foundation':
             fdata = self.get_cleaned_data_for_step('foundation')
@@ -249,6 +254,13 @@ class EventWizard(SafeSessionWizardView):
                 }
                 # The show must go on, we catch this error in render()
             kwargs.update(fdata)
+        if step == 'copy':
+            bdata = self.get_cleaned_data_for_step('basics')
+            if bdata:
+                bdata = {
+                    'team': bdata.get('team'),
+                }
+                kwargs.update(bdata)
         return kwargs
 
     def get_template_names(self):
@@ -273,22 +285,52 @@ class EventWizard(SafeSessionWizardView):
                 user=self.request.user,
             )
 
-            if not EventWizardBasicsForm.has_control_rights(self.request.user, event.organizer, self.request.session):
+            if copy_data and copy_data['copy_from_event']:
+                copy_from_event = copy_data['copy_from_event']
+            elif self.clone_from:
+                copy_from_event = self.clone_from
+            else:
+                copy_from_event = None
+
+            if not EventWizardBasicsForm.has_control_rights(
+                self.request.user, event.organizer, self.request.session
+            ):
                 if basics_data["team"] is not None:
                     t = basics_data["team"]
                     t.limit_events.add(event)
                 elif event.organizer.settings.event_team_provisioning:
+                    # Create a new team for new events with full access, but for copied events with the same access
+                    # as the source
+                    limit_event_permissions = {}
+                    if copy_from_event and copy_from_event.organizer == event.organizer:
+                        source_teams = self.request.user._get_teams_for_event(copy_from_event.organizer, copy_from_event)
+                        all_event_permissions = any(t.all_event_permissions for t in source_teams)
+                        if not all_event_permissions:
+                            for t in source_teams:
+                                limit_event_permissions.update(t.limit_event_permissions)
+                    else:
+                        # The cross-organizer case is protected through allow_copy_data
+                        all_event_permissions = True
+
                     t = Team.objects.create(
                         organizer=event.organizer,
                         name=_('Team {event}').format(
                             event=str(event.name)[:100] + "…" if len(str(event.name)) > 100 else str(event.name)
                         ),
-                        can_change_event_settings=True, can_change_items=True,
-                        can_view_orders=True, can_change_orders=True, can_view_vouchers=True,
-                        can_change_vouchers=True
+                        all_organizer_permissions=False,
+                        all_event_permissions=all_event_permissions,
+                        limit_event_permissions=limit_event_permissions,
                     )
                     t.members.add(self.request.user)
                     t.limit_events.add(event)
+                    t.log_action('pretix.team.created', user=self.request.user, data={
+                        '_created_by_event_wizard': True,
+                        'name': t.name,
+                        'all_organizer_permissions': False,
+                        'all_event_permissions': all_event_permissions,
+                        'limit_event_permissions': limit_event_permissions,
+                        'limit_events': [event.pk],
+                    })
 
             logdata = {}
             for f in form_list:
@@ -297,11 +339,8 @@ class EventWizard(SafeSessionWizardView):
                 })
             event.log_action('pretix.event.settings', user=self.request.user, data=logdata)
 
-            if copy_data and copy_data['copy_from_event']:
-                from_event = copy_data['copy_from_event']
-                event.copy_data_from(from_event)
-            elif self.clone_from:
-                event.copy_data_from(self.clone_from)
+            if copy_from_event:
+                event.copy_data_from(copy_from_event)
             else:
                 event.set_active_plugins(settings.PRETIX_PLUGINS_DEFAULT.split(","),
                                          allow_restricted=settings.PRETIX_PLUGINS_DEFAULT.split(","))
@@ -313,18 +352,23 @@ class EventWizard(SafeSessionWizardView):
                     )
                 event.set_defaults()
 
-            if basics_data['tax_rate']:
-                if not event.settings.tax_rate_default or event.settings.tax_rate_default.rate != basics_data['tax_rate']:
-                    event.settings.tax_rate_default = event.tax_rules.create(
+            if basics_data['tax_rate'] is not None:
+                if copy_from_event:
+                    default_tax_rule = copy_from_event.cached_default_tax_rule
+                else:
+                    default_tax_rule = None
+                if not default_tax_rule or default_tax_rule.rate != basics_data['tax_rate']:
+                    event.tax_rules.create(
                         name=LazyI18nString.from_gettext(gettext('VAT')),
-                        rate=basics_data['tax_rate']
+                        rate=basics_data['tax_rate'],
+                        default=not default_tax_rule,
                     )
 
             event.settings.set('timezone', basics_data['timezone'])
             event.settings.set('locale', basics_data['locale'])
             event.settings.set('locales', foundation_data['locales'])
 
-        if (copy_data and copy_data['copy_from_event']) or self.clone_from or event.has_subevents:
+        if copy_from_event or event.has_subevents:
             return redirect(reverse('control:event.settings', kwargs={
                 'organizer': event.organizer.slug,
                 'event': event.slug,

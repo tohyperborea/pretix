@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -34,6 +34,7 @@ class Equal(Func):
     arg_joiner = ' = '
     arity = 2
     function = ''
+    conditional = True
 
 
 class GreaterThan(Func):
@@ -74,7 +75,11 @@ class InList(Func):
             raise TypeError(f'Dynamic right-hand-site currently not implemented, found {type(self.source_expressions[1])}')
         rhs, rhs_params = ['%s' for _ in self.source_expressions[1].value], [d for d in self.source_expressions[1].value]
 
-        return '%s IN (%s)' % (lhs, ', '.join(rhs)), lhs_params + rhs_params
+        if rhs:
+            return '%s IN (%s)' % (lhs, ', '.join(rhs)), lhs_params + rhs_params
+        else:
+            # "IN ()" is not considered valid SQL by PostgreSQL (unlike SQLite)
+            return 'FALSE', []
 
 
 def tolerance(b, tol=None, sign=1):

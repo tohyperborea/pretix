@@ -1,6 +1,7 @@
 {% load i18n %}
 {% load bootstrap3 %}
 {% load formset_tags %}
+{% load static %}
 {% load getitem %}
 <div class="formset" data-formset data-formset-prefix="{{ formset.prefix }}" id="item_variations">
     {{ formset.management_form }}
@@ -17,7 +18,6 @@
                     <div class="row">
                         <div class="col-md-4 col-xs-12">
                             <strong class="panel-title">
-                                <span class="fa fa-fw chevron"></span>
                                 <span class="fa fa-warning text-danger hidden variation-error"></span>
                                 <span class="variation-name">
                                     Variation name
@@ -41,9 +41,14 @@
                                   title="{% trans "Require a valid membership" %}"></span>
                         </div>
                         <div class="col-md-2 col-xs-6">
-                            {% for k, c in sales_channels.items %}
-                                <span class="fa fa-fw fa-{{ c.icon }} text-muted variation-channel-{{ k }} variation-icon-hidden"
-                                      data-toggle="tooltip" title="{% trans c.verbose_name %}"></span>
+                            {% for c in sales_channels %}
+                                {% if "." in c.icon %}
+                                    <img src="{% static c.icon %}" class="fa-like-image variation-channel-{{ c.id }} variation-icon-hidden"
+                                         data-toggle="tooltip" title="{{ c.label }}">
+                                {% else %}
+                                    <span class="fa fa-fw fa-{{ c.icon }} text-muted variation-channel-{{ c.id }} variation-icon-hidden"
+                                          data-toggle="tooltip" title="{{ c.label }}"></span>
+                                {% endif %}
                             {% endfor %}
                         </div>
                         <div class="col-md-1 col-xs-6 text-right flip variation-price">
@@ -62,16 +67,29 @@
                 <div class="panel-body form-horizontal">
                     {% if form.instance.pk and not form.instance.quotas.exists %}
                         <div class="alert alert-warning">
-                            {% blocktrans trimmed %}
-                                Please note that your variation will <strong>not</strong> be available for sale
-                                until you have added it to an existing or newly created quota.
-                            {% endblocktrans %}
+                            <div class="row">
+                                <div class="col-lg-8">
+                                    {% blocktrans trimmed %}
+                                        Please note that your variation will <strong>not</strong> be available for sale
+                                        until you have added it to an existing or newly created quota.
+                                    {% endblocktrans %}
+                                </div>
+                                <div class="col-lg-4 text-right">
+                                    <a class="btn btn-default btn-xs" href="{% url "control:event.items.quotas" organizer=request.event.organizer.slug event=request.event.slug %}">
+                                        <i class="fa fa-wrench"></i> {% trans "Manage quotas" %}
+                                    </a>
+                                    <a class="btn btn-default btn-xs" href="{% url "control:event.items.quotas.add" organizer=request.event.organizer.slug event=request.event.slug %}?product={{ form.instance.item.pk }}-{{ form.instance.pk }}">
+                                        <i class="fa fa-plus"></i> {% trans "Create a new quota" %}
+                                    </a>
+                                </div>
+                            </div>
                         </div>
                     {% endif %}
                     {% bootstrap_form_errors form %}
                     {% bootstrap_field form.active layout="control" %}
                     {% bootstrap_field form.value layout="control" %}
                     {% bootstrap_field form.default_price addon_after=request.event.currency layout="control" %}
+                    {% bootstrap_field form.free_price_suggestion addon_after=request.event.currency layout="control" %}
                     {% bootstrap_field form.original_price addon_after=request.event.currency layout="control" %}
                     {% bootstrap_field form.description layout="control" %}
                     {% if form.meta_fields %}
@@ -95,9 +113,10 @@
                             </div>
                         </div>
                     {% endif %}
-                    {% bootstrap_field form.available_from layout="control" %}
-                    {% bootstrap_field form.available_until layout="control" %}
-                    {% bootstrap_field form.sales_channels layout="control" %}
+                    {% bootstrap_field form.available_from visibility_field=form.available_from_mode layout="control_with_visibility"  %}
+                    {% bootstrap_field form.available_until visibility_field=form.available_until_mode layout="control_with_visibility" %}
+                    {% bootstrap_field form.all_sales_channels layout="control" %}
+                    {% bootstrap_field form.limit_sales_channels layout="control" %}
                     {% bootstrap_field form.hide_without_voucher layout="control" %}
                     {% bootstrap_field form.require_approval layout="control" %}
                     {% if form.require_membership %}
@@ -108,6 +127,7 @@
                         </div>
                     {% endif %}
                     {% bootstrap_field form.checkin_attention layout="control" %}
+                    {% bootstrap_field form.checkin_text layout="control" %}
                 </div>
             </details>
         {% endfor %}
@@ -124,7 +144,6 @@
                     <div class="row">
                         <div class="col-md-4 col-xs-12">
                             <strong class="panel-title">
-                                <span class="fa fa-fw chevron"></span>
                                 <span class="fa fa-warning text-danger hidden variation-error"></span>
                                 <span class="variation-name">
                                     {% trans "New variation" %}
@@ -148,9 +167,14 @@
                                   title="{% trans "Require a valid membership" %}"></span>
                         </div>
                         <div class="col-md-2 col-xs-6">
-                            {% for k, c in sales_channels.items %}
-                                <span class="fa fa-fw fa-{{ c.icon }} text-muted variation-channel-{{ k }} variation-icon-hidden"
-                                      data-toggle="tooltip" title="{% trans c.verbose_name %}"></span>
+                            {% for c in sales_channels %}
+                                {% if "." in c.icon %}
+                                    <img src="{% static c.icon %}" class="fa-like-image variation-channel-{{ c.id }} variation-icon-hidden"
+                                         data-toggle="tooltip" title="{{ c.label }}">
+                                {% else %}
+                                    <span class="fa fa-fw fa-{{ c.icon }} text-muted variation-channel-{{ c.id }} variation-icon-hidden"
+                                          data-toggle="tooltip" title="{{ c.label }}"></span>
+                                {% endif %}
                             {% endfor %}
                         </div>
                         <div class="col-md-1 col-xs-6 text-right flip variation-price">
@@ -170,6 +194,7 @@
                     {% bootstrap_field formset.empty_form.active layout="control" %}
                     {% bootstrap_field formset.empty_form.value layout="control" %}
                     {% bootstrap_field formset.empty_form.default_price addon_after=request.event.currency layout="control" %}
+                    {% bootstrap_field formset.empty_form.free_price_suggestion addon_after=request.event.currency layout="control" %}
                     {% bootstrap_field formset.empty_form.original_price addon_after=request.event.currency layout="control" %}
                     {% bootstrap_field formset.empty_form.description layout="control" %}
                     {% if formset.empty_form.meta_fields %}
@@ -193,9 +218,10 @@
                             </div>
                         </div>
                     {% endif %}
-                    {% bootstrap_field formset.empty_form.available_from layout="control" %}
-                    {% bootstrap_field formset.empty_form.available_until layout="control" %}
-                    {% bootstrap_field formset.empty_form.sales_channels layout="control" %}
+                    {% bootstrap_field formset.empty_form.available_from visibility_field=formset.empty_form.available_from_mode layout="control_with_visibility"  %}
+                    {% bootstrap_field formset.empty_form.available_until visibility_field=formset.empty_form.available_until_mode layout="control_with_visibility" %}
+                    {% bootstrap_field formset.empty_form.all_sales_channels layout="control" %}
+                    {% bootstrap_field formset.empty_form.limit_sales_channels layout="control" %}
                     {% bootstrap_field formset.empty_form.hide_without_voucher layout="control" %}
                     {% bootstrap_field formset.empty_form.require_approval layout="control" %}
                     {% if formset.empty_form.require_membership %}
@@ -206,6 +232,7 @@
                         </div>
                     {% endif %}
                     {% bootstrap_field formset.empty_form.checkin_attention layout="control" %}
+                    {% bootstrap_field formset.empty_form.checkin_text layout="control" %}
                 </div>
             </details>
         {% endescapescript %}

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -37,12 +37,12 @@ from zoneinfo import ZoneInfo
 
 from dateutil.parser import parse
 from django.core.exceptions import PermissionDenied
-from django.db.models import F, Max, Min, Q
+from django.db.models import Count, F, Max, Min, Q
 from django.db.models.functions import Coalesce, Greatest
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
-from django.utils.formats import date_format, get_format
+from django.utils.formats import date_format
 from django.utils.timezone import make_aware
 from django.utils.translation import gettext as _, pgettext
 
@@ -51,12 +51,13 @@ from pretix.base.models import (
     ItemVariation, ItemVariationMetaValue, Order, OrderPosition, Organizer,
     SubEventMetaValue, User, Voucher,
 )
+from pretix.base.models.organizer import TeamQuerySet
 from pretix.control.forms.event import EventWizardCopyForm
 from pretix.control.permissions import (
     event_permission_required, organizer_permission_required,
 )
 from pretix.helpers.daterange import daterange
-from pretix.helpers.i18n import i18ncomp
+from pretix.helpers.i18n import i18ncomp, parse_date_localized
 
 
 def serialize_user(u):
@@ -144,11 +145,21 @@ def event_list(request):
     if 'can_copy' in request.GET:
         qs = EventWizardCopyForm.copy_from_queryset(request.user, request.session)
     else:
-        qs = request.user.get_events_with_any_permission(request)
+        permission = request.GET.get('permission')
+        if permission:
+            qs = request.user.get_events_with_permission(permission, request)
+        else:
+            qs = request.user.get_events_with_any_permission(request)
+
+    name_slug_q = Q(name__icontains=i18ncomp(query)) | Q(slug__icontains=query)
+    organizer = request.GET.get('organizer')
+    if organizer:
+        qs = qs.filter(organizer__slug=organizer)
+    else:
+        name_slug_q |= Q(organizer__name__icontains=i18ncomp(query)) | Q(organizer__slug__icontains=query)
 
     qs = qs.filter(
-        Q(name__icontains=i18ncomp(query)) | Q(slug__icontains=query) |
-        Q(organizer__name__icontains=i18ncomp(query)) | Q(organizer__slug__icontains=query)
+        name_slug_q
     ).annotate(
         min_from=Min('subevents__date_from'),
         max_from=Max('subevents__date_from'),
@@ -156,15 +167,24 @@ def event_list(request):
         max_fromto=Greatest(Max('subevents__date_to'), Max('subevents__date_from'))
     ).annotate(
         order_from=Coalesce('min_from', 'date_from'),
-    ).order_by('-order_from')
+    ).order_by('-order_from', 'slug')
 
     total = qs.count()
     pagesize = 20
     offset = (page - 1) * pagesize
+    results = []
+    if page == 1 and 'include_none' in request.GET and not query:
+        results.append({
+            'id': "_none",
+            'text': _("No event"),
+            'name': _("No event"),
+            'type': "event",
+        })
+    results += [
+        serialize_event(e) for e in qs.select_related('organizer')[offset:offset + pagesize]
+    ]
     doc = {
-        'results': [
-            serialize_event(e) for e in qs.select_related('organizer')[offset:offset + pagesize]
-        ],
+        'results': results,
         'pagination': {
             "more": total >= (offset + pagesize)
         }
@@ -172,7 +192,7 @@ def event_list(request):
     return JsonResponse(doc)
 
 
-@organizer_permission_required(("can_manage_gift_cards", "can_manage_reusable_media"))
+@organizer_permission_required(("organizer.giftcards:read", "organizer.reusablemedia:write"))
 def giftcard_select2(request, **kwargs):
     query = request.GET.get('query', '')
     try:
@@ -180,7 +200,7 @@ def giftcard_select2(request, **kwargs):
     except ValueError:
         page = 1
 
-    if request.user.has_organizer_permission(request.organizer, 'can_manage_gift_cards', request):
+    if request.user.has_organizer_permission(request.organizer, 'organizer.giftcards:read', request):
         qs = request.organizer.issued_gift_cards.filter(
             Q(secret__icontains=query)
         ).order_by('secret')
@@ -210,7 +230,7 @@ def giftcard_select2(request, **kwargs):
     return JsonResponse(doc)
 
 
-@organizer_permission_required(("can_manage_reusable_media", "can_manage_gift_cards"))
+@organizer_permission_required(("organizer.reusablemedia:write", "organizer.giftcards:write"))
 def ticket_select2(request, **kwargs):
     query = request.GET.get('query', '')
     try:
@@ -240,8 +260,13 @@ def ticket_select2(request, **kwargs):
         qs_orders = qs_orders.filter(
             exact_match | (
                 soft_match & (
-                    Q(order__event__organizer_id__in=request.user.teams.filter(all_events=True, can_view_orders=True).values_list('organizer', flat=True))
-                    | Q(order__event_id__in=request.user.teams.filter(can_view_orders=True).values_list('limit_events__id', flat=True))
+                    Q(order__event__organizer_id__in=request.user.teams.filter(
+                        TeamQuerySet.event_permission_q("event.orders:read"),
+                        all_events=True,
+                    ).values_list('organizer', flat=True))
+                    | Q(order__event_id__in=request.user.teams.filter(
+                        TeamQuerySet.event_permission_q("event.orders:read")
+                    ).values_list('limit_events__id', flat=True))
                 )
             )
         )
@@ -270,7 +295,7 @@ def ticket_select2(request, **kwargs):
     return JsonResponse(doc)
 
 
-@organizer_permission_required("can_manage_customers")
+@organizer_permission_required("organizer.customers:write")
 def customer_select2(request, **kwargs):
     query = request.GET.get('query', '')
     try:
@@ -310,7 +335,7 @@ def nav_context_list(request):
         page = 1
 
     qs_events = request.user.get_events_with_any_permission(request).filter(
-        Q(name__icontains=i18ncomp(query)) | Q(slug__icontains=query)
+        Q(name__icontains=i18ncomp(query)) | Q(slug__icontains=query) | Q(domain__domainname__iexact=query)
     ).annotate(
         min_from=Min('subevents__date_from'),
         max_from=Max('subevents__date_from'),
@@ -318,14 +343,17 @@ def nav_context_list(request):
         max_fromto=Greatest(Max('subevents__date_to'), Max('subevents__date_from'))
     ).annotate(
         order_from=Coalesce('min_from', 'date_from'),
-    ).order_by('-order_from')
+    ).order_by('-order_from', 'slug')
 
     if request.user.has_active_staff_session(request.session.session_key):
         qs_orga = Organizer.objects.all()
     else:
         qs_orga = Organizer.objects.filter(pk__in=request.user.teams.values_list('organizer', flat=True))
     if query:
-        qs_orga = qs_orga.filter(Q(name__icontains=query) | Q(slug__icontains=query))
+        qs_orga = qs_orga.filter(Q(name__icontains=query) | Q(slug__icontains=query) | Q(domains__domainname__iexact=query))
+    qs_orga = qs_orga.annotate(
+        n_events=Count("events")
+    ).order_by("-n_events")
 
     if query and len(query) >= 3:
         qs_orders = Order.objects.filter(
@@ -334,9 +362,9 @@ def nav_context_list(request):
         if not request.user.has_active_staff_session(request.session.session_key):
             qs_orders = qs_orders.filter(
                 Q(event__organizer_id__in=request.user.teams.filter(
-                    all_events=True, can_view_orders=True).values_list('organizer', flat=True))
+                    TeamQuerySet.event_permission_q("event.orders:read"), all_events=True).values_list('organizer', flat=True))
                 | Q(event_id__in=request.user.teams.filter(
-                    can_view_orders=True).values_list('limit_events__id', flat=True))
+                    TeamQuerySet.event_permission_q("event.orders:read")).values_list('limit_events__id', flat=True))
             )
 
         qs_vouchers = Voucher.objects.filter(
@@ -345,9 +373,9 @@ def nav_context_list(request):
         if not request.user.has_active_staff_session(request.session.session_key):
             qs_vouchers = qs_vouchers.filter(
                 Q(event__organizer_id__in=request.user.teams.filter(
-                    all_events=True, can_view_vouchers=True).values_list('organizer', flat=True))
+                    TeamQuerySet.event_permission_q("event.vouchers:read"), all_events=True).values_list('organizer', flat=True))
                 | Q(event_id__in=request.user.teams.filter(
-                    can_view_vouchers=True).values_list('limit_events__id', flat=True))
+                    TeamQuerySet.event_permission_q("event.vouchers:read")).values_list('limit_events__id', flat=True))
             )
     else:
         qs_vouchers = Voucher.objects.none()
@@ -405,13 +433,7 @@ def subevent_select2(request, **kwargs):
     qf = Q(name__icontains=i18ncomp(query)) | Q(location__icontains=query)
     tz = request.event.timezone
 
-    dt = None
-    for f in get_format('DATE_INPUT_FORMATS'):
-        try:
-            dt = datetime.strptime(query, f)
-            break
-        except (ValueError, TypeError):
-            continue
+    dt = parse_date_localized(query)
 
     if dt:
         dt_start = make_aware(datetime.combine(dt.date(), time(hour=0, minute=0, second=0)), tz)
@@ -455,13 +477,7 @@ def quotas_select2(request, **kwargs):
     qf = Q(name__icontains=query) | Q(subevent__name__icontains=i18ncomp(query))
     tz = request.event.timezone
 
-    dt = None
-    for f in get_format('DATE_INPUT_FORMATS'):
-        try:
-            dt = datetime.strptime(query, f)
-            break
-        except (ValueError, TypeError):
-            continue
+    dt = parse_date_localized(query)
 
     if dt and request.event.has_subevents:
         dt_start = make_aware(datetime.combine(dt.date(), time(hour=0, minute=0, second=0)), tz)
@@ -578,7 +594,7 @@ def category_select2(request, **kwargs):
         page = 1
 
     qs = request.event.categories.filter(
-        name__icontains=i18ncomp(query)
+        Q(name__icontains=i18ncomp(query)) | Q(internal_name__icontains=query)
     ).order_by('name')
 
     total = qs.count()
@@ -622,7 +638,7 @@ def checkinlist_select2(request, **kwargs):
 
     qs = request.event.checkin_lists.select_related('subevent').filter(
         qf
-    ).order_by('name')
+    ).order_by('subevent__date_from', 'name', 'pk')
 
     total = qs.count()
     pagesize = 20
@@ -674,6 +690,49 @@ def itemvar_select2(request, **kwargs):
             {
                 'id': k,
                 'text': str(v),
+                'inactive': d,
+            }
+            for k, v, d in choices
+        ],
+        'pagination': {
+            "more": total >= (offset + pagesize)
+        }
+    }
+    return JsonResponse(doc)
+
+
+@event_permission_required(None)
+def itemvars_select2(request, **kwargs):
+    query = request.GET.get('query', '')
+    try:
+        page = int(request.GET.get('page', '1'))
+    except ValueError:
+        page = 1
+
+    pagesize = 20
+    offset = (page - 1) * pagesize
+
+    choices = []
+
+    # We are very unlikely to need pagination
+    itemqs = request.event.items.prefetch_related('variations').filter(
+        Q(name__icontains=i18ncomp(query)) | Q(internal_name__icontains=query))
+    total = itemqs.count()
+
+    for i in itemqs[offset:offset + pagesize]:
+        variations = list(i.variations.all())
+        if variations:
+            for v in variations:
+                choices.append(('%d-%d' % (i.pk, v.pk), '%s – %s' % (i, v.value), not v.active))
+        else:
+            choices.append((str(i.pk), str(i), not i.active))
+
+    doc = {
+        'results': [
+            {
+                'id': k,
+                'text': str(v),
+                'inactive': d,
             }
             for k, v, d in choices
         ],
@@ -779,19 +838,20 @@ def organizer_select2(request):
         qs = qs.filter(Q(name__icontains=term) | Q(slug__icontains=term))
     if not request.user.has_active_staff_session(request.session.session_key):
         if 'can_create' in request.GET:
-            qs = qs.filter(pk__in=request.user.teams.filter(can_create_events=True).values_list('organizer', flat=True))
+            qs = qs.filter(pk__in=request.user.teams.filter(TeamQuerySet.organizer_permission_q("organizer.events:create")).values_list('organizer', flat=True))
         else:
             qs = qs.filter(pk__in=request.user.teams.values_list('organizer', flat=True))
 
     total = qs.count()
     pagesize = 20
     offset = (page - 1) * pagesize
+    display_slug = 'display_slug' in request.GET
 
     doc = {
         "results": [
             {
                 'id': o.pk,
-                'text': str(o.name)
+                'text': '{} — {}'.format(o.slug, o.name) if display_slug else str(o.name)
             } for o in qs[offset:offset + pagesize]
         ],
         "pagination": {
@@ -915,6 +975,21 @@ def subevent_meta_values(request, organizer, event):
     })
 
 
+@event_permission_required('event.vouchers:read')
+def voucher_tag_typeahead(request, **kwargs):
+    q = request.GET.get('q', '')
+    tags = request.event.vouchers.filter(
+        tag__isnull=False,
+        waitinglistentries__isnull=True,
+    ).filter(
+        tag__icontains=q,
+    ).values_list('tag', flat=True).distinct().order_by('tag')[:10]
+
+    return JsonResponse({
+        'results': [{'name': t} for t in tags]
+    })
+
+
 def item_meta_values(request, organizer, event):
     q = request.GET.get('q')
     propname = request.GET.get('property')
@@ -941,21 +1016,21 @@ def item_meta_values(request, organizer, event):
     var_matches = var_matches.filter(variation__item__event__organizer_id=organizer.pk)
     all_access = (
         request.user.has_active_staff_session(request.session.session_key)
-        or request.user.teams.filter(all_events=True, organizer=organizer, can_change_items=True).exists()
+        or request.user.teams.filter(TeamQuerySet.event_permission_q("event.items:write"), all_events=True, organizer=organizer).exists()
     )
     if not all_access:
         defaults = defaults.filter(
-            event__id__in=request.user.teams.filter(can_change_items=True).values_list(
+            event__id__in=request.user.teams.filter(TeamQuerySet.event_permission_q("event.items:write")).values_list(
                 'limit_events__id', flat=True
             )
         )
         matches = matches.filter(
-            item__event__id__in=request.user.teams.filter(can_change_items=True).values_list(
+            item__event__id__in=request.user.teams.filter(TeamQuerySet.event_permission_q("event.items:write")).values_list(
                 'limit_events__id', flat=True
             )
         )
         var_matches = var_matches.filter(
-            variation__item__event__id__in=request.user.teams.filter(can_change_items=True).values_list(
+            variation__item__event__id__in=request.user.teams.filter(TeamQuerySet.event_permission_q("event.items:write")).values_list(
                 'limit_events__id', flat=True
             )
         )
@@ -972,10 +1047,16 @@ def item_meta_values(request, organizer, event):
     })
 
 
-@organizer_permission_required(("can_view_orders", "can_change_organizer_settings"))
-# This decorator is a bit of a hack since this is not technically an organizer permission, but it does the job here --
-# anyone who can see orders for any event can see the check-in log view where this is used as a filter
 def devices_select2(request, **kwargs):
+    allowed = (
+        # This check is a bit of a hack since this is not technically an organizer permission, but it does the job here --
+        # anyone who can see orders for any event can see the check-in log view where this is used as a filter
+        request.user.has_organizer_permission(request.organizer, "organizer.devices:read", request=request) or
+        request.user.get_events_with_permission("event.orders:read").filter(organizer=request.organizer).exists()
+    )
+    if not allowed:
+        raise PermissionDenied()
+
     query = request.GET.get('query', '')
     try:
         page = int(request.GET.get('page', '1'))
@@ -1010,10 +1091,16 @@ def devices_select2(request, **kwargs):
     return JsonResponse(doc)
 
 
-@organizer_permission_required(("can_view_orders", "can_change_event_settings", "can_change_organizer_settings"))
-# This decorator is a bit of a hack since this is not technically an organizer permission, but it does the job here --
-# anyone who can see orders for any event can see the check-in log view where this is used as a filter
 def gate_select2(request, **kwargs):
+    allowed = (
+        # This check is a bit of a hack since this is not technically an organizer permission, but it does the job here --
+        # anyone who can see orders for any event can see the check-in log view where this is used as a filter
+        request.user.has_organizer_permission(request.organizer, "organizer.devices:read", request=request) or
+        request.user.get_events_with_permission("event.orders:read").filter(organizer=request.organizer).exists()
+    )
+    if not allowed:
+        raise PermissionDenied()
+
     query = request.GET.get('query', '')
     try:
         page = int(request.GET.get('page', '1'))

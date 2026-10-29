@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -24,17 +24,21 @@ import hashlib
 from django.core.signing import BadSignature, TimestampSigner
 
 
+class SafeDownloadSigner(TimestampSigner):
+    pass
+
+
 def get_token(request, answer):
     if not request.session.session_key:
         request.session.create()
     payload = '{}:{}'.format(request.session.session_key, answer.pk)
-    signer = TimestampSigner()
+    signer = SafeDownloadSigner()
     return signer.sign(hashlib.sha1(payload.encode()).hexdigest())
 
 
 def check_token(request, answer, token):
     payload = hashlib.sha1('{}:{}'.format(request.session.session_key, answer.pk).encode()).hexdigest()
-    signer = TimestampSigner()
+    signer = SafeDownloadSigner()
     try:
         return payload == signer.unsign(token, max_age=3600 * 24)
     except BadSignature:

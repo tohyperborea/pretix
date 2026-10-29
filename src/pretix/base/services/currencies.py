@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -38,6 +38,7 @@ SOURCE_NAMES = {
     None: _('European Central Bank'),  # backwards-compatibility
     'eu:ecb:eurofxref-daily': _('European Central Bank'),
     'cz:cnb:rate-fixing-daily': _('Czech National Bank'),
+    'pl:nbp:table-a': _('National Bank of Poland'),
 }
 
 
@@ -49,6 +50,7 @@ def fetch_rates(sender, **kwargs):
     source_tasks = {
         'eu:ecb:eurofxref-daily': fetch_ecb_rates,
         'cz:cnb:rate-fixing-daily': fetch_cnb_cz_rates,
+        'pl:nbp:table-a': fetch_nbp_pl_rates,
     }
 
     for source_name, task in source_tasks.items():
@@ -139,6 +141,32 @@ def fetch_cnb_cz_rates():
             source='cz:cnb:rate-fixing-daily',
             source_currency=code,
             other_currency='CZK',
+            defaults=dict(
+                source_date=source_date,
+                rate=rate,
+            )
+        )
+
+
+@app.task()
+def fetch_nbp_pl_rates():
+    """
+    Fetches currency rates from the Polish National Bank.
+    """
+    r = requests.get("https://api.nbp.pl/api/exchangerates/tables/A/", headers={
+        "Accept": "application/json",
+    })
+    r.raise_for_status()
+    data = r.json()[0]
+
+    source_date = datetime.strptime(data["effectiveDate"], "%Y-%m-%d").date()
+
+    for r in data["rates"]:
+        rate = Decimal(r["mid"]).quantize(Decimal('0.000001'))
+        ExchangeRate.objects.update_or_create(
+            source='pl:nbp:table-a',
+            source_currency=r["code"],
+            other_currency='PLN',
             defaults=dict(
                 source_date=source_date,
                 rate=rate,

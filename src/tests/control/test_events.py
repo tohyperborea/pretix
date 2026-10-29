@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -47,12 +47,6 @@ from i18nfield.strings import LazyI18nString
 from tests.base import SoupTest, extract_form_fields
 
 from pretix.base.models import Event, LogEntry, Order, Organizer, Team, User
-from pretix.testutils.mock import mocker_context
-
-
-@pytest.fixture
-def class_monkeypatch(request, monkeypatch):
-    request.cls.monkeypatch = monkeypatch
 
 
 @pytest.mark.usefixtures("class_monkeypatch")
@@ -61,8 +55,8 @@ class EventsTest(SoupTest):
     def setUp(self):
         super().setUp()
         self.user = User.objects.create_user('dummy@dummy.dummy', 'dummy')
-        self.orga1 = Organizer.objects.create(name='CCC', slug='ccc')
-        self.orga2 = Organizer.objects.create(name='MRM', slug='mrm')
+        self.orga1 = Organizer.objects.create(name='CCC', slug='ccc', plugins='pretix.plugins.banktransfer')
+        self.orga2 = Organizer.objects.create(name='MRM', slug='mrm', plugins='pretix.plugins.banktransfer')
         self.event1 = Event.objects.create(
             organizer=self.orga1, name='30C3', slug='30c3',
             date_from=datetime.datetime(2013, 12, 26, tzinfo=datetime.timezone.utc),
@@ -77,13 +71,16 @@ class EventsTest(SoupTest):
             date_from=datetime.datetime(2014, 9, 5, tzinfo=datetime.timezone.utc),
         )
 
-        self.team1 = Team.objects.create(organizer=self.orga1, can_create_events=True, can_change_event_settings=True,
-                                         can_change_items=True)
+        self.team1 = Team.objects.create(
+            organizer=self.orga1,
+            name="T1",
+            all_event_permissions=True,
+            limit_organizer_permissions={"organizer.events:create": True}
+        )
         self.team1.members.add(self.user)
         self.team1.limit_events.add(self.event1)
 
-        self.team2 = Team.objects.create(organizer=self.orga1, can_change_event_settings=True, can_change_items=True,
-                                         can_change_orders=True, can_change_vouchers=True)
+        self.team2 = Team.objects.create(organizer=self.orga1, name="T2", all_event_permissions=True)
         self.team2.members.add(self.user)
 
         self.client.login(email='dummy@dummy.dummy', password='dummy')
@@ -300,6 +297,8 @@ class EventsTest(SoupTest):
         doc = self.get_doc('/control/event/%s/%s/settings/plugins' % (self.orga1.slug, self.event1.slug))
         self.assertIn("Stripe", doc.select(".form-plugins")[0].text)
         self.assertIn("Enable", doc.select("[name=\"plugin:pretix.plugins.stripe\"]")[0].text)
+        assert not doc.select("[name=\"plugin:tests.testdummyrestricted\"]")
+        assert not doc.select("[name=\"plugin:tests.testdummyhidden\"]")
 
         doc = self.post_doc('/control/event/%s/%s/settings/plugins' % (self.orga1.slug, self.event1.slug),
                             {'plugin:pretix.plugins.stripe': 'enable'})
@@ -308,6 +307,45 @@ class EventsTest(SoupTest):
         doc = self.post_doc('/control/event/%s/%s/settings/plugins' % (self.orga1.slug, self.event1.slug),
                             {'plugin:pretix.plugins.stripe': 'disable'})
         self.assertIn("Enable", doc.select("[name=\"plugin:pretix.plugins.stripe\"]")[0].text)
+
+        self.post_doc('/control/event/%s/%s/settings/plugins' % (self.orga1.slug, self.event1.slug),
+                      {'plugin:tests.testdummyhidden': 'enable'})
+        self.event1.refresh_from_db()
+        assert "testdummyhidden" not in self.event1.plugins
+
+        self.post_doc('/control/event/%s/%s/settings/plugins' % (self.orga1.slug, self.event1.slug),
+                      {'plugin:tests.testdummyrestricted': 'enable'})
+        self.event1.refresh_from_db()
+        assert "testdummyrestricted" not in self.event1.plugins
+
+        self.orga1.settings.allowed_restricted_plugins = ["tests.testdummyrestricted"]
+
+        self.post_doc('/control/event/%s/%s/settings/plugins' % (self.orga1.slug, self.event1.slug),
+                      {'plugin:tests.testdummyrestricted': 'enable'})
+        self.event1.refresh_from_db()
+        assert "testdummyrestricted" in self.event1.plugins
+
+        self.post_doc('/control/event/%s/%s/settings/plugins' % (self.orga1.slug, self.event1.slug),
+                      {'plugin:tests.testdummyorga': 'enable'})
+        self.event1.refresh_from_db()
+        assert "testdummyorga" not in self.event1.plugins
+
+        self.post_doc('/control/event/%s/%s/settings/plugins' % (self.orga1.slug, self.event1.slug),
+                      {'plugin:tests.testdummyhybrid': 'enable'})
+        self.event1.refresh_from_db()
+        assert "tests.testdummyhybrid" not in self.event1.plugins
+        self.orga1.refresh_from_db()
+        assert "tests.testdummyhybrid" not in self.orga1.plugins
+
+        t2 = Team.objects.create(organizer=self.orga1, all_organizer_permissions=True, all_event_permissions=True)
+        t2.members.add(self.user)
+
+        self.post_doc('/control/event/%s/%s/settings/plugins' % (self.orga1.slug, self.event1.slug),
+                      {'plugin:tests.testdummyhybrid': 'enable'})
+        self.event1.refresh_from_db()
+        assert "tests.testdummyhybrid" in self.event1.plugins
+        self.orga1.refresh_from_db()
+        assert "tests.testdummyhybrid" in self.orga1.plugins
 
     def test_testmode_enable(self):
         self.event1.testmode = False
@@ -323,13 +361,15 @@ class EventsTest(SoupTest):
                 code='FOO', event=self.event1, email='dummy@dummy.test',
                 status=Order.STATUS_PENDING,
                 datetime=now(), expires=now() + datetime.timedelta(days=10),
-                total=14, locale='en', testmode=True
+                total=14, locale='en', testmode=True,
+                sales_channel=self.event1.organizer.sales_channels.get(identifier="web"),
             )
             o2 = Order.objects.create(
                 code='FOO2', event=self.event1, email='dummy@dummy.test',
                 status=Order.STATUS_PENDING,
                 datetime=now(), expires=now() + datetime.timedelta(days=10),
-                total=14, locale='en'
+                total=14, locale='en',
+                sales_channel=self.event1.organizer.sales_channels.get(identifier="web"),
             )
             self.event1.testmode = True
             self.event1.save()
@@ -347,13 +387,15 @@ class EventsTest(SoupTest):
                 code='FOO', event=self.event1, email='dummy@dummy.test',
                 status=Order.STATUS_PENDING,
                 datetime=now(), expires=now() + datetime.timedelta(days=10),
-                total=14, locale='en', testmode=True
+                total=14, locale='en', testmode=True,
+                sales_channel=self.event1.organizer.sales_channels.get(identifier="web"),
             )
             o2 = Order.objects.create(
                 code='FOO2', event=self.event1, email='dummy@dummy.test',
                 status=Order.STATUS_PENDING,
                 datetime=now(), expires=now() + datetime.timedelta(days=10),
-                total=14, locale='en'
+                total=14, locale='en',
+                sales_channel=self.event1.organizer.sales_channels.get(identifier="web"),
             )
             self.event1.testmode = True
             self.event1.save()
@@ -421,19 +463,17 @@ class EventsTest(SoupTest):
         assert self.event1.settings.get('payment_banktransfer__fee_abs', as_type=Decimal) == Decimal('12.23')
 
     def test_payment_settings(self):
-        tr19 = self.event1.tax_rules.create(rate=Decimal('19.00'))
         self.get_doc('/control/event/%s/%s/settings/payment' % (self.orga1.slug, self.event1.slug))
         self.post_doc('/control/event/%s/%s/settings/payment' % (self.orga1.slug, self.event1.slug), {
             'payment_term_days': '2',
             'payment_term_minutes': '30',
             'payment_term_mode': 'days',
-            'tax_rate_default': tr19.pk,
+            'tax_rule_payment': 'default',
         })
         self.event1.settings.flush()
         assert self.event1.settings.get('payment_term_days', as_type=int) == 2
 
     def test_payment_settings_last_date_payment_after_presale_end(self):
-        tr19 = self.event1.tax_rules.create(rate=Decimal('19.00'))
         self.event1.presale_end = now()
         self.event1.save(update_fields=['presale_end'])
         doc = self.post_doc('/control/event/%s/%s/settings/payment' % (self.orga1.slug, self.event1.slug), {
@@ -441,16 +481,14 @@ class EventsTest(SoupTest):
             'payment_term_last_0': 'absolute',
             'payment_term_last_1': (self.event1.presale_end - datetime.timedelta(1)).strftime('%Y-%m-%d'),
             'payment_term_last_2': '0',
-            'payment_term_last_3': 'date_from',
-            'tax_rate_default': tr19.pk,
+            'payment_term_last_3': 'event__date_from',
+            'tax_rule_payment': 'default',
         })
         assert doc.select('.alert-danger')
         self.event1.presale_end = None
         self.event1.save(update_fields=['presale_end'])
 
     def test_payment_settings_relative_date_payment_after_presale_end(self):
-        with scopes_disabled():
-            tr19 = self.event1.tax_rules.create(rate=Decimal('19.00'))
         self.event1.presale_end = self.event1.date_from - datetime.timedelta(days=5)
         self.event1.save(update_fields=['presale_end'])
         doc = self.post_doc('/control/event/%s/%s/settings/payment' % (self.orga1.slug, self.event1.slug), {
@@ -458,8 +496,8 @@ class EventsTest(SoupTest):
             'payment_term_last_0': 'relative',
             'payment_term_last_1': '',
             'payment_term_last_2': '10',
-            'payment_term_last_3': 'date_from',
-            'tax_rate_default': tr19.pk,
+            'payment_term_last_3': 'event__date_from',
+            'tax_rule_payment': 'default',
         })
         assert doc.select('.alert-danger')
         self.event1.presale_end = None
@@ -476,18 +514,14 @@ class EventsTest(SoupTest):
         assert self.event1.settings.get('invoice_address_required', as_type=bool)
 
     def test_display_settings(self):
-        with mocker_context() as mocker:
-            mocked = mocker.patch('pretix.presale.style.regenerate_css.apply_async')
-
-            doc = self.get_doc('/control/event/%s/%s/settings/' % (self.orga1.slug, self.event1.slug))
-            data = extract_form_fields(doc.select("form")[0])
-            data['settings-primary_color'] = '#000000'
-            doc = self.post_doc('/control/event/%s/%s/settings/' % (self.orga1.slug, self.event1.slug),
-                                data, follow=True)
-            assert doc.select('.alert-success')
-            self.event1.settings.flush()
-            assert self.event1.settings.get('primary_color') == '#000000'
-            mocked.assert_any_call(args=(self.event1.pk,))
+        doc = self.get_doc('/control/event/%s/%s/settings/' % (self.orga1.slug, self.event1.slug))
+        data = extract_form_fields(doc.select("form")[0])
+        data['settings-primary_color'] = '#000000'
+        doc = self.post_doc('/control/event/%s/%s/settings/' % (self.orga1.slug, self.event1.slug),
+                            data, follow=True)
+        assert doc.select('.alert-success')
+        self.event1.settings.flush()
+        assert self.event1.settings.get('primary_color') == '#000000'
 
     def test_display_settings_do_not_override_parent(self):
         self.orga1.settings.primary_color = '#000000'
@@ -587,7 +621,8 @@ class EventsTest(SoupTest):
     @staticmethod
     def _fake_spf_record(hostname):
         return {
-            'test.pretix.dev': 'v=spf1 a mx include:level2.pretix.dev ~all',
+            'test.pretix.dev': 'v=spf1 redirect=_spf.pretix.dev',
+            '_spf.pretix.dev': 'v=spf1 a mx include:level2.pretix.dev ~all',
             'level2.pretix.dev': 'v=spf1 a mx +include:level3.pretix.dev include:spftest.pretix.dev '
                                  '-include:level4.pretix.dev ~all',
             'level3.pretix.dev': 'v=spf1 a mx include:test2.pretix.dev ~all',
@@ -744,6 +779,7 @@ class EventsTest(SoupTest):
             'basics-location_1': 'Hamburg',
             'basics-currency': 'EUR',
             'basics-tax_rate': '',
+            'basics-no_taxes': 'on',
             'basics-locale': 'en',
             'basics-timezone': 'Europe/Berlin',
             'basics-presale_start': '2016-11-01 10:00:00',
@@ -773,6 +809,7 @@ class EventsTest(SoupTest):
             'basics-location_1': 'Hamburg',
             'basics-currency': 'EUR',
             'basics-tax_rate': '',
+            'basics-no_taxes': 'on',
             'basics-locale': 'en',
             'basics-timezone': 'Europe/Berlin',
             'basics-presale_start_0': '2016-11-01',
@@ -869,6 +906,7 @@ class EventsTest(SoupTest):
             'basics-location_1': 'Hamburg',
             'basics-currency': 'EUR',
             'basics-tax_rate': '',
+            'basics-no_taxes': 'on',
             'basics-locale': 'en',
             'basics-timezone': 'Europe/Berlin',
             'basics-presale_start_0': '2016-11-01',
@@ -890,7 +928,7 @@ class EventsTest(SoupTest):
     def test_create_event_copy_success(self):
         with scopes_disabled():
             tr = self.event1.tax_rules.create(
-                rate=19, name="VAT"
+                rate=19, name="VAT", default=True
             )
             q1 = self.event1.quotas.create(
                 name='Foo',
@@ -901,7 +939,6 @@ class EventsTest(SoupTest):
                 category=None, default_price=23, tax_rule=tr,
                 admission=True, hidden_if_available=q1
             )
-            self.event1.settings.tax_rate_default = tr
         doc = self.get_doc('/control/events/add')
 
         doc = self.post_doc('/control/events/add', {
@@ -968,14 +1005,13 @@ class EventsTest(SoupTest):
     def test_create_event_clone_success(self):
         with scopes_disabled():
             tr = self.event1.tax_rules.create(
-                rate=19, name="VAT"
+                rate=19, name="VAT", default=True
             )
             self.event1.items.create(
                 name='Early-bird ticket',
                 category=None, default_price=23, tax_rule=tr,
                 admission=True
             )
-        self.event1.settings.tax_rate_default = tr
         doc = self.get_doc('/control/events/add?clone=' + str(self.event1.pk))
         tabletext = doc.select("form")[0].text
         self.assertIn("CCC", tabletext)
@@ -1054,6 +1090,7 @@ class EventsTest(SoupTest):
             'basics-location_0': 'Hamburg',
             'basics-currency': 'EUR',
             'basics-tax_rate': '',
+            'basics-no_taxes': 'on',
             'basics-locale': 'en',
             'basics-timezone': 'UTC',
             'basics-presale_start_0': '',
@@ -1102,6 +1139,7 @@ class EventsTest(SoupTest):
             'basics-location_0': 'Hamburg',
             'basics-currency': 'EUR',
             'basics-tax_rate': '',
+            'basics-no_taxes': 'on',
             'basics-locale': 'en',
             'basics-timezone': 'UTC',
             'basics-presale_start_0': '',
@@ -1152,6 +1190,7 @@ class EventsTest(SoupTest):
             'basics-location_0': 'Hamburg',
             'basics-currency': 'EUR',
             'basics-tax_rate': '',
+            'basics-no_taxes': 'on',
             'basics-locale': 'en',
             'basics-timezone': 'Europe/Berlin',
             'basics-presale_start_0': '2016-11-01',
@@ -1181,6 +1220,7 @@ class EventsTest(SoupTest):
             'basics-location_0': 'Hamburg',
             'basics-currency': '$',
             'basics-tax_rate': '',
+            'basics-no_taxes': 'on',
             'basics-locale': 'en',
             'basics-timezone': 'Europe/Berlin',
             'basics-presale_start_0': '2016-11-01',
@@ -1210,6 +1250,7 @@ class EventsTest(SoupTest):
             'basics-location_0': 'Hamburg',
             'basics-currency': 'ASD',
             'basics-tax_rate': '',
+            'basics-no_taxes': 'on',
             'basics-locale': 'en',
             'basics-timezone': 'Europe/Berlin',
             'basics-presale_start_0': '2016-11-01',
@@ -1218,6 +1259,265 @@ class EventsTest(SoupTest):
             'basics-presale_end_1': '18:00:00',
         })
         assert doc.select(".has-error")
+
+    def test_create_event_copy_from_other_org_validates_source_permissions(self):
+        # To prevent leaks of e.g. settings contents, a user may only copy from one organizer to the other
+        # if they have basically all permissions on the old event for all data that may be copied.
+        self.team1.all_event_permissions = False
+        self.team1.limit_event_permissions = {"event.settings.general:write": True, "event.orders:read": True}
+        self.team1.save()
+        team3 = Team.objects.create(organizer=self.orga2, all_event_permissions=True, all_organizer_permissions=True)
+        team3.members.add(self.user)
+
+        doc = self.post_doc('/control/events/add', {
+            'event_wizard-current_step': 'foundation',
+            'event_wizard-prefix': 'event_wizard',
+            'foundation-organizer': self.orga2.pk,
+            'foundation-locales': ('en', 'de')
+        })
+        assert doc.select("#id_basics-name_0")
+
+        doc = self.post_doc('/control/events/add', {
+            'event_wizard-current_step': 'basics',
+            'event_wizard-prefix': 'event_wizard',
+            'basics-name_0': '33C3',
+            'basics-name_1': '33C3',
+            'basics-slug': '33c3',
+            'basics-date_from_0': '2016-12-27',
+            'basics-date_from_1': '10:00:00',
+            'basics-date_to_0': '2016-12-30',
+            'basics-date_to_1': '19:00:00',
+            'basics-location_0': 'Hamburg',
+            'basics-location_1': 'Hamburg',
+            'basics-currency': 'EUR',
+            'basics-tax_rate': '19.00',
+            'basics-locale': 'en',
+            'basics-timezone': 'Europe/Berlin',
+            'basics-presale_start_0': '2016-11-01',
+            'basics-presale_start_1': '10:00:00',
+            'basics-presale_end_0': '2016-11-30',
+            'basics-presale_end_1': '18:00:00',
+        })
+        assert doc.select("#id_copy-copy_from_event")
+
+        doc = self.post_doc('/control/events/add', {
+            'event_wizard-current_step': 'copy',
+            'event_wizard-prefix': 'event_wizard',
+            'copy-copy_from_event': self.event1.pk
+        })
+        assert doc.select(".alert-danger")
+        assert "sufficient level of access" in doc.select(".has-error")[0].text
+
+    def test_create_event_clone_from_other_org_validates_source_permissions(self):
+        # To prevent leaks of e.g. settings contents, a user may only copy from one organizer to the other
+        # if they have basically all permissions on the old event for all data that may be copied.
+        self.team1.all_event_permissions = False
+        self.team1.limit_event_permissions = {"event.settings.general:write": True, "event.orders:read": True}
+        self.team1.save()
+        team3 = Team.objects.create(organizer=self.orga2, all_event_permissions=True, all_organizer_permissions=True)
+        team3.members.add(self.user)
+
+        doc = self.post_doc(f'/control/events/add?clone={self.event1.pk}', {
+            'event_wizard-current_step': 'foundation',
+            'event_wizard-prefix': 'event_wizard',
+            'foundation-organizer': self.orga2.pk,
+            'foundation-locales': ('en', 'de')
+        })
+        assert doc.select(".alert-danger")
+        assert "sufficient level of access" in doc.select(".has-error")[0].text
+
+    def test_create_event_copy_from_same_org_creates_new_team_with_same_permissions(self):
+        # To prevent unwanted permission escalations, when a user copies an event and a new team is created to make
+        # sure they can access the new event, the new event must be created with the same level of access they have
+        # on the old event.
+        self.team1.all_event_permissions = False
+        self.team1.limit_event_permissions = {"event.settings.general:write": True, "event.orders:read": True}
+        self.team1.save()
+
+        doc = self.post_doc('/control/events/add', {
+            'event_wizard-current_step': 'foundation',
+            'event_wizard-prefix': 'event_wizard',
+            'foundation-organizer': self.orga1.pk,
+            'foundation-locales': ('en', 'de')
+        })
+        assert doc.select("#id_basics-name_0")
+
+        doc = self.post_doc('/control/events/add', {
+            'event_wizard-current_step': 'basics',
+            'event_wizard-prefix': 'event_wizard',
+            'basics-name_0': '33C3',
+            'basics-name_1': '33C3',
+            'basics-slug': '33c3',
+            'basics-date_from_0': '2016-12-27',
+            'basics-date_from_1': '10:00:00',
+            'basics-date_to_0': '2016-12-30',
+            'basics-date_to_1': '19:00:00',
+            'basics-location_0': 'Hamburg',
+            'basics-location_1': 'Hamburg',
+            'basics-currency': 'EUR',
+            'basics-tax_rate': '19.00',
+            'basics-locale': 'en',
+            'basics-timezone': 'Europe/Berlin',
+            'basics-presale_start_0': '2016-11-01',
+            'basics-presale_start_1': '10:00:00',
+            'basics-presale_end_0': '2016-11-30',
+            'basics-presale_end_1': '18:00:00',
+        })
+        assert doc.select("#id_copy-copy_from_event")
+
+        self.post_doc('/control/events/add', {
+            'event_wizard-current_step': 'copy',
+            'event_wizard-prefix': 'event_wizard',
+            'copy-copy_from_event': self.event1.pk
+        })
+        with scopes_disabled():
+            ev = Event.objects.get(slug='33c3')
+            new_team = Team.objects.get(limit_events=ev, members=self.user)
+            assert new_team.pk > self.team2.pk
+            assert new_team.all_event_permissions is False
+            assert new_team.all_organizer_permissions is False
+            assert new_team.limit_event_permissions == {"event.settings.general:write": True, "event.orders:read": True}
+            assert new_team.limit_organizer_permissions == {}
+            assert new_team.all_events is False
+            assert new_team.limit_events.get() == ev
+
+    def test_create_event_clone_from_same_org_creates_new_team_with_same_permissions(self):
+        # To prevent unwanted permission escalations, when a user copies an event and a new team is created to make
+        # sure they can access the new event, the new event must be created with the same level of access they have
+        # on the old event.
+        self.team1.all_event_permissions = False
+        self.team1.limit_event_permissions = {"event.settings.general:write": True, "event.orders:read": True}
+        self.team1.save()
+
+        doc = self.post_doc(f'/control/events/add?clone={self.event1.pk}', {
+            'event_wizard-current_step': 'foundation',
+            'event_wizard-prefix': 'event_wizard',
+            'foundation-organizer': self.orga1.pk,
+            'foundation-locales': ('en', 'de')
+        })
+        assert doc.select("#id_basics-name_0")
+
+        self.post_doc(f'/control/events/add?clone={self.event1.pk}', {
+            'event_wizard-current_step': 'basics',
+            'event_wizard-prefix': 'event_wizard',
+            'basics-name_0': '33C3',
+            'basics-name_1': '33C3',
+            'basics-slug': '33c3',
+            'basics-date_from_0': '2016-12-27',
+            'basics-date_from_1': '10:00:00',
+            'basics-date_to_0': '2016-12-30',
+            'basics-date_to_1': '19:00:00',
+            'basics-location_0': 'Hamburg',
+            'basics-location_1': 'Hamburg',
+            'basics-currency': 'EUR',
+            'basics-tax_rate': '19.00',
+            'basics-locale': 'en',
+            'basics-timezone': 'Europe/Berlin',
+            'basics-presale_start_0': '2016-11-01',
+            'basics-presale_start_1': '10:00:00',
+            'basics-presale_end_0': '2016-11-30',
+            'basics-presale_end_1': '18:00:00',
+        })
+        with scopes_disabled():
+            ev = Event.objects.get(slug='33c3')
+            new_team = Team.objects.get(limit_events=ev, members=self.user)
+            assert new_team.pk > self.team2.pk
+            assert new_team.all_event_permissions is False
+            assert new_team.all_organizer_permissions is False
+            assert new_team.limit_event_permissions == {"event.settings.general:write": True, "event.orders:read": True}
+            assert new_team.limit_organizer_permissions == {}
+            assert new_team.all_events is False
+            assert new_team.limit_events.get() == ev
+
+    def test_create_event_copy_from_same_org_validates_selected_team_permissions(self):
+        # To prevent unwanted permission escalations, when a user copies an event and selects the team the new event
+        # should be attached to, this new team may not have higher permissions than the permissions the user holds for
+        # the event that is copied from.
+        self.team1.all_event_permissions = False
+        self.team1.limit_event_permissions = {"event.settings.general:write": True, "event.orders:read": True}
+        self.team1.save()
+
+        doc = self.post_doc('/control/events/add', {
+            'event_wizard-current_step': 'foundation',
+            'event_wizard-prefix': 'event_wizard',
+            'foundation-organizer': self.orga1.pk,
+            'foundation-locales': ('en', 'de')
+        })
+        assert doc.select("#id_basics-name_0")
+        assert doc.select("#id_basics-team")
+
+        doc = self.post_doc('/control/events/add', {
+            'event_wizard-current_step': 'basics',
+            'event_wizard-prefix': 'event_wizard',
+            'basics-name_0': '33C3',
+            'basics-name_1': '33C3',
+            'basics-slug': '33c3',
+            'basics-date_from_0': '2016-12-27',
+            'basics-date_from_1': '10:00:00',
+            'basics-date_to_0': '2016-12-30',
+            'basics-date_to_1': '19:00:00',
+            'basics-location_0': 'Hamburg',
+            'basics-location_1': 'Hamburg',
+            'basics-currency': 'EUR',
+            'basics-tax_rate': '19.00',
+            'basics-locale': 'en',
+            'basics-team': self.team2.pk,
+            'basics-timezone': 'Europe/Berlin',
+            'basics-presale_start_0': '2016-11-01',
+            'basics-presale_start_1': '10:00:00',
+            'basics-presale_end_0': '2016-11-30',
+            'basics-presale_end_1': '18:00:00',
+        })
+        assert doc.select("#id_copy-copy_from_event")
+
+        doc = self.post_doc('/control/events/add', {
+            'event_wizard-current_step': 'copy',
+            'event_wizard-prefix': 'event_wizard',
+            'copy-copy_from_event': self.event1.pk
+        })
+        assert doc.select(".alert-danger")
+        assert "less access than" in doc.select(".has-error")[0].text
+
+    def test_create_event_clone_from_same_org_validates_selected_team_permissions(self):
+        # To prevent unwanted permission escalations, when a user copies an event and selects the team the new event
+        # should be attached to, this new team may not have higher permissions than the permissions the user holds for
+        # the event that is copied from.
+        self.team1.all_event_permissions = False
+        self.team1.limit_event_permissions = {"event.settings.general:write": True, "event.orders:read": True}
+        self.team1.save()
+
+        doc = self.post_doc(f'/control/events/add?clone={self.event1.pk}', {
+            'event_wizard-current_step': 'foundation',
+            'event_wizard-prefix': 'event_wizard',
+            'foundation-organizer': self.orga1.pk,
+            'foundation-locales': ('en', 'de')
+        })
+        assert doc.select("#id_basics-name_0")
+        assert doc.select("#id_basics-team")
+
+        doc = self.post_doc(f'/control/events/add?clone={self.event1.pk}', {
+            'event_wizard-current_step': 'basics',
+            'event_wizard-prefix': 'event_wizard',
+            'basics-name_0': '33C3',
+            'basics-name_1': '33C3',
+            'basics-slug': '33c3',
+            'basics-date_from_0': '2016-12-27',
+            'basics-date_from_1': '10:00:00',
+            'basics-date_to_0': '2016-12-30',
+            'basics-date_to_1': '19:00:00',
+            'basics-location_0': 'Hamburg',
+            'basics-location_1': 'Hamburg',
+            'basics-currency': 'EUR',
+            'basics-tax_rate': '19.00',
+            'basics-locale': 'en',
+            'basics-team': self.team2.pk,
+            'basics-timezone': 'Europe/Berlin',
+            'basics-presale_start_0': '2016-11-01',
+            'basics-presale_start_1': '10:00:00',
+            'basics-presale_end_0': '2016-11-30',
+            'basics-presale_end_1': '18:00:00',
+        })
+        assert "would give you more access than" in doc.select(".has-error")[0].text
 
 
 class EventDeletionTest(SoupTest):
@@ -1233,8 +1533,7 @@ class EventDeletionTest(SoupTest):
             has_subevents=False
         )
 
-        t = Team.objects.create(organizer=self.orga1, can_create_events=True, can_change_event_settings=True,
-                                can_change_items=True)
+        t = Team.objects.create(organizer=self.orga1, all_organizer_permissions=True, all_event_permissions=True)
         t.members.add(self.user)
         t.limit_events.add(self.event1)
         self.ticket = self.event1.items.create(name='Early-bird ticket',
@@ -1271,12 +1570,14 @@ class EventDeletionTest(SoupTest):
             assert self.orga1.events.exists()
 
     def test_delete_orders(self):
-        Order.objects.create(
-            code='FOO', event=self.event1, email='dummy@dummy.test',
-            status=Order.STATUS_PENDING,
-            datetime=now(), expires=now(),
-            total=14, locale='en'
-        )
+        with scopes_disabled():
+            Order.objects.create(
+                code='FOO', event=self.event1, email='dummy@dummy.test',
+                status=Order.STATUS_PENDING,
+                datetime=now(), expires=now(),
+                total=14, locale='en',
+                sales_channel=self.event1.organizer.sales_channels.get(identifier="web"),
+            )
         self.post_doc('/control/event/ccc/30c3/delete/', {
             'user_pw': 'dummy',
             'slug': '30c3'

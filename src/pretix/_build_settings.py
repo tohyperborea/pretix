@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -38,6 +38,7 @@ MAIL_FROM_ORGANIZERS = 'invalid@invalid'
 FILE_UPLOAD_MAX_SIZE_EMAIL_AUTO_ATTACHMENT = 10
 FILE_UPLOAD_MAX_SIZE_EMAIL_ATTACHMENT = 10
 FILE_UPLOAD_MAX_SIZE_IMAGE = 10
+FILE_UPLOAD_MAX_SIZE_FAVICON = 10
 DEFAULT_CURRENCY = 'EUR'
 SECRET_KEY = "build-time-secret-key"
 HAS_REDIS = False
@@ -46,3 +47,5 @@ HAS_MEMCACHED = False
 HAS_CELERY = False
 HAS_GEOIP = False
 SENTRY_ENABLED = False
+VITE_DEV_MODE = False
+VITE_IGNORE = False

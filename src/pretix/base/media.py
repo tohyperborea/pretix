@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -26,6 +26,7 @@ from django.utils.translation import gettext_lazy as _
 
 class BaseMediaType:
     medium_created_by_server = False
+    medium_created_from_unknown_supported = False
     supports_orderposition = False
     supports_giftcard = False
 
@@ -37,6 +38,16 @@ class BaseMediaType:
     def verbose_name(self):
         raise NotImplementedError()
 
+    @property
+    def icon(self):
+        """
+        This can be:
+
+        - The name of a Font Awesome icon to represent this channel type.
+        - The name of a SVG icon file that is resolvable through the static file system. We recommend to design for a size of 18x14 pixels.
+        """
+        return "circle"
+
     def generate_identifier(self, organizer):
         if self.medium_created_by_server:
             raise NotImplementedError()
@@ -46,7 +57,7 @@ class BaseMediaType:
     def is_active(self, organizer):
         return organizer.settings.get(f'reusable_media_type_{self.identifier}', as_type=bool, default=False)
 
-    def handle_unknown(self, organizer, identifier, user, auth):
+    def handle_unknown(self, organizer, identifier, user, auth, force_create=False):
         pass
 
     def handle_new(self, organizer, medium, user, auth):
@@ -59,6 +70,7 @@ class BaseMediaType:
 class BarcodePlainMediaType(BaseMediaType):
     identifier = 'barcode'
     verbose_name = _('Barcode / QR-Code')
+    icon = 'qrcode'
     medium_created_by_server = True
     supports_giftcard = False
     supports_orderposition = True
@@ -75,24 +87,34 @@ class BarcodePlainMediaType(BaseMediaType):
 class NfcUidMediaType(BaseMediaType):
     identifier = 'nfc_uid'
     verbose_name = _('NFC UID-based')
+    icon = 'pretixbase/img/media/nfc_uid.svg'
     medium_created_by_server = False
+    medium_created_from_unknown_supported = True
     supports_giftcard = True
-    supports_orderposition = False
+    supports_orderposition = True
 
-    def handle_unknown(self, organizer, identifier, user, auth):
+    def handle_unknown(self, organizer, identifier, user, auth, force_create=False):
         from pretix.base.models import GiftCard, ReusableMedium
 
-        if organizer.settings.get(f'reusable_media_type_{self.identifier}_autocreate_giftcard', as_type=bool):
+        create_giftcard = organizer.settings.get(f'reusable_media_type_{self.identifier}_autocreate_giftcard', as_type=bool)
+        if create_giftcard or force_create:
             if identifier.startswith("08"):
                 # Don't create gift cards for NFC UIDs that start with 08, which represents NFC cards that issue random
                 # UIDs on every read, so they won't be useful.
                 return
             with transaction.atomic():
-                gc = GiftCard.objects.create(
-                    issuer=organizer,
-                    expires=organizer.default_gift_card_expiry,
-                    currency=organizer.settings.get(f'reusable_media_type_{self.identifier}_autocreate_giftcard_currency'),
-                )
+                if create_giftcard:
+                    gc = GiftCard.objects.create(
+                        issuer=organizer,
+                        expires=organizer.default_gift_card_expiry,
+                        currency=organizer.settings.get(f'reusable_media_type_{self.identifier}_autocreate_giftcard_currency'),
+                    )
+                    gc.log_action(
+                        'pretix.giftcards.created',
+                        user=user, auth=auth,
+                    )
+                else:
+                    gc = None
                 m = ReusableMedium.objects.create(
                     type=self.identifier,
                     identifier=identifier,
@@ -104,19 +126,16 @@ class NfcUidMediaType(BaseMediaType):
                     'pretix.reusable_medium.created.auto',
                     user=user, auth=auth,
                 )
-                gc.log_action(
-                    'pretix.giftcards.created',
-                    user=user, auth=auth,
-                )
                 return m
 
 
 class NfcMf0aesMediaType(BaseMediaType):
     identifier = 'nfc_mf0aes'
     verbose_name = 'NFC Mifare Ultralight AES'
+    icon = 'pretixbase/img/media/nfc_secure.svg'
     medium_created_by_server = False
     supports_giftcard = True
-    supports_orderposition = False
+    supports_orderposition = True
 
     def handle_new(self, organizer, medium, user, auth):
         from pretix.base.models import GiftCard

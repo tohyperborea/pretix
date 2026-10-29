@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -70,6 +70,7 @@ def order(item):
     o = Order.objects.create(event=item.event, status=Order.STATUS_PENDING,
                              expires=now() + datetime.timedelta(hours=1),
                              total=13, code='DUMMY', email='dummy@dummy.test',
+                             sales_channel=item.event.organizer.sales_channels.get(identifier="web"),
                              datetime=now())
     OrderPosition.objects.create(order=o, item=item, price=13)
     p1 = o.payments.create(
@@ -109,9 +110,8 @@ def logged_in_client(client, event):
     user = User.objects.create_superuser('dummy@dummy.dummy', 'dummy')
     t = Team.objects.create(
         organizer=event.organizer,
-        all_events=True, can_create_events=True, can_change_teams=True,
-        can_change_organizer_settings=True, can_change_event_settings=True, can_change_items=True,
-        can_view_orders=True, can_change_orders=True, can_view_vouchers=True, can_change_vouchers=True
+        all_event_permissions=True,
+        all_organizer_permissions=True,
     )
     t.members.add(user)
     client.force_login(user)
@@ -224,3 +224,28 @@ def test_one_view(logged_in_client, url, expected, event, item, item_category, o
         )
     response = logged_in_client.get(url)
     assert response.status_code == expected
+
+    # Do not reintroduce any CSP nonces into control responses, as discussed in PR #6387
+    if response['Content-Type'] != 'application/json':
+        assert 'script-src' in response['Content-Security-Policy']
+        assert 'nonce-' not in response['Content-Security-Policy']
+
+
+@pytest.mark.parametrize('url', [
+    '/control/login',
+    '/',
+    '/{orga}/{event}/',
+])
+@pytest.mark.django_db
+def test_csp_header_unauthenticated(client, url, event):
+    # Do not reintroduce any CSP nonces into most presale responses, as discussed in PR #6387
+    with scope(organizer=event.organizer):
+        url = url.format(
+            event=event.slug, orga=event.organizer.slug,
+        )
+        event.live = True
+        event.save()
+    response = client.get(url)
+    assert response.status_code == 200
+    assert 'script-src' in response['Content-Security-Policy']
+    assert 'nonce-' not in response['Content-Security-Policy']

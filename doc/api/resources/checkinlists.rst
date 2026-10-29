@@ -31,17 +31,18 @@ subevent                              integer                    ID of the date 
 position_count                        integer                    Number of tickets that match this list (read-only).
 checkin_count                         integer                    Number of check-ins performed on this list (read-only).
 include_pending                       boolean                    If ``true``, the check-in list also contains tickets from orders in pending state.
-auto_checkin_sales_channels           list of strings            All items on the check-in list will be automatically marked as checked-in when purchased through any of the listed sales channels.
 allow_multiple_entries                boolean                    If ``true``, subsequent scans of a ticket on this list should not show a warning but instead be stored as an additional check-in.
 allow_entry_after_exit                boolean                    If ``true``, subsequent scans of a ticket on this list are valid if the last scan of the ticket was an exit scan.
 rules                                 object                     Custom check-in logic. The contents of this field are currently not considered a stable API and modifications through the API are highly discouraged.
 exit_all_at                           datetime                   Automatically check out (i.e. perform an exit scan) at this point in time. After this happened, this property will automatically be set exactly one day into the future. Note that this field is considered "internal configuration" and if you pull the list with ``If-Modified-Since``, the daily change in this field will not trigger a response.
 addon_match                           boolean                    If ``true``, tickets on this list can be redeemed by scanning their parent ticket if this still leads to an unambiguous match.
+ignore_in_statistics                  boolean                    If ``true``, check-ins on this list will be ignored in most reporting features.
+consider_tickets_used                 boolean                    If ``true`` (default), tickets checked in on this list will be considered "used" by other functionality, i.e. when checking if they can still be canceled.
 ===================================== ========================== =======================================================
 
-.. versionchanged:: 4.12
+.. versionchanged:: 2023.9
 
-    The ``addon_match`` attribute has been added.
+    The ``ignore_in_statistics`` and ``consider_tickets_used`` attributes have been added.
 
 Endpoints
 ---------
@@ -84,10 +85,7 @@ Endpoints
             "allow_entry_after_exit": true,
             "exit_all_at": null,
             "rules": {},
-            "addon_match": false,
-            "auto_checkin_sales_channels": [
-              "pretixpos"
-            ]
+            "addon_match": false
           }
         ]
       }
@@ -139,10 +137,7 @@ Endpoints
         "allow_entry_after_exit": true,
         "exit_all_at": null,
         "rules": {},
-        "addon_match": false,
-        "auto_checkin_sales_channels": [
-          "pretixpos"
-        ]
+        "addon_match": false
       }
 
    :param organizer: The ``slug`` field of the organizer to fetch
@@ -239,10 +234,7 @@ Endpoints
         "subevent": null,
         "allow_multiple_entries": false,
         "allow_entry_after_exit": true,
-        "addon_match": false,
-        "auto_checkin_sales_channels": [
-          "pretixpos"
-        ]
+        "addon_match": false
       }
 
    **Example response**:
@@ -264,10 +256,7 @@ Endpoints
         "subevent": null,
         "allow_multiple_entries": false,
         "allow_entry_after_exit": true,
-        "addon_match": false,
-        "auto_checkin_sales_channels": [
-          "pretixpos"
-        ]
+        "addon_match": false
       }
 
    :param organizer: The ``slug`` field of the organizer of the event/item to create a list for
@@ -319,10 +308,7 @@ Endpoints
         "subevent": null,
         "allow_multiple_entries": false,
         "allow_entry_after_exit": true,
-        "addon_match": false,
-        "auto_checkin_sales_channels": [
-          "pretixpos"
-        ]
+        "addon_match": false
       }
 
    :param organizer: The ``slug`` field of the organizer to modify
@@ -335,7 +321,7 @@ Endpoints
 
 .. http:delete:: /api/v1/organizers/(organizer)/events/(event)/checkinlist/(id)/
 
-   Delete a check-in list. Note that this also deletes the information on all check-ins performed via this list.
+   Delete a check-in list. **Note that this also deletes the information on all check-ins performed via this list.**
 
    **Example request**:
 
@@ -365,7 +351,8 @@ Endpoints
 
    :<json boolean error_reason: One of ``canceled``, ``invalid``, ``unpaid``, ``product``, ``rules``, ``revoked``,
                                 ``incomplete``, ``already_redeemed``, ``blocked``, ``invalid_time``, or ``error``. Required.
-   :<json raw_barcode: The raw barcode you scanned. Required.
+   :<json raw_barcode: The raw barcode or identifier you scanned. Required.
+   :<json raw_source_type: The type of medium you scanned, defaults to ``barcode``. Optional.
    :<json datetime: Date and time of the scan. Optional.
    :<json type: Type of scan, defaults to ``"entry"``.
    :<json position: Internal ID of an order position you matched. Optional.
@@ -492,7 +479,7 @@ Order position endpoints
                            ``attendee_name,positionid``
    :query string order: Only return positions of the order with the given order code
    :query string search: Fuzzy search matching the attendee name, order code, invoice address name as well as to the beginning of the secret.
-   :query string expand: Expand a field into a full object. Currently only ``subevent``, ``item``, and ``variation`` are supported. Can be passed multiple times.
+   :query string expand: Expand a field into a full object. Currently ``subevent``, ``item``, ``variation``, and ``answers.question`` are supported. Can be passed multiple times.
    :query integer item: Only return positions with the purchased item matching the given ID.
    :query integer item__in: Only return positions with the purchased item matching one of the given comma-separated IDs.
    :query integer variation: Only return positions with the purchased item variation matching the given ID.
@@ -616,7 +603,8 @@ Order position endpoints
 
       We no longer recommend using this API if you're building a ticket scanning application, as it has a few design
       flaws that can lead to `security issues`_ or compatibility issues due to barcode content characters that are not
-      URL-safe. We recommend to use our new :ref:`check-in API <rest-checkin>` instead.
+      URL-safe. We recommend to use our new :ref:`check-in API <rest-checkin>` instead. Advanced features like medium
+      exchange are only supported on the new API.
 
    :query boolean untrusted_input: If set to true, the lookup parameter is **always** interpreted as a ``secret``, never
                                    as an ``id``. This should be always set if you are passing through untrusted, scanned
@@ -626,7 +614,8 @@ Order position endpoints
                                        set this to ``false``. In that case, questions will just be ignored. Defaults
                                        to ``true``.
    :<json boolean canceled_supported: When this parameter is set to ``true``, the response code ``canceled`` may be
-                                      returned. Otherwise, canceled orders will return ``unpaid``.
+                                      returned. Otherwise, canceled orders will return ``unpaid``. (**Deprecated**, in
+                                      the future, this will be ignored and ``canceled`` may always be returned.)
    :<json datetime datetime: Specifies the datetime of the check-in. If not supplied, the current time will be used.
    :<json boolean force: Specifies that the check-in should succeed regardless of revoked barcode, previous check-ins or required
                          questions that have not been filled. This is usually used to upload offline scans that already happened,
@@ -700,6 +689,7 @@ Order position endpoints
             "position": 1,
             "identifier": "WY3TP9SL",
             "ask_during_checkin": true,
+            "show_during_checkin": true,
             "options": [
               {
                 "id": 1,
@@ -752,6 +742,10 @@ Order position endpoints
    * ``rules`` - Check-in prevented by a user-defined rule.
    * ``ambiguous`` - Multiple tickets match scan, rejected.
    * ``revoked`` - Ticket code has been revoked.
+   * ``unapproved`` - Order has not yet been approved.
+   * ``already_exchanged`` - Ticket already has been exchanged for a reusable medium that must now be used for check-in.
+   * ``medium_invalid`` - Reusable medium identifier given was not found and could not be automatically created.
+   * ``medium_exists`` - Reusable medium identifier already exists, but expected to be new.
 
    In case of reason ``rules`` or ``invalid_time``, there might be an additional response field ``reason_explanation``
    with a human-readable description of the violated rules. However, that field can also be missing or be ``null``.

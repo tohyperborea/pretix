@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -47,7 +47,7 @@ class MailSettingPreviewTest(SoupTest):
         )
         self.locale_event.settings.locales = ['en', 'de-informal']
         self.locale_event.save()
-        t = Team.objects.create(organizer=self.orga1, can_change_items=True, can_change_event_settings=True)
+        t = Team.objects.create(organizer=self.orga1, all_event_permissions=True)
         t.members.add(self.user)
         t.limit_events.add(self.locale_event)
         t.limit_events.add(self.event1)

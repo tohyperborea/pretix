@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -67,7 +67,8 @@ class RRuleForm(forms.Form):
     )
     count = forms.IntegerField(
         label=_('Number of repetitions'),
-        initial=10
+        initial=10,
+        min_value=1,
     )
     until = forms.DateField(
         widget=forms.DateInput(
@@ -86,6 +87,7 @@ class RRuleForm(forms.Form):
             ('1', pgettext_lazy('rrule', 'first')),
             ('2', pgettext_lazy('rrule', 'second')),
             ('3', pgettext_lazy('rrule', 'third')),
+            ('4', pgettext_lazy('rrule', 'fourth')),
             ('-1', pgettext_lazy('rrule', 'last')),
         ],
         required=False
@@ -133,6 +135,7 @@ class RRuleForm(forms.Form):
             ('1', pgettext_lazy('rrule', 'first')),
             ('2', pgettext_lazy('rrule', 'second')),
             ('3', pgettext_lazy('rrule', 'third')),
+            ('4', pgettext_lazy('rrule', 'fourth')),
             ('-1', pgettext_lazy('rrule', 'last')),
         ],
         required=False

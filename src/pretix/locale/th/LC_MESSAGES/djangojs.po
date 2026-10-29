@@ -3,979 +3,1188 @@
 # This file is distributed under the same license as the PACKAGE package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
-#, fuzzy
 msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2023-09-25 23:12+0000\n"
-"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
-"Language-Team: LANGUAGE <LL@li.org>\n"
-"Language: \n"
+"POT-Creation-Date: 2026-09-30 07:26+0000\n"
+"PO-Revision-Date: 2026-09-29 09:51+0000\n"
+"Last-Translator: Nate Horst <nate@agcthailand.org>\n"
+"Language-Team: Thai <https://translate.pretix.eu/projects/pretix/pretix-js/"
+"th/>\n"
+"Language: th\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
+"X-Generator: Weblate 2026.9.1\n"
 
-#: pretix/plugins/banktransfer/static/pretixplugins/banktransfer/ui.js:56
-#: pretix/plugins/banktransfer/static/pretixplugins/banktransfer/ui.js:62
-#: pretix/plugins/banktransfer/static/pretixplugins/banktransfer/ui.js:68
+#: pretix/plugins/banktransfer/static/pretixplugins/banktransfer/ui.js
 msgid "Marked as paid"
-msgstr ""
+msgstr "ทำเครื่องหมายว่าชำระเงินแล้ว"
 
-#: pretix/plugins/banktransfer/static/pretixplugins/banktransfer/ui.js:76
+#: pretix/plugins/banktransfer/static/pretixplugins/banktransfer/ui.js
 msgid "Comment:"
-msgstr ""
+msgstr "ความคิดเห็น:"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:34
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "PayPal"
-msgstr ""
+msgstr "PayPal"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:35
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Venmo"
-msgstr ""
+msgstr "Venmo"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:36
-#: pretix/static/pretixpresale/js/walletdetection.js:38
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#: pretix/static/pretixpresale/js/walletdetection.js
 msgid "Apple Pay"
-msgstr ""
+msgstr "Apple Pay"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:37
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Itaú"
-msgstr ""
+msgstr "Itaú"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:38
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "PayPal Credit"
-msgstr ""
+msgstr "PayPal Credit"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:39
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Credit Card"
-msgstr ""
+msgstr "บัตรเครดิต"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:40
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "PayPal Pay Later"
-msgstr ""
+msgstr "PayPal Pay Later"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:41
-msgid "iDEAL"
-msgstr ""
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+msgid "iDEAL | Wero"
+msgstr "iDEAL | Wero"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:42
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "SEPA Direct Debit"
-msgstr ""
+msgstr "SEPA Direct Debit"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:43
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Bancontact"
-msgstr ""
+msgstr "Bancontact"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:44
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "giropay"
-msgstr ""
+msgstr "giropay"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:45
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "SOFORT"
-msgstr ""
+msgstr "SOFORT"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:46
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "eps"
-msgstr ""
+msgstr "eps"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:47
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "MyBank"
-msgstr ""
+msgstr "MyBank"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:48
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Przelewy24"
-msgstr ""
+msgstr "Przelewy24"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:49
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Verkkopankki"
-msgstr ""
+msgstr "Verkkopankki"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:50
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "PayU"
-msgstr ""
+msgstr "PayU"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:51
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "BLIK"
-msgstr ""
+msgstr "BLIK"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:52
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Trustly"
-msgstr ""
+msgstr "Trustly"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:53
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Zimpler"
-msgstr ""
+msgstr "Zimpler"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:54
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Maxima"
-msgstr ""
+msgstr "Maxima"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:55
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "OXXO"
-msgstr ""
+msgstr "OXXO"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:56
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Boleto"
-msgstr ""
+msgstr "Boleto"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:57
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "WeChat Pay"
-msgstr ""
+msgstr "WeChat Pay"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:58
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Mercado Pago"
-msgstr ""
+msgstr "Mercado Pago"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:164
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:48
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+#: pretix/static/pretixpresale/js/ui/cart.js
 msgid "Continue"
-msgstr ""
+msgstr "ดำเนินการต่อ"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:222
-#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:204
-#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:235
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js
 msgid "Confirming your payment …"
-msgstr ""
+msgstr "กำลังยืนยันการชำระเงินของคุณ …"
 
-#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js:247
+#: pretix/plugins/paypal2/static/pretixplugins/paypal2/pretix-paypal.js
 msgid "Payment method unavailable"
-msgstr ""
+msgstr "ไม่สามารถใช้วิธีการชำระเงินนี้ได้"
 
-#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js:15
-#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js:39
+#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js
 msgid "Placed orders"
-msgstr ""
+msgstr "คำสั่งซื้อที่ส่งแล้ว"
 
-#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js:15
-#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js:39
+#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js
 msgid "Paid orders"
-msgstr ""
+msgstr "คำสั่งซื้อที่ชำระเงินแล้ว"
 
-#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js:27
+#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js
+msgid "Attendees (ordered)"
+msgstr "ผู้เข้าร่วม (สั่งซื้อแล้ว)"
+
+#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js
+msgid "Attendees (paid)"
+msgstr "ผู้เข้าร่วม (ชำระเงินแล้ว)"
+
+#: pretix/plugins/statistics/static/pretixplugins/statistics/statistics.js
 msgid "Total revenue"
-msgstr ""
+msgstr "รายได้รวมทั้งหมด"
 
-#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:13
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js
 msgid "Contacting Stripe …"
-msgstr ""
+msgstr "กำลังติดต่อ Stripe …"
 
-#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:70
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js
 msgid "Total"
-msgstr ""
+msgstr "ยอดรวม"
 
-#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js:211
+#: pretix/plugins/stripe/static/pretixplugins/stripe/pretix-stripe.js
 msgid "Contacting your bank …"
-msgstr ""
+msgstr "กำลังติดต่อธนาคารของคุณ …"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:30
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Select a check-in list"
-msgstr ""
+msgstr "เลือกรายการเช็คอิน"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:31
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "No active check-in lists found."
-msgstr ""
+msgstr "ไม่พบรายการเช็คอินที่ใช้งานอยู่"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:32
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Switch check-in list"
-msgstr ""
+msgstr "สลับรายการเช็คอิน"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:33
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Search results"
-msgstr ""
+msgstr "ผลลัพธ์การค้นหา"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:34
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "No tickets found"
-msgstr ""
+msgstr "ไม่พบตั๋ว"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:35
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Result"
-msgstr ""
+msgstr "ผลลัพธ์"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:36
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "This ticket requires special attention"
-msgstr ""
+msgstr "ตั๋วนี้ต้องการการดูแลเป็นพิเศษ"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:37
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Switch direction"
-msgstr ""
+msgstr "สลับทิศทาง"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:38
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Entry"
-msgstr ""
+msgstr "ทางเข้า"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:39
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Exit"
-msgstr ""
+msgstr "ออก"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:40
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Scan a ticket or search and press return…"
-msgstr ""
+msgstr "สแกนตั๋วหรือค้นหาแล้วกด Enter…"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:41
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Load more"
-msgstr ""
+msgstr "โหลดเพิ่มเติม"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:42
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Valid"
-msgstr ""
+msgstr "ใช้งานได้"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:43
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Unpaid"
-msgstr ""
+msgstr "ยังไม่ได้ชำระเงิน"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:44
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:45
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Canceled"
-msgstr ""
+msgstr "ยกเลิกแล้ว"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:46
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Confirmed"
+msgstr "ยืนยันแล้ว"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Approval pending"
+msgstr "รอการอนุมัติ"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Redeemed"
-msgstr ""
+msgstr "ใช้สิทธิ์แล้ว"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:47
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Cancel"
-msgstr ""
+msgstr "ยกเลิก"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:49
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:58
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Ticket not paid"
-msgstr ""
+msgstr "ตั๋วยังไม่ได้ชำระเงิน"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:50
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "This ticket is not yet paid. Do you want to continue anyways?"
-msgstr ""
+msgstr "ตั๋วนี้นังไม่ได้ชำระเงิน คุณต้องการดำเนินการต่อหรือไม่?"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:51
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Additional information required"
-msgstr ""
+msgstr "ต้องการข้อมูลเพิ่มเติม"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:52
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Valid ticket"
-msgstr ""
+msgstr "ตั๋วใช้งานได้"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:53
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Exit recorded"
-msgstr ""
+msgstr "บันทึกการออกแล้ว"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:54
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Ticket already used"
-msgstr ""
+msgstr "ตั๋วถูกใช้งานไปแล้ว"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:55
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Information required"
-msgstr ""
+msgstr "จำเป็นต้องระบุข้อมูล"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:56
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Unknown ticket"
-msgstr ""
+msgstr "ไม่รู้จักตั๋วนี้"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:57
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Ticket type not allowed here"
-msgstr ""
+msgstr "ประเภทตั๋วนี้ไม่ได้รับอนุญาตให้เข้าที่นี่"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:59
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Entry not allowed"
-msgstr ""
+msgstr "ไม่อนุญาตให้เข้า"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:60
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Ticket code revoked/changed"
-msgstr ""
+msgstr "รหัสตั๋วถูกยกเลิกหรือเปลี่ยนแปลง"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:61
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Ticket blocked"
-msgstr ""
+msgstr "ตั๋วถูกระงับ"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:62
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Ticket not valid at this time"
-msgstr ""
+msgstr "ตั๋วไม่สามารถใช้งานได้ในขณะนี้"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:63
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Order canceled"
-msgstr ""
+msgstr "ยกเลิกคำสั่งซื้อแล้ว"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:64
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Ticket code is ambiguous on list"
-msgstr ""
+msgstr "รหัสตั๋วซ้ำซ้อนในรายการ"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:65
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+msgid "Order not approved"
+msgstr "คำสั่งซื้อไม่ได้รับการอนุมัติ"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Checked-in Tickets"
-msgstr ""
+msgstr "ตั๋วที่เช็คอินแล้ว"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:66
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Valid Tickets"
-msgstr ""
+msgstr "ตั๋วที่ใช้งานได้"
 
-#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/main.js:67
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
 msgid "Currently inside"
-msgstr ""
+msgstr "อยู่ด้านในขณะนี้"
 
-#: pretix/static/lightbox/js/lightbox.js:96
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+#: pretix/static/pretixcontrol/js/ui/question.js
+#: pretix/static/pretixpresale/js/ui/questions.js
+msgid "Yes"
+msgstr "ใช่"
+
+#: pretix/plugins/webcheckin/static/pretixplugins/webcheckin/i18n.ts
+#: pretix/static/pretixcontrol/js/ui/question.js
+#: pretix/static/pretixpresale/js/ui/questions.js
+msgid "No"
+msgstr "ไม่"
+
+#: pretix/static/lightbox/js/lightbox.js
 msgid "close"
-msgstr ""
+msgstr "ปิด"
 
-#: pretix/static/pretixbase/js/asynctask.js:58
-#: pretix/static/pretixbase/js/asynctask.js:135
+#: pretix/static/pretixbase/js/addressform.js
+#: pretix/static/pretixpresale/js/ui/main.js
+msgid "required"
+msgstr "จำเป็น"
+
+#: pretix/static/pretixbase/js/asynctask.js
 msgid ""
 "Your request is currently being processed. Depending on the size of your "
 "event, this might take up to a few minutes."
 msgstr ""
+"คำขอของคุณกำลังอยู่ระหว่างการประมวลผล อาจใช้เวลาไม่กี่นาทีขึ้นอยู่กับขนาดของงานกิจกรรมของคุณ"
 
-#: pretix/static/pretixbase/js/asynctask.js:63
-#: pretix/static/pretixbase/js/asynctask.js:140
+#: pretix/static/pretixbase/js/asynctask.js
 msgid "Your request has been queued on the server and will soon be processed."
-msgstr ""
+msgstr "คำขอของคุณถูกจัดคิวไว้ในเซิร์ฟเวอร์แล้ว และจะดำเนินการในเร็วๆ นี้"
 
-#: pretix/static/pretixbase/js/asynctask.js:69
-#: pretix/static/pretixbase/js/asynctask.js:146
+#: pretix/static/pretixbase/js/asynctask.js
 msgid ""
 "Your request arrived on the server but we still wait for it to be processed. "
 "If this takes longer than two minutes, please contact us or go back in your "
 "browser and try again."
 msgstr ""
+"คำขอของคุณส่งถึงเซิร์ฟเวอร์แล้ว แต่กำลังรอการประมวลผล หากใช้เวลานานกว่าสองนาที "
+"โปรดติดต่อเราหรือย้อนกลับและลองใหม่อีกครั้ง"
 
-#: pretix/static/pretixbase/js/asynctask.js:105
-#: pretix/static/pretixbase/js/asynctask.js:193
-#: pretix/static/pretixbase/js/asynctask.js:198
-#: pretix/static/pretixcontrol/js/ui/mail.js:24
+#: pretix/static/pretixbase/js/asynctask.js
+#: pretix/static/pretixcontrol/js/ui/mail.js
 msgid "An error of type {code} occurred."
-msgstr ""
+msgstr "เกิดข้อผิดพลาดประเภท {code}"
 
-#: pretix/static/pretixbase/js/asynctask.js:108
+#: pretix/static/pretixbase/js/asynctask.js
 msgid ""
 "We currently cannot reach the server, but we keep trying. Last error code: "
 "{code}"
 msgstr ""
+"ขณะนี้เราไม่สามารถติดต่อเซิร์ฟเวอร์ได้ แต่เรากำลังพยายามต่อ รหัสข้อผิดพลาดล่าสุด: {code}"
 
-#: pretix/static/pretixbase/js/asynctask.js:160
-#: pretix/static/pretixcontrol/js/ui/mail.js:21
+#: pretix/static/pretixbase/js/asynctask.js
+#: pretix/static/pretixcontrol/js/ui/mail.js
 msgid "The request took too long. Please try again."
-msgstr ""
+msgstr "การคำขอใช้เวลานานเกินไป โปรดลองใหม่อีกครั้ง"
 
-#: pretix/static/pretixbase/js/asynctask.js:201
-#: pretix/static/pretixcontrol/js/ui/mail.js:26
+#: pretix/static/pretixbase/js/asynctask.js
+#: pretix/static/pretixcontrol/js/ui/mail.js
 msgid ""
 "We currently cannot reach the server. Please try again. Error code: {code}"
-msgstr ""
+msgstr "ขณะนี้ไม่สามารถติดต่อเซิร์ฟเวอร์ได้ โปรดลองใหม่อีกครั้ง รหัสข้อผิดพลาด: {code}"
 
-#: pretix/static/pretixbase/js/asynctask.js:230
+#: pretix/static/pretixbase/js/asynctask.js
 msgid "We are processing your request …"
-msgstr ""
+msgstr "เรากำลังประมวลผลคำขอของคุณ …"
 
-#: pretix/static/pretixbase/js/asynctask.js:238
+#: pretix/static/pretixbase/js/asynctask.js
 msgid ""
 "We are currently sending your request to the server. If this takes longer "
 "than one minute, please check your internet connection and then reload this "
 "page and try again."
 msgstr ""
+"กำลังส่งคำขอไปยังเซิร์ฟเวอร์ หากใช้เวลานานกว่าหนึ่งนาที "
+"โปรดตรวจสอบการเชื่อมต่ออินเทอร์เน็ตแล้วรีโหลดหน้านี้และลองใหม่อีกครั้ง"
 
-#: pretix/static/pretixbase/js/asynctask.js:301
-#: pretix/static/pretixcontrol/js/ui/main.js:71
+#: pretix/static/pretixbase/js/asynctask.js
+msgid "If this takes longer than a few minutes, please contact us."
+msgstr "หากใช้เวลานานกว่าสองสามนาที โปรดติดต่อเรา"
+
+#: pretix/static/pretixbase/js/asynctask.js
 msgid "Close message"
-msgstr ""
+msgstr "ปิดข้อความ"
 
-#: pretix/static/pretixcontrol/js/clipboard.js:23
+#: pretix/static/pretixcontrol/js/clipboard.js
 msgid "Copied!"
-msgstr ""
+msgstr "คัดลอกแล้ว!"
 
-#: pretix/static/pretixcontrol/js/clipboard.js:29
+#: pretix/static/pretixcontrol/js/clipboard.js
 msgid "Press Ctrl-C to copy!"
+msgstr "กด Ctrl-C เพื่อคัดลอก!"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/App.vue
+msgid "Edit"
+msgstr "แก้ไข"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/App.vue
+msgid "Visualize"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:12
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:18
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:24
-msgid "is one of"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:30
-msgid "is before"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:34
-msgid "is after"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:93
-msgid "Product"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:97
-msgid "Product variation"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:101
-msgid "Gate"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:105
-msgid "Current date and time"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:109
-msgid "Current day of the week (1 = Monday, 7 = Sunday)"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:113
-msgid "Number of previous entries"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:117
-msgid "Number of previous entries since midnight"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:121
-msgid "Number of previous entries since"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:125
-msgid "Number of previous entries before"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:129
-msgid "Number of days with a previous entry"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:133
-msgid "Minutes since last entry (-1 on first entry)"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:137
-msgid "Minutes since first entry (-1 on first entry)"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:164
-msgid "All of the conditions below (AND)"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:165
-msgid "At least one of the conditions below (OR)"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:166
-msgid "Event start"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:167
-msgid "Event end"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:168
-msgid "Event admission"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:169
-msgid "custom date and time"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:170
-msgid "custom time"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:171
-msgid "Tolerance (minutes)"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:172
-msgid "Add condition"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:173
-msgid "minutes"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/checkinrules.js:174
-msgid "Duplicate"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:72
-msgid "Check-in QR"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:387
-msgid "The PDF background file could not be loaded for the following reason:"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:648
-msgid "Group of objects"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:653
-msgid "Text object"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:655
-msgid "Barcode area"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:657
-msgid "Image area"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:659
-msgid "Powered by pretix"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:661
-msgid "Object"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:665
-msgid "Ticket design"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:964
-msgid "Saving failed."
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:1033
-#: pretix/static/pretixcontrol/js/ui/editor.js:1083
-msgid "Error while uploading your PDF file, please try again."
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/editor.js:1066
-msgid "Do you really want to leave the editor without saving your changes?"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/mail.js:19
-msgid "An error has occurred."
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/mail.js:52
-msgid "Generating messages …"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/main.js:109
-msgid "Unknown error."
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/main.js:311
-msgid "Your color has great contrast and is very easy to read!"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/main.js:315
-msgid "Your color has decent contrast and is probably good-enough to read!"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/main.js:319
+#: pretix/static/pretixcontrol/js/ui/checkinrules/App.vue
 msgid ""
-"Your color has bad contrast for text on white background, please choose a "
-"darker shade."
+"Your rule always filters by product or variation, but the following products "
+"or variations are not contained in any of your rule parts so people with "
+"these tickets will not get in:"
 msgstr ""
 
-#: pretix/static/pretixcontrol/js/ui/main.js:468
-#: pretix/static/pretixcontrol/js/ui/main.js:488
+#: pretix/static/pretixcontrol/js/ui/checkinrules/App.vue
+msgid "Please double-check if this was intentional."
+msgstr ""
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "All of the conditions below (AND)"
+msgstr "ทุกเงื่อนไขด้านล่างนี้ (AND)"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "At least one of the conditions below (OR)"
+msgstr "ตรงตามเงื่อนไขด้านล่างอย่างน้อยหนึ่งข้อ (OR)"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Event start"
+msgstr "เริ่มงาน"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Event end"
+msgstr "จบงาน"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Event admission"
+msgstr "เริ่มเปิดให้เข้างาน"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "custom date and time"
+msgstr "กำหนดวันที่และเวลาเอง"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "custom time"
+msgstr "กำหนดเวลาเอง"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Tolerance (minutes)"
+msgstr "ระยะเวลาที่อนุโลม (นาที)"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Add condition"
+msgstr "เพิ่มเงื่อนไข"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "minutes"
+msgstr "นาที"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Duplicate"
+msgstr "ทำสำเนา"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgctxt "entry_status"
+msgid "present"
+msgstr "มา"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgctxt "entry_status"
+msgid "absent"
+msgstr "ไม่มา"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "is one of"
+msgstr "เป็นหนึ่งใน"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "is before"
+msgstr "อยู่ก่อนหน้า"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "is after"
+msgstr "อยู่ถัดจาก"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "="
+msgstr "="
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Product"
+msgstr "สินค้า"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Product variation"
+msgstr "รูปแบบสินค้า"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Gate"
+msgstr "ประตูทางเข้า"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Current date and time"
+msgstr "วันที่และเวลาปัจจุบัน"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Current day of the week (1 = Monday, 7 = Sunday)"
+msgstr "วันในสัปดาห์ปัจจุบัน (1 = วันจันทร์, 7 = วันอาทิตย์)"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Current entry status"
+msgstr "สถานะการเข้างานปัจจุบัน"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of previous entries"
+msgstr "จำนวนครั้งที่เข้างานก่อนหน้า"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of previous entries since midnight"
+msgstr "จำนวนครั้งที่เข้างานก่อนหน้านับตั้งแต่เที่ยงคืน"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of previous entries since"
+msgstr "จำนวนครั้งที่เข้างานก่อนหน้านับตั้งแต่"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of previous entries before"
+msgstr "vจำนวนครั้งที่เข้างานก่อนหน้าก่อนวันที่/เวลา"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of days with a previous entry"
+msgstr "จำนวนวันที่มีการเข้างานก่อนหน้า"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of days with a previous entry since"
+msgstr "จำนวนวันที่มีการเข้างานก่อนหน้านับตั้งแต่"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Number of days with a previous entry before"
+msgstr "จำนวนวันที่มีการเข้างานก่อนหน้าก่อนวันที่/เวลา"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Minutes since last entry (-1 on first entry)"
+msgstr "จำนวนนาทีนับจากการเข้างานครั้งล่าสุด (-1 สำหรับการเข้างานครั้งแรก)"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/constants.ts
+msgid "Minutes since first entry (-1 on first entry)"
+msgstr "จำนวนนาทีนับจากการเข้างานครั้งแรก (-1 สำหรับการเข้างานครั้งแรก)"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/django-interop.ts
+msgid "Error: Product not found!"
+msgstr "ข้อผิดพลาด: ไม่พบสินค้า!"
+
+#: pretix/static/pretixcontrol/js/ui/checkinrules/django-interop.ts
+msgid "Error: Variation not found!"
+msgstr "ข้อผิดพลาด: ไม่พบรูปแบบสินค้า!"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Check-in QR"
+msgstr "QR สำหรับเช็คอิน"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "The PDF background file could not be loaded for the following reason:"
+msgstr "ไม่สามารถโหลดไฟล์พื้นหลัง PDF ได้เนื่องจากสาเหตุต่อไปนี้:"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Group of objects"
+msgstr "กลุ่มของวัตถุ"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Text object (deprecated)"
+msgstr "วัตถุข้อความ (เลิกใช้งานแล้ว)"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Text box"
+msgstr "กล่องข้อความ"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Barcode area"
+msgstr "พื้นที่บาร์โค้ด"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Image area"
+msgstr "พื้นที่รูปภาพ"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Powered by pretix"
+msgstr "สนับสนุนโดย pretix"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Object"
+msgstr "วัตถุ"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Ticket design"
+msgstr "การออกแบบตั๋ว"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Saving failed."
+msgstr "การบันทึกล้มเหลว"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Error while uploading your PDF file, please try again."
+msgstr "เกิดข้อผิดพลาดขณะอัปโหลดไฟล์ PDF ของคุณ โปรดลองอีกครั้ง"
+
+#: pretix/static/pretixcontrol/js/ui/editor.js
+msgid "Do you really want to leave the editor without saving your changes?"
+msgstr "คุณต้องการออกจากหน้าแก้ไขโดยไม่บันทึกการเปลี่ยนแปลงใช่หรือไม่?"
+
+#: pretix/static/pretixcontrol/js/ui/mail.js
+msgid "An error has occurred."
+msgstr "เกิดข้อผิดพลาดขึ้น"
+
+#: pretix/static/pretixcontrol/js/ui/mail.js
+msgid "Generating messages …"
+msgstr "กำลังสร้างข้อความ…"
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "Unknown error."
+msgstr "ข้อผิดพลาดที่ไม่ทราบสาเหตุ"
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "Your color has great contrast and will provide excellent accessibility."
+msgstr "สีของคุณมีค่าความต่าง (Contrast) ที่ดีมาก และช่วยให้เข้าถึงข้อมูลได้ง่ายขึ้น"
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid ""
+"Your color has decent contrast and is sufficient for minimum accessibility "
+"requirements."
+msgstr "สีของคุณมีความต่างที่เหมาะสม และเพียงพอต่อข้อกำหนดขั้นต่ำของการเข้าถึงข้อมูล"
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid ""
+"Your color has insufficient contrast to white. Accessibility of your site "
+"will be impacted."
+msgstr ""
+"สีของคุณมีความต่าง (Contrast) กับสีขาวไม่เพียงพอ ซึ่งจะส่งผลกระทบต่อการเข้าถึงข้อมูลของเว็บไซต์"
+
+#: pretix/static/pretixcontrol/js/ui/main.js
 msgid "Search query"
-msgstr ""
+msgstr "คำค้นหา"
 
-#: pretix/static/pretixcontrol/js/ui/main.js:486
+#: pretix/static/pretixcontrol/js/ui/main.js
 msgid "All"
-msgstr ""
+msgstr "ทั้งหมด"
 
-#: pretix/static/pretixcontrol/js/ui/main.js:487
+#: pretix/static/pretixcontrol/js/ui/main.js
 msgid "None"
-msgstr ""
+msgstr "ไม่เลือก"
 
-#: pretix/static/pretixcontrol/js/ui/main.js:491
+#: pretix/static/pretixcontrol/js/ui/main.js
 msgid "Selected only"
-msgstr ""
+msgstr "เฉพาะที่เลือก"
 
-#: pretix/static/pretixcontrol/js/ui/main.js:926
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "Enter page number between 1 and %(max)s."
+msgstr "โปรดระบุหมายเลขหน้าตั้งแต่ 1 ถึง %(max)s"
+
+#: pretix/static/pretixcontrol/js/ui/main.js
+msgid "Invalid page number."
+msgstr "หมายเลขหน้าไม่ถูกต้อง"
+
+#: pretix/static/pretixcontrol/js/ui/main.js
 msgid "Use a different name internally"
-msgstr ""
+msgstr "ใช้ชื่ออื่นสำหรับเรียกภายใน"
 
-#: pretix/static/pretixcontrol/js/ui/main.js:966
+#: pretix/static/pretixcontrol/js/ui/main.js
 msgid "Click to close"
-msgstr ""
+msgstr "คลิกเพื่อปิด"
 
-#: pretix/static/pretixcontrol/js/ui/main.js:1041
+#: pretix/static/pretixcontrol/js/ui/main.js
 msgid "You have unsaved changes!"
-msgstr ""
+msgstr "คุณมีสิ่งที่ยังไม่ได้บันทึกการเปลี่ยนแปลง!"
 
-#: pretix/static/pretixcontrol/js/ui/orderchange.js:25
+#: pretix/static/pretixcontrol/js/ui/orderchange.js
 msgid "Calculating default price…"
-msgstr ""
+msgstr "กำลังคำนวณราคาเริ่มต้น…"
 
-#: pretix/static/pretixcontrol/js/ui/question.js:42
+#: pretix/static/pretixcontrol/js/ui/plugins.js
+msgid "No results"
+msgstr "ไม่พบผลลัพธ์"
+
+#: pretix/static/pretixcontrol/js/ui/question.js
 msgid "Others"
-msgstr ""
+msgstr "อื่น ๆ"
 
-#: pretix/static/pretixcontrol/js/ui/question.js:82
+#: pretix/static/pretixcontrol/js/ui/question.js
 msgid "Count"
-msgstr ""
+msgstr "จำนวน"
 
-#: pretix/static/pretixcontrol/js/ui/question.js:137
-#: pretix/static/pretixpresale/js/ui/questions.js:270
-msgid "Yes"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/question.js:138
-#: pretix/static/pretixpresale/js/ui/questions.js:270
-msgid "No"
-msgstr ""
-
-#: pretix/static/pretixcontrol/js/ui/subevent.js:111
+#: pretix/static/pretixcontrol/js/ui/subevent.js
 msgid "(one more date)"
 msgid_plural "({num} more dates)"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "อีก {num} วัน"
 
-#: pretix/static/pretixpresale/js/ui/cart.js:43
+#: pretix/static/pretixpresale/js/ui/cart.js
 msgid ""
 "The items in your cart are no longer reserved for you. You can still "
 "complete your order as long as they’re available."
 msgstr ""
+"รายการในตะกร้าของคุณไม่ได้ถูกสำรองไว้แล้ว คุณยังคงสั่งซื้อต่อได้ตราบเท่าที่ยังมีรายการว่างอยู่"
 
-#: pretix/static/pretixpresale/js/ui/cart.js:45
+#: pretix/static/pretixpresale/js/ui/cart.js
 msgid "Cart expired"
-msgstr ""
+msgstr "ตะกร้าสินค้าหมดเวลาแล้ว"
 
-#: pretix/static/pretixpresale/js/ui/cart.js:50
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid "Your cart is about to expire."
+msgstr "ตะกร้าสินค้าของคุณกำลังจะหมดเวลา"
+
+#: pretix/static/pretixpresale/js/ui/cart.js
 msgid "The items in your cart are reserved for you for one minute."
 msgid_plural "The items in your cart are reserved for you for {num} minutes."
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "สินค้าในตะกร้าของคุณจะถูกจองไว้ให้คุณเป็นเวลา {num} นาที"
 
-#: pretix/static/pretixpresale/js/ui/main.js:171
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid "Your cart has expired."
+msgstr "ตะกร้าสินค้าของคุณหมดเวลาแล้ว"
+
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid ""
+"The items in your cart are no longer reserved for you. You can still "
+"complete your order as long as they're available."
+msgstr ""
+"รายการในตะกร้าไม่ได้ถูกสำรองไว้ให้คุณแล้ว "
+"แต่คุณยังสามารถสั่งซื้อให้เสร็จสมบูรณ์ได้ตราบเท่าที่สินค้ายังมีอยู่"
+
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid "Do you want to renew the reservation period?"
+msgstr "คุณต้องการต่อเวลาการสำรองที่นั่ง/สินค้าหรือไม่?"
+
+#: pretix/static/pretixpresale/js/ui/cart.js
+msgid "Renew reservation"
+msgstr "ต่อเวลาการสำรอง"
+
+#: pretix/static/pretixpresale/js/ui/main.js
 msgid "The organizer keeps %(currency)s %(amount)s"
-msgstr ""
+msgstr "ผู้จัดงานจะเก็บเงินจำนวน %(currency)s %(amount)s"
 
-#: pretix/static/pretixpresale/js/ui/main.js:179
+#: pretix/static/pretixpresale/js/ui/main.js
 msgid "You get %(currency)s %(amount)s back"
-msgstr ""
+msgstr "คุณจะได้รับเงินคืนจำนวน %(currency)s %(amount)s"
 
-#: pretix/static/pretixpresale/js/ui/main.js:195
+#: pretix/static/pretixpresale/js/ui/main.js
 msgid "Please enter the amount the organizer can keep."
-msgstr ""
+msgstr "โปรดระบุจำนวนเงินที่ผู้จัดงานสามารถเก็บไว้ได้"
 
-#: pretix/static/pretixpresale/js/ui/main.js:412
-msgid "Please enter a quantity for one of the ticket types."
-msgstr ""
-
-#: pretix/static/pretixpresale/js/ui/main.js:448
-msgid "required"
-msgstr ""
-
-#: pretix/static/pretixpresale/js/ui/main.js:551
-#: pretix/static/pretixpresale/js/ui/main.js:570
-msgid "Time zone:"
-msgstr ""
-
-#: pretix/static/pretixpresale/js/ui/main.js:561
+#: pretix/static/pretixpresale/js/ui/main.js
 msgid "Your local time:"
-msgstr ""
+msgstr "เวลาท้องถิ่นของคุณ:"
 
-#: pretix/static/pretixpresale/js/walletdetection.js:39
+#: pretix/static/pretixpresale/js/walletdetection.js
 msgid "Google Pay"
-msgstr ""
+msgstr "Google Pay"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:16
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Quantity"
-msgstr ""
+msgstr "จำนวน"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:17
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Decrease quantity"
-msgstr ""
+msgstr "ลดจำนวน"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:18
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Increase quantity"
-msgstr ""
+msgstr "เพิ่มจำนวน"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:19
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Filter events by"
+msgstr "กรองกิจกรรมตาม"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Filter"
+msgstr "กรอง"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Price"
-msgstr ""
+msgstr "ราคา"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:20
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+#, javascript-format
+msgctxt "widget"
+msgid "Original price: %s"
+msgstr "ราคาเดิม: %s"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+#, javascript-format
+msgctxt "widget"
+msgid "New price: %s"
+msgstr "ราคาใหม่: %s"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Select"
+msgstr "เลือก"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 #, javascript-format
 msgctxt "widget"
 msgid "Select %s"
-msgstr ""
+msgstr "เลือก %s"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:21
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 #, javascript-format
 msgctxt "widget"
 msgid "Select variant %s"
-msgstr ""
+msgstr "เลือกรูปแบบ %s"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:22
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Sold out"
-msgstr ""
+msgstr "ขายหมดแล้ว"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:23
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Buy"
-msgstr ""
+msgstr "ซื้อ"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:24
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Register"
-msgstr ""
+msgstr "ลงทะเบียน"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:25
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Reserved"
-msgstr ""
+msgstr "สำรองไว้แล้ว"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:26
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "FREE"
-msgstr ""
+msgstr "ฟรี"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:27
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "from %(currency)s %(price)s"
-msgstr ""
+msgstr "เริ่มต้นที่ %(currency)s %(price)s"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:28
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+#, javascript-format
+msgctxt "widget"
+msgid "Image of %s"
+msgstr "รูปภาพของ %s"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "incl. %(rate)s% %(taxname)s"
-msgstr ""
+msgstr "รวม %(taxname)s %(rate)s%"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:29
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "plus %(rate)s% %(taxname)s"
-msgstr ""
+msgstr "บวก %(taxname)s %(rate)s% เพิ่ม"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:30
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "incl. taxes"
-msgstr ""
+msgstr "รวมภาษีแล้ว"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:31
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "plus taxes"
-msgstr ""
+msgstr "ยังไม่รวมภาษี"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:32
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 #, javascript-format
 msgctxt "widget"
 msgid "currently available: %s"
-msgstr ""
+msgstr "จำนวนที่ว่างอยู่: %s"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:33
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Only available with a voucher"
-msgstr ""
+msgstr "สำหรับผู้ที่มีเวาเชอร์เท่านั้น"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:34
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Not yet available"
+msgstr "ยังไม่เปิดให้จอง/ซื้อ"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Not available anymore"
+msgstr "ไม่สามารถจอง/ซื้อได้แล้ว"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Currently not available"
+msgstr "ขณะนี้ยังไม่เปิดให้จอง/ซื้อ"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 #, javascript-format
 msgctxt "widget"
 msgid "minimum amount to order: %s"
-msgstr ""
+msgstr "จำนวนสั่งซื้อขั้นต่ำ: %s"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:35
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Close ticket shop"
-msgstr ""
+msgstr "ปิดหน้าร้านจำหน่ายตั๋ว"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:36
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "The ticket shop could not be loaded."
-msgstr ""
+msgstr "ไม่สามารถโหลดหน้าร้านจำหน่ายตั๋วได้"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:37
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid ""
 "There are currently a lot of users in this ticket shop. Please open the shop "
 "in a new tab to continue."
-msgstr ""
+msgstr "ขณะนี้มีผู้ใช้งานหน้าร้านจำนวนมาก โปรดเปิดหน้าร้านในแท็บใหม่เพื่อดำเนินการต่อ"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:39
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Open ticket shop"
-msgstr ""
+msgstr "เปิดหน้าร้านจำหน่ายตั๋ว"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:40
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Checkout"
+msgstr "ชำระเงิน"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "The cart could not be created. Please try again later"
-msgstr ""
+msgstr "ไม่สามารถสร้างตะกร้าสินค้าได้ โปรดลองอีกครั้งในภายหลัง"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:41
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid ""
 "We could not create your cart, since there are currently too many users in "
 "this ticket shop. Please click \"Continue\" to retry in a new tab."
 msgstr ""
+"ไม่สามารถสร้างตะกร้าสินค้าได้ เนื่องจากมีผู้ใช้งานหน้าร้านจำนวนมาก โปรดคลิก \"ดำเนินการต่อ\" "
+"เพื่อลองใหม่อีกครั้งในแท็บใหม่"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:43
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Waiting list"
-msgstr ""
+msgstr "รายชื่อรอ"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:44
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid ""
 "You currently have an active cart for this event. If you select more "
 "products, they will be added to your existing cart."
 msgstr ""
+"คุณมีรายการในตะกร้าสำหรับกิจกรรมนี้อยู่แล้ว หากคุณเลือกสินค้าเพิ่ม "
+"ระบบจะนำไปรวมในตะกร้าเดิมของคุณ"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:46
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Resume checkout"
-msgstr ""
+msgstr "ดำเนินการชำระเงินต่อ"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:47
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Redeem a voucher"
-msgstr ""
+msgstr "แลกใช้เวาเชอร์"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:48
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Redeem"
-msgstr ""
+msgstr "แลกใช้"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:49
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Voucher code"
-msgstr ""
+msgstr "รหัสเวาเชอร์"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:50
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Close"
-msgstr ""
+msgstr "ปิด"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:51
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Close checkout"
+msgstr "ปิดหน้าชำระเงิน"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "You cannot cancel this operation. Please wait for loading to finish."
+msgstr "ไม่สามารถยกเลิกรายการนี้ได้ โปรดรอจนกว่าจะโหลดเสร็จสมบูรณ์"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Continue"
-msgstr ""
+msgstr "ดำเนินการต่อ"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:52
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
-msgid "See variations"
-msgstr ""
+msgid "Show variants"
+msgstr "แสดงรูปแบบเพิ่มเติม"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:53
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgctxt "widget"
+msgid "Hide variants"
+msgstr "ซ่อนรูปแบบ"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Choose a different event"
-msgstr ""
+msgstr "เลือกกิจกรรมอื่น"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:54
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Choose a different date"
-msgstr ""
+msgstr "เลือกวันที่อื่น"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:55
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Back"
-msgstr ""
+msgstr "ย้อนกลับ"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:56
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Next month"
-msgstr ""
+msgstr "เดือนถัดไป"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:57
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Previous month"
-msgstr ""
+msgstr "เดือนก่อนหน้า"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:58
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Next week"
-msgstr ""
+msgstr "สัปดาห์ถัดไป"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:59
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Previous week"
-msgstr ""
+msgstr "สัปดาห์ก่อนหน้า"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:60
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Open seat selection"
-msgstr ""
+msgstr "เลือกที่นั่ง"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:61
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid ""
 "Some or all ticket categories are currently sold out. If you want, you can "
 "add yourself to the waiting list. We will then notify if seats are available "
 "again."
 msgstr ""
+"ขณะนี้ตั๋วบางประเภทหรือทุกประเภทขายหมดแล้ว หากคุณต้องการ คุณสามารถลงชื่อในรายชื่อรอ "
+"(Waiting List) ได้ เราจะแจ้งให้คุณทราบทันทีหากมีที่นั่งว่างอีกครั้ง"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:62
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgctxt "widget"
 msgid "Load more"
-msgstr ""
+msgstr "โหลดเพิ่มเติม"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:64
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "Mo"
-msgstr ""
+msgstr "จ."
 
-#: pretix/static/pretixpresale/js/widget/widget.js:65
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "Tu"
-msgstr ""
+msgstr "อ."
 
-#: pretix/static/pretixpresale/js/widget/widget.js:66
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "We"
-msgstr ""
+msgstr "พ."
 
-#: pretix/static/pretixpresale/js/widget/widget.js:67
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "Th"
-msgstr ""
+msgstr "พฤ."
 
-#: pretix/static/pretixpresale/js/widget/widget.js:68
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "Fr"
-msgstr ""
+msgstr "ศ."
 
-#: pretix/static/pretixpresale/js/widget/widget.js:69
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "Sa"
-msgstr ""
+msgstr "ส."
 
-#: pretix/static/pretixpresale/js/widget/widget.js:70
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "Su"
-msgstr ""
+msgstr "อา."
 
-#: pretix/static/pretixpresale/js/widget/widget.js:73
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Monday"
+msgstr "วันจันทร์"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Tuesday"
+msgstr "วันอังคาร"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Wednesday"
+msgstr "วันพุธ"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Thursday"
+msgstr "วันพฤหัสบดี"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Friday"
+msgstr "วันศุกร์"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Saturday"
+msgstr "วันเสาร์"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
+msgid "Sunday"
+msgstr "วันอาทิตย์"
+
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "January"
-msgstr ""
+msgstr "มกราคม"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:74
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "February"
-msgstr ""
+msgstr "กุมภาพันธ์"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:75
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "March"
-msgstr ""
+msgstr "มีนาคม"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:76
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "April"
-msgstr ""
+msgstr "เมษายน"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:77
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "May"
-msgstr ""
+msgstr "พฤษภาคม"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:78
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "June"
-msgstr ""
+msgstr "มิถุนายน"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:79
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "July"
-msgstr ""
+msgstr "กรกฎาคม"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:80
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "August"
-msgstr ""
+msgstr "สิงหาคม"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:81
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "September"
-msgstr ""
+msgstr "กันยายน"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:82
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "October"
-msgstr ""
+msgstr "ตุลาคม"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:83
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "November"
-msgstr ""
+msgstr "พฤศจิกายน"
 
-#: pretix/static/pretixpresale/js/widget/widget.js:84
+#: pretix/static/pretixpresale/widget/src/i18n.ts
 msgid "December"
-msgstr ""
+msgstr "ธันวาคม"
+
+#~ msgid "iDEAL"
+#~ msgstr "iDEAL"

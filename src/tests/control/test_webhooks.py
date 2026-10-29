@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -63,7 +63,7 @@ def admin_user(admin_team):
 
 @pytest.fixture
 def admin_team(organizer):
-    return Team.objects.create(organizer=organizer, can_change_organizer_settings=True, name='Admin team')
+    return Team.objects.create(organizer=organizer, all_organizer_permissions=True, name='Admin team')
 
 
 @pytest.mark.django_db

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -19,15 +19,23 @@
 # You should have received a copy of the GNU Affero General Public License along with this program.  If not, see
 # <https://www.gnu.org/licenses/>.
 #
+from decimal import Decimal
+
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
 from pretix.api.serializers.i18n import I18nAwareModelSerializer
 from pretix.base.models import Seat, Voucher
+from pretix.base.models.vouchers import generate_codes
 
 
 class VoucherListSerializer(serializers.ListSerializer):
     def create(self, validated_data):
+        vouchers_without_codes = [v for v in validated_data if not v.get('code')]
+
+        for voucher_data, code in zip(vouchers_without_codes, generate_codes(self.context['event'].organizer, num=len(vouchers_without_codes), prefix=None)):
+            voucher_data['code'] = code
+
         codes = set()
         seats = set()
         errs = []
@@ -58,14 +66,15 @@ class SeatGuidField(serializers.CharField):
 
 class VoucherSerializer(I18nAwareModelSerializer):
     seat = SeatGuidField(allow_null=True, required=False)
+    budget_used = serializers.DecimalField(read_only=True, max_digits=13, decimal_places=2, min_value=Decimal('0.00'))
 
     class Meta:
         model = Voucher
-        fields = ('id', 'code', 'max_usages', 'redeemed', 'min_usages', 'valid_until', 'block_quota',
+        fields = ('id', 'created', 'code', 'max_usages', 'redeemed', 'min_usages', 'valid_until', 'block_quota',
                   'allow_ignore_quota', 'price_mode', 'value', 'item', 'variation', 'quota',
                   'tag', 'comment', 'subevent', 'show_hidden_items', 'seat', 'all_addons_included',
-                  'all_bundles_included')
-        read_only_fields = ('id', 'redeemed')
+                  'all_bundles_included', 'budget', 'budget_used')
+        read_only_fields = ('id', 'redeemed', 'budget_used')
         list_serializer_class = VoucherListSerializer
 
     def validate(self, data):

@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -116,15 +116,29 @@ class DekodiNREIExporter(BaseExporter):
                         'PTNo15': p.full_id or '',
                     })
             elif p.provider and p.provider.startswith('stripe'):
-                src = p.info_data.get("source", p.info_data)
+                pi = p.info_data or {}
+                try:
+                    if "latest_charge" in pi and isinstance(pi.get("latest_charge"), dict):
+                        details = pi["latest_charge"]["payment_method_details"]
+                        card = details.get("card", {})
+                    elif pi.get("charges") and pi["charges"]["data"]:
+                        details = pi["charges"]["data"][0].get("payment_method_details", {})
+                        card = details.get("card", {})
+                    else:
+                        details = pi["source"]
+                        card = pi["source"]["card"]
+                except:
+                    details = {}
+                    card = {}
+
                 payments.append({
                     'PTID': '81',
                     'PTN': 'Stripe',
-                    'PTNo1': p.info_data.get("id") or '',
-                    'PTNo5': src.get("card", {}).get("last4") or '',
+                    'PTNo1': pi.get("id") or '',
+                    'PTNo5': card.get("last4", ""),
                     'PTNo7': round(float(p.amount), 2) or '',
                     'PTNo8': str(self.event.currency) or '',
-                    'PTNo10': src.get('owner', {}).get('verified_name') or src.get('owner', {}).get('name') or '',
+                    'PTNo10': details.get('owner', {}).get('verified_name') or details.get('owner', {}).get('name') or '',
                     'PTNo15': p.full_id or '',
                 })
             else:

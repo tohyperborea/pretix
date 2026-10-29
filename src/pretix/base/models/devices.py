@@ -1,8 +1,8 @@
 #
 # This file is part of pretix (Community Edition).
 #
-# Copyright (C) 2014-2020 Raphael Michel and contributors
-# Copyright (C) 2020-2021 rami.io GmbH and contributors
+# Copyright (C) 2014-2020  Raphael Michel and contributors
+# Copyright (C) 2020-today pretix GmbH and contributors
 #
 # This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General
 # Public License as published by the Free Software Foundation in version 3 of the License.
@@ -20,16 +20,21 @@
 # <https://www.gnu.org/licenses/>.
 #
 import string
+from datetime import timedelta
 
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Max
 from django.utils.crypto import get_random_string
+from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
 from django_scopes import ScopedManager, scopes_disabled
 
-from pretix.api.auth.devicesecurity import DEVICE_SECURITY_PROFILES
 from pretix.base.models import LoggedModel
+from pretix.base.permissions import (
+    AnyPermissionOf, assert_valid_event_permission,
+)
+from pretix.helpers import BrinIndexIgnoredOnSQLite
 
 
 @scopes_disabled()
@@ -161,7 +166,7 @@ class Device(LoggedModel):
     )
     security_profile = models.CharField(
         max_length=190,
-        choices=[(k, v.verbose_name) for k, v in DEVICE_SECURITY_PROFILES.items()],
+        verbose_name=_('Security profile'),
         default='full',
         null=True,
         blank=False
@@ -191,13 +196,19 @@ class Device(LoggedModel):
                 kwargs['update_fields'] = {'device_id'}.union(kwargs['update_fields'])
         super().save(*args, **kwargs)
 
-    def permission_set(self) -> set:
+    def _event_permission_set(self) -> set:
         return {
-            'can_view_orders',
-            'can_change_orders',
-            'can_view_vouchers',
-            'can_manage_gift_cards',
-            'can_manage_reusable_media',
+            'event.orders:read',
+            'event.orders:write',
+            'event.vouchers:read',
+        }
+
+    def _organizer_permission_set(self) -> set:
+        return {
+            'organizer.giftcards:read',
+            'organizer.giftcards:write',
+            'organizer.reusablemedia:read',
+            'organizer.reusablemedia:write',
         }
 
     def get_event_permission_set(self, organizer, event) -> set:
@@ -211,7 +222,7 @@ class Device(LoggedModel):
         has_event_access = (self.all_events and organizer == self.organizer) or (
             event in self.limit_events.all()
         )
-        return self.permission_set() if has_event_access else set()
+        return self._event_permission_set() if has_event_access else set()
 
     def get_organizer_permission_set(self, organizer) -> set:
         """
@@ -220,25 +231,26 @@ class Device(LoggedModel):
         :param organizer: The organizer of the event
         :return: set of permissions
         """
-        return self.permission_set() if self.organizer == organizer else set()
+        return self._organizer_permission_set() if self.organizer == organizer else set()
 
-    def has_event_permission(self, organizer, event, perm_name=None, request=None) -> bool:
+    def has_event_permission(self, organizer, event, perm_name=None, request=None, session_key=None) -> bool:
         """
         Checks if this token is part of a team that grants access of type ``perm_name``
         to the event ``event``.
 
         :param organizer: The organizer of the event
         :param event: The event to check
-        :param perm_name: The permission, e.g. ``can_change_teams``
+        :param perm_name: The permission, e.g. ``event.orders:read``
         :param request: This parameter is ignored and only defined for compatibility reasons.
+        :param session_key: This parameter is ignored and only defined for compatibility reasons.
         :return: bool
         """
         has_event_access = (self.all_events and organizer == self.organizer) or (
             event in self.limit_events.all()
         )
         if isinstance(perm_name, (tuple, list)):
-            return has_event_access and any(p in self.permission_set() for p in perm_name)
-        return has_event_access and (not perm_name or perm_name in self.permission_set())
+            return has_event_access and any(p in self._event_permission_set() for p in perm_name)
+        return has_event_access and (not perm_name or perm_name in self._event_permission_set())
 
     def has_organizer_permission(self, organizer, perm_name=None, request=None):
         """
@@ -246,13 +258,13 @@ class Device(LoggedModel):
         to the organizer ``organizer``.
 
         :param organizer: The organizer to check
-        :param perm_name: The permission, e.g. ``can_change_teams``
+        :param perm_name: The permission, e.g. ``organizer.events:create``
         :param request: This parameter is ignored and only defined for compatibility reasons.
         :return: bool
         """
         if isinstance(perm_name, (tuple, list)):
-            return organizer == self.organizer and any(p in self.permission_set() for p in perm_name)
-        return organizer == self.organizer and (not perm_name or perm_name in self.permission_set())
+            return organizer == self.organizer and any(p in self._organizer_permission_set() for p in perm_name)
+        return organizer == self.organizer and (not perm_name or perm_name in self._organizer_permission_set())
 
     def get_events_with_any_permission(self):
         """
@@ -272,9 +284,34 @@ class Device(LoggedModel):
         :param request: Ignored, for compatibility with User model
         :return: Iterable of Events
         """
+        assert_valid_event_permission(permission)
         if (
-                isinstance(permission, (list, tuple)) and any(p in self.permission_set() for p in permission)
-        ) or (isinstance(permission, str) and permission in self.permission_set()):
+            isinstance(permission, (AnyPermissionOf, list, tuple)) and any(p in self._event_permission_set() for p in permission)
+        ) or (isinstance(permission, str) and permission in self._event_permission_set()):
             return self.get_events_with_any_permission()
         else:
             return self.organizer.events.none()
+
+
+class DeviceLastSeen(models.Model):
+    # This is a separate model since we expect it to get A LOT of writes and PostgreSQL always
+    # writes full rows and then needs to update all indexes on the row, so this is going to save a
+    # lot of write traffic on the databse
+    device = models.OneToOneField("Device", on_delete=models.CASCADE, related_name="last_seen")
+    last_seen = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            BrinIndexIgnoredOnSQLite(
+                # BRIN indexes are highly efficient on lots of updates, especially of chronological data
+                # and especially if we later want to query them by range, as we likely want to.
+                "last_seen",
+                name="pretixbase_device_last_seen",
+                autosummarize=True
+            )
+        ]
+
+    @property
+    def is_recent(self):
+        # pretixSCAN/pretixPOS sync every 5 minutes, so 7 minutes can be considered "offline"
+        return now() - self.last_seen < timedelta(minutes=7)
