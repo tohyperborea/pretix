@@ -123,7 +123,7 @@ msgstr "Avant de continuer, veuillez lire les documents suivants :"
 
 #: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/checkout_waiver.html
 msgid "Release of Waiver and Liability"
-msgstr "Libération de renonciation et de responsabilité"
+msgstr "Décharge et renonciation à la responsabilité"
 
 #: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/checkout_waiver.html
 msgid "SideBurn Code of Conduct"
