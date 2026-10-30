@@ -1,26 +1,233 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: pretix-sideburn-lottery\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-10-19 15:00-0400\n"
 "Language: fr\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n > 1;\n"
 
+#: pretix_sideburn_lottery/apps.py
+msgid "Sideburn Lottery"
+msgstr "Loterie Sideburn"
+
+#: pretix_sideburn_lottery/apps.py
+msgid "Waiting-list lottery mechanics for Sideburn events"
+msgstr ""
+"Mécanique de loterie de la liste d'attente pour les événements Sideburn"
+
+#: pretix_sideburn_lottery/services/lottery.py
+msgid "Name"
+msgstr "Nom"
+
+#: pretix_sideburn_lottery/services/lottery.py
+msgid "E-mail address"
+msgstr "Adresse e-mail"
+
+#: pretix_sideburn_lottery/services/lottery.py
+msgid "Phone number"
+msgstr "Numéro de téléphone"
+
+#: pretix_sideburn_lottery/services/lottery.py
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
+msgid "Product"
+msgstr "Produit"
+
+#: pretix_sideburn_lottery/services/lottery.py
+msgid "On list since"
+msgstr "Sur la liste depuis"
+
+#: pretix_sideburn_lottery/services/lottery.py
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
+msgid "Status"
+msgstr "Statut"
+
+#: pretix_sideburn_lottery/services/lottery.py
+msgid "Voucher code"
+msgstr "Code du bon d'achat"
+
+#: pretix_sideburn_lottery/services/lottery.py
+msgid "Language"
+msgstr "Langue"
+
+#: pretix_sideburn_lottery/services/lottery.py
+msgid "Priority"
+msgstr "Priorité"
+
+#: pretix_sideburn_lottery/services/lottery.py
+msgid "Voucher redeemed"
+msgstr "Bon d'achat utilisé"
+
+#: pretix_sideburn_lottery/services/lottery.py
+msgid "Voucher expired"
+msgstr "Bon périmé"
+
+#: pretix_sideburn_lottery/services/lottery.py
+msgid "Voucher assigned"
+msgstr "Bon attribué"
+
+#: pretix_sideburn_lottery/services/lottery.py
+msgid "Waiting"
+msgstr "En attente"
+
+#: pretix_sideburn_lottery/services/presale.py
+#, python-format
+msgid "Ticket lottery held on %(date)s"
+msgstr "Loterie des billets tenue le %(date)s"
+
+#: pretix_sideburn_lottery/services/presale.py
+msgid "These tickets will be assigned by lottery"
+msgstr "Ces billets seront attribués par tirage au sort"
+
+#: pretix_sideburn_lottery/services/waitinglist.py
+#, python-brace-format
+msgid ""
+"Hello,\n"
+"\n"
+"This is to confirm that you have been added to the lottery for {event}.\n"
+"\n"
+"Once the ticket lottery has taken place, those selected will receive an email with a voucher to purchase a ticket.\n"
+"\n"
+"If you are not selected in the initial lottery, you will be added to a waiting list\n"
+"and will receive an email when a ticket is available for you.\n"
+"\n"
+"Want to stay in the loop about the latest news about SideBurn? Subscribe to our newsletter here: http://eepurl.com/ij4Off\n"
+"\n"
+"Best regards,\n"
+"Your {event} ticketing team"
+msgstr ""
+"Bonjour,\n"
+"\n"
+"Nous vous confirmons votre inscription à la loterie pour {event}.\n"
+"\n"
+"Une fois la loterie des billets effectuée, les personnes sélectionnées recevront un e-mail avec un bon d'achat pour acheter un billet.\n"
+"\n"
+"Si votre inscription n'est pas retenue lors de la loterie initiale, elle sera ajoutée à une liste d'attente\n"
+"et vous recevrez un e-mail lorsqu'un billet sera disponible pour vous.\n"
+"\n"
+"Vous voulez suivre les dernières nouvelles de SideBurn ? Abonnez-vous à notre infolettre ici : http://eepurl.com/ij4Off\n"
+"\n"
+"Cordialement,\n"
+"L'équipe billetterie de {event}"
+
+#: pretix_sideburn_lottery/services/waitinglist.py
+#, python-brace-format
+msgid "You have been added to the lottery waiting list for {event}"
+msgstr "Inscription confirmée à la liste d'attente de la loterie pour {event}"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/checkout_waiver.html
+msgid "Before you proceed, please read the following documents:"
+msgstr "Avant de continuer, veuillez lire les documents suivants :"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/checkout_waiver.html
+msgid "Release of Waiver and Liability"
+msgstr "Décharge et renonciation à la responsabilité"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/checkout_waiver.html
+msgid "SideBurn Code of Conduct"
+msgstr "Code de conduite SideBurn"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/checkout_waiver.html
+msgid ""
+"For each document, enter the confirmation words in the form below to show you"
+" agree."
+msgstr ""
+"Pour chaque document, saisissez les mots de confirmation dans le formulaire "
+"ci-dessous pour montrer que vous êtes d'accord."
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/sold_out_availability.html
+msgid "Register here"
+msgstr "Inscrivez-vous ici"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_lottery_actions.html
+msgid "Run lottery"
+msgstr "Lancer la loterie"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_lottery_actions.html
+msgid "Revert list"
+msgstr "Rétablir la liste"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_lottery_actions.html
+msgid "Close"
+msgstr "Fermer"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_lottery_actions.html
+msgid "Confirm Lottery Run"
+msgstr "Confirmer le lancement de la loterie"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_lottery_actions.html
+msgid "Warning!"
+msgstr "Attention !"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_lottery_actions.html
+msgid "Are you sure you want to proceed?"
+msgstr "Voulez-vous vraiment continuer ?"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_lottery_actions.html
+msgid "Cancel"
+msgstr "Annuler"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_lottery_actions.html
+msgid "Yes, run the lottery"
+msgstr "Oui, lancer la loterie"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
+msgid "Check my spot in line"
+msgstr "Vérifier ma place dans la file"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
+#, python-format
+msgid ""
+"Your voucher expired on %(day)s at %(time)s. Please feel free to re-enter the"
+" waiting list."
+msgstr ""
+"Votre bon d'achat a expiré le %(day)s à %(time)s. N'hésitez pas à vous "
+"réinscrire sur la liste d'attente."
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
+msgid ""
+"You have a voucher waiting for redemption! Check your email for details."
+msgstr ""
+"Un bon d'achat vous attend ! Consultez vos e-mails pour plus de détails."
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
+msgid ""
+"You are on the waiting list for this event. The lottery hasn't yet been run."
+msgstr ""
+"Vous êtes sur la liste d'attente de cet événement. La loterie n'a pas encore "
+"eu lieu."
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
+#, python-format
+msgid "You are %(ordinal)s in line"
+msgstr "Vous êtes %(ordinal)s dans la file"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
+msgid "Unable to determine rank."
+msgstr "Impossible de déterminer votre rang."
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
+msgid "You are not on the waiting list for this event."
+msgstr "Vous n'êtes pas sur la liste d'attente de cet événement."
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/waitinglist.html
+msgid "Waiting list"
+msgstr "Liste d'attente"
+
 #: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/waitinglist.html
 msgid "How do tickets work for SideBurn?"
 msgstr "Comment fonctionnent les billets pour SideBurn ?"
 
 #: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/waitinglist.html
-msgid "Since demand for SideBurn tickets outnumbers supply,"
-msgstr "Étant donné que la demande de billets SideBurn dépasse l'offre,"
-
-#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/waitinglist.html
 msgid ""
-"the first stage of getting a ticket is registering for the ticket lottery"
+"Since demand for SideBurn tickets outnumbers supply, <strong>the first stage "
+"of getting a ticket is registering for the ticket lottery</strong>."
 msgstr ""
-"la première étape pour obtenir un billet consiste à s'inscrire à la loterie "
-"de billets"
+"Étant donné que la demande de billets SideBurn dépasse l'offre, <strong>la "
+"première étape pour obtenir un billet consiste à s'inscrire à la loterie de "
+"billets</strong>."
 
 #: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/waitinglist.html
 msgid ""
@@ -39,7 +246,7 @@ msgid ""
 msgstr ""
 "Les billets disponibles sont ensuite proposés dans l'ordre de la loterie, et "
 "les inscrits ont trois jours pour acheter leur billet disponible avant qu'il "
-"ne soit rajouté au groupe et offert et offert au suivant dans la liste."
+"ne soit rajouté au groupe et offert au suivant dans la liste."
 
 #: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/waitinglist.html
 msgid ""
@@ -61,27 +268,26 @@ msgstr ""
 "Vous inscrire à nouveau avec une autre adresse e-mail - ou réessayer avec la "
 "même - pourrait vous disqualifier de la loterie de billetterie !"
 
-#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/sold_out_availability.html
-msgid "Register here"
-msgstr "Inscrivez-vous ici"
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/waitinglist.html
+msgid "Add me to the list"
+msgstr "Ajoutez-moi à la liste"
 
-#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/checkout_waiver.html
-msgid "Before you proceed, please read the following documents"
-msgstr "Avant de continuer, veuillez lire les documents suivants"
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/waitinglist.html
+msgid "Event"
+msgstr "Événement"
 
-#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/checkout_waiver.html
-msgid "Release of Waiver and Liability"
-msgstr "Libération de renonciation et de responsabilité"
-
-#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/checkout_waiver.html
-msgid "SideBurn Code of Conduct"
-msgstr "Code de conduite SideBurn"
-
-#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/checkout_waiver.html
-msgid ""
-"For each document, enter the confirmation words in the form below to show you"
-" agree."
+#: pretix_sideburn_lottery/views/control.py
+msgid "You must select a product to run or revert its lottery."
 msgstr ""
-"Pour chaque document, saisissez les mots de confirmation dans le formulaire "
-"ci-dessous pour montrer que vous êtes d'accord."
+"Vous devez sélectionner un produit pour lancer sa loterie ou rétablir sa "
+"liste."
 
+#: pretix_sideburn_lottery/views/control.py
+msgid "Invalid product selected."
+msgstr "Produit non valide sélectionné."
+
+#: pretix_sideburn_lottery/views/control.py
+msgid "No waiting list entries found for the selected product."
+msgstr ""
+"Aucune inscription sur la liste d'attente n'a été trouvée pour le produit "
+"sélectionné."

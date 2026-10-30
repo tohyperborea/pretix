@@ -33,6 +33,10 @@ settings_hierarkey.add_default(
     LazyI18nString,
 )
 
+# Core's header shows this Sideburn string (fragment_login_status.html); listing it here keeps
+# makemessages from dropping its French translation from this plugin's catalog.
+gettext_noop("My Orders")
+
 # Storefront pages that need a logged-in customer. Everything else stays public, notably
 # order pages (secret links), resend_link, auth, favicon, iCal, widget CSS and
 # waitinglist.remove (the voucher code in the link is the protection).
