@@ -66,7 +66,7 @@ msgstr "Bon périmé"
 
 #: pretix_sideburn_lottery/services/lottery.py
 msgid "Voucher assigned"
-msgstr "Bon d'achat attribué"
+msgstr "Bon attribué"
 
 #: pretix_sideburn_lottery/services/lottery.py
 msgid "Waiting"
@@ -284,7 +284,7 @@ msgstr ""
 
 #: pretix_sideburn_lottery/views/control.py
 msgid "Invalid product selected."
-msgstr "Le produit sélectionné n'est pas valide."
+msgstr "Produit non valide sélectionné."
 
 #: pretix_sideburn_lottery/views/control.py
 msgid "No waiting list entries found for the selected product."

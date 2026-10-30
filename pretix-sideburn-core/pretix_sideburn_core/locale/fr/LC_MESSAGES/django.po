@@ -42,7 +42,7 @@ msgstr "Mes commandes"
 
 #: pretix_sideburn_core/templates/pretix_sideburn_core/delete_selected.html
 msgid "Delete entries"
-msgstr "Supprimer des inscriptions"
+msgstr "Supprimer des entrées"
 
 #: pretix_sideburn_core/templates/pretix_sideburn_core/delete_selected.html
 msgid "Delete entries (including entries with vouchers)"
@@ -61,7 +61,7 @@ msgstr "Les commandes ne sont pas affectées. Cette action est irréversible."
 
 #: pretix_sideburn_core/templates/pretix_sideburn_core/delete_selected.html
 msgid "Warning:"
-msgstr "Avertissement :"
+msgstr "Avertissement :"
 
 #: pretix_sideburn_core/templates/pretix_sideburn_core/delete_selected.html
 msgid ""
