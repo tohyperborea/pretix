@@ -14,9 +14,11 @@ from pretix.presale.signals import (
     checkout_questions_top,
     front_page_bottom,
     sold_out_availability,
+    waitinglist_form_class,
     waitinglist_template_name,
 )
 
+from .forms import waitinglist_form_with_group
 from .services.presale import get_sold_out_label
 from .services.rank import get_waiting_list_rank
 from .services.waitinglist import (
@@ -75,6 +77,11 @@ def render_waiting_list_rank(sender, request, subevent=None, **kwargs):
 @receiver(waitinglist_template_name, dispatch_uid="sideburn_lottery_waitinglist_template")
 def provide_waitinglist_template(sender, **kwargs):
     return "pretix_sideburn_lottery/waitinglist.html"
+
+
+@receiver(waitinglist_form_class, dispatch_uid="sideburn_lottery_waitinglist_group_form")
+def inject_waitinglist_group_fields(sender, cls, **kwargs):
+    return waitinglist_form_with_group(cls)
 
 
 @receiver(sold_out_availability, dispatch_uid="sideburn_lottery_sold_out_availability")
