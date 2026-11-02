@@ -30,6 +30,7 @@ settings_hierarkey.add_default(
     LazyI18nString.from_gettext(DEFAULT_MAIL_TEXT_WAITING_LIST_CONFIRM),
     LazyI18nString,
 )
+settings_hierarkey.add_default("lottery_group_max_size", "10", int)
 
 
 @receiver(register_mail_placeholders, dispatch_uid="sideburn_lottery_waiting_list_position")
