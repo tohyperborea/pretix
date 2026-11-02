@@ -18,6 +18,114 @@ msgid "Waiting-list lottery mechanics for Sideburn events"
 msgstr ""
 "Mécanique de loterie de la liste d'attente pour les événements Sideburn"
 
+#: pretix_sideburn_lottery/forms.py pretix_sideburn_lottery/models.py
+msgid "Lottery group"
+msgstr "Groupe de loterie"
+
+#: pretix_sideburn_lottery/forms.py
+msgid "Register on my own"
+msgstr "M'inscrire individuellement"
+
+#: pretix_sideburn_lottery/forms.py
+msgid "Create a new group"
+msgstr "Créer un nouveau groupe"
+
+#: pretix_sideburn_lottery/forms.py
+msgid "Join an existing group"
+msgstr "Rejoindre un groupe existant"
+
+#: pretix_sideburn_lottery/forms.py
+#, python-format
+msgid ""
+"Optional. Joining a group doesn't change your odds in the lottery: your "
+"group is one entry, same as someone registering on their own. When tickets "
+"are offered, your group needs one ticket per person and moves together. "
+"Groups can have up to %(max)s people."
+msgstr ""
+"Facultatif. Rejoindre un groupe ne change pas vos chances à la loterie : "
+"votre groupe compte comme une seule inscription, comme une personne qui "
+"s'inscrit individuellement. Lorsque des billets sont proposés, votre groupe "
+"a besoin d'un billet par personne et avance ensemble. Un groupe peut compter "
+"jusqu'à %(max)s personnes."
+
+#: pretix_sideburn_lottery/forms.py pretix_sideburn_lottery/models.py
+msgid "Group code"
+msgstr "Code du groupe"
+
+#: pretix_sideburn_lottery/forms.py
+msgid "Ask the person who created the group for its code."
+msgstr "Demandez le code à la personne qui a créé le groupe."
+
+#: pretix_sideburn_lottery/forms.py
+msgid "Enter the code of the group you want to join."
+msgstr "Saisissez le code du groupe que vous voulez rejoindre."
+
+#: pretix_sideburn_lottery/forms.py
+#, python-format
+msgid ""
+"Your group code is %(code)s. Share it with your friends so they can join "
+"your group."
+msgstr ""
+"Le code de votre groupe est %(code)s. Partagez-le avec vos amis pour qu'ils "
+"puissent rejoindre votre groupe."
+
+#: pretix_sideburn_lottery/forms.py
+#, python-format
+msgid "You've joined group %(code)s."
+msgstr "Vous avez rejoint le groupe %(code)s."
+
+#: pretix_sideburn_lottery/forms.py
+#, python-format
+msgid ""
+"You're on the waiting list, but we couldn't add you to the group: %(reason)s"
+msgstr ""
+"Vous êtes sur la liste d'attente, mais nous n'avons pas pu vous ajouter au "
+"groupe : %(reason)s"
+
+#: pretix_sideburn_lottery/models.py
+msgid "Created"
+msgstr "Date de création"
+
+#: pretix_sideburn_lottery/models.py
+msgid "Lottery groups"
+msgstr "Groupes de loterie"
+
+#: pretix_sideburn_lottery/models.py
+msgid "Waiting list entry"
+msgstr "Inscription sur la liste d'attente"
+
+#: pretix_sideburn_lottery/models.py
+msgid "Joined"
+msgstr "Date d'adhésion"
+
+#: pretix_sideburn_lottery/models.py
+msgid "Lottery group membership"
+msgstr "Appartenance à un groupe de loterie"
+
+#: pretix_sideburn_lottery/models.py
+msgid "Lottery group memberships"
+msgstr "Appartenances à un groupe de loterie"
+
+#: pretix_sideburn_lottery/services/groups.py
+msgid ""
+"The lottery for this product has already taken place, so groups can no "
+"longer be changed."
+msgstr ""
+"La loterie pour ce produit a déjà eu lieu, les groupes ne peuvent donc plus "
+"être modifiés."
+
+#: pretix_sideburn_lottery/services/groups.py
+msgid "We couldn't find a group with that code."
+msgstr "Nous n'avons trouvé aucun groupe avec ce code."
+
+#: pretix_sideburn_lottery/services/groups.py
+msgid "That group is for a different product."
+msgstr "Ce groupe correspond à un autre produit."
+
+#: pretix_sideburn_lottery/services/groups.py
+msgid "That group is already full."
+msgstr "Ce groupe est déjà complet."
+
 #: pretix_sideburn_lottery/services/lottery.py
 msgid "Name"
 msgstr "Nom"
@@ -30,6 +138,7 @@ msgstr "Adresse e-mail"
 msgid "Phone number"
 msgstr "Numéro de téléphone"
 
+#: pretix_sideburn_lottery/models.py
 #: pretix_sideburn_lottery/services/lottery.py
 #: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
 msgid "Product"
@@ -272,6 +381,7 @@ msgstr ""
 msgid "Add me to the list"
 msgstr "Ajoutez-moi à la liste"
 
+#: pretix_sideburn_lottery/models.py
 #: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/waitinglist.html
 msgid "Event"
 msgstr "Événement"

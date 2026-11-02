@@ -33,11 +33,32 @@ def get_group(entry):
     return membership.group if membership else None
 
 
-def _ensure_unlocked(entry):
-    if lottery_has_run(entry.event, entry.item_id):
+def ensure_groups_unlocked(event, item_id):
+    if lottery_has_run(event, item_id):
         raise ValidationError(
             _("The lottery for this product has already taken place, so groups can no longer be changed.")
         )
+
+
+def find_group(event, item_id, code, *, for_update=False):
+    qs = LotteryGroup.objects.filter(event=event, code=normalize_group_code(code))
+    if for_update:
+        qs = qs.select_for_update()
+    group = qs.first()
+    if not group:
+        raise ValidationError(_("We couldn't find a group with that code."))
+    if group.item_id != item_id:
+        raise ValidationError(_("That group is for a different product."))
+    return group
+
+
+def ensure_group_has_room(group):
+    if group.memberships.count() >= group.event.settings.lottery_group_max_size:
+        raise ValidationError(_("That group is already full."))
+
+
+def _ensure_unlocked(entry):
+    ensure_groups_unlocked(entry.event, entry.item_id)
 
 
 def _remove_membership(entry):
@@ -68,19 +89,10 @@ def create_group(entry):
 def join_group(entry, code):
     """Add the entry to the group with this code, moving it out of any group it's in."""
     _ensure_unlocked(entry)
-    group = (
-        LotteryGroup.objects.select_for_update()
-        .filter(event=entry.event, code=normalize_group_code(code))
-        .first()
-    )
-    if not group:
-        raise ValidationError(_("We couldn't find a group with that code."))
-    if group.item_id != entry.item_id:
-        raise ValidationError(_("That group is for a different product."))
+    group = find_group(entry.event, entry.item_id, code, for_update=True)
     if group.memberships.filter(entry=entry).exists():
         return group
-    if group.memberships.count() >= entry.event.settings.lottery_group_max_size:
-        raise ValidationError(_("That group is already full."))
+    ensure_group_has_room(group)
     _remove_membership(entry)
     LotteryGroupMembership.objects.create(entry=entry, group=group)
     return group
