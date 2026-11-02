@@ -82,6 +82,27 @@ msgstr ""
 "Vous êtes sur la liste d'attente, mais nous n'avons pas pu vous ajouter au "
 "groupe : %(reason)s"
 
+#: pretix_sideburn_lottery/forms.py
+msgid "Lottery"
+msgstr "Loterie"
+
+#: pretix_sideburn_lottery/forms.py
+msgid "Allow registrants to line up together"
+msgstr "Permettre aux inscrits de faire la file ensemble"
+
+#: pretix_sideburn_lottery/forms.py
+msgid ""
+"Registrants for this product can create or join a group when they sign up "
+"for the waiting list. A group enters the lottery as one entry, so its "
+"members are offered tickets together. Being in a group does not improve "
+"chances of getting a ticket."
+msgstr ""
+"Les inscrits pour ce produit peuvent créer ou rejoindre un groupe lors de "
+"leur inscription sur la liste d'attente. Un groupe participe à la loterie "
+"comme une seule inscription, ses membres se voient donc proposer des billets "
+"ensemble. Faire partie d'un groupe n'augmente pas les chances d'obtenir un "
+"billet."
+
 #: pretix_sideburn_lottery/models.py
 msgid "Created"
 msgstr "Date de création"
@@ -105,6 +126,10 @@ msgstr "Appartenance à un groupe de loterie"
 #: pretix_sideburn_lottery/models.py
 msgid "Lottery group memberships"
 msgstr "Appartenances à un groupe de loterie"
+
+#: pretix_sideburn_lottery/services/groups.py
+msgid "Groups aren't available for this product."
+msgstr "Les groupes ne sont pas disponibles pour ce produit."
 
 #: pretix_sideburn_lottery/services/groups.py
 msgid ""

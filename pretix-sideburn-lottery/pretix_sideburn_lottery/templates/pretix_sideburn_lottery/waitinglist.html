@@ -1,5 +1,5 @@
 {% extends "pretixpresale/event/base.html" %}
-{% load i18n eventurl bootstrap3 %}
+{% load i18n eventurl bootstrap3 static %}
 {% block title %}{% trans "Waiting list" %}{% endblock %}
 {% block content %}
 <h2>{% trans "How do tickets work for SideBurn?" %}</h2>
@@ -36,4 +36,5 @@
             </div>
         </div>
     </form>
+    <script type="text/javascript" src="{% static "pretix_sideburn_lottery/js/waitinglist_groups.js" %}"></script>
 {% endblock %}
