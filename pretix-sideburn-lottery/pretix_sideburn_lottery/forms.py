@@ -137,7 +137,8 @@ class ItemLotteryGroupsForm(forms.Form):
         required=False,
         help_text=_(
             "Registrants for this product can create or join a group when they sign up for the waiting "
-            "list. A group enters the lottery as one entry, so its members are offered tickets together."
+            "list. A group enters the lottery as one entry, so its members are offered tickets together. "
+            "Being in a group does not improve chances of getting a ticket."
         ),
     )
 
