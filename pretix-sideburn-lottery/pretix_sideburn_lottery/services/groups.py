@@ -28,6 +28,22 @@ def lottery_has_run(event, item_id):
     return bool(event.settings.get(f"lottery_date_for_item_{item_id}"))
 
 
+def groups_allowed(event, item_id):
+    return event.settings.get(f"lottery_groups_allowed_item_{item_id}", as_type=bool, default=False)
+
+
+def set_groups_allowed(event, item_id, allowed):
+    if allowed:
+        event.settings.set(f"lottery_groups_allowed_item_{item_id}", True)
+    else:
+        event.settings.delete(f"lottery_groups_allowed_item_{item_id}")
+
+
+def ensure_groups_allowed(event, item_id):
+    if not groups_allowed(event, item_id):
+        raise ValidationError(_("Groups aren't available for this product."))
+
+
 def get_group(entry):
     membership = LotteryGroupMembership.objects.filter(entry=entry).select_related("group").first()
     return membership.group if membership else None
@@ -74,6 +90,7 @@ def _remove_membership(entry):
 @transaction.atomic
 def create_group(entry):
     """Create a new group for the entry's product, moving the entry out of any group it's in."""
+    ensure_groups_allowed(entry.event, entry.item_id)
     _ensure_unlocked(entry)
     _remove_membership(entry)
     group = LotteryGroup.objects.create(
@@ -88,6 +105,7 @@ def create_group(entry):
 @transaction.atomic
 def join_group(entry, code):
     """Add the entry to the group with this code, moving it out of any group it's in."""
+    ensure_groups_allowed(entry.event, entry.item_id)
     _ensure_unlocked(entry)
     group = find_group(entry.event, entry.item_id, code, for_update=True)
     if group.memberships.filter(entry=entry).exists():

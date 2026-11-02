@@ -14,12 +14,14 @@ from pretix_sideburn_lottery.models import LotteryGroup, LotteryGroupMembership
 from pretix_sideburn_lottery.services import groups
 from pretix_sideburn_lottery.services.groups import (
     GROUP_CODE_CHARSET, GROUP_CODE_LENGTH, create_group, generate_group_code,
-    get_group, join_group, leave_group, normalize_group_code,
+    get_group, groups_allowed, join_group, leave_group, normalize_group_code,
+    set_groups_allowed,
 )
 
 
 @pytest.fixture
 def entries(lottery_env):
+    set_groups_allowed(lottery_env["event"], lottery_env["item"].pk, True)
     with scopes_disabled():
         return [
             WaitingListEntry.objects.create(
@@ -87,6 +89,7 @@ def test_join_group_unknown_code(entries):
 @scopes_disabled()
 def test_join_group_for_different_product(lottery_env, entries):
     other_item = Item.objects.create(event=lottery_env["event"], name="Other", default_price=10)
+    set_groups_allowed(lottery_env["event"], other_item.pk, True)
     other_entry = WaitingListEntry.objects.create(
         event=lottery_env["event"], item=other_item, email="other@example.org"
     )
@@ -203,6 +206,36 @@ def test_lottery_on_other_product_does_not_lock_groups(lottery_env, entries):
     group = create_group(entries[0])
     join_group(entries[1], group.code)
     leave_group(entries[1])
+
+
+@pytest.mark.django_db
+@scopes_disabled()
+def test_groups_not_allowed_by_default(lottery_env):
+    assert not groups_allowed(lottery_env["event"], lottery_env["item"].pk)
+
+
+@pytest.mark.django_db
+@scopes_disabled()
+def test_create_and_join_refused_when_product_does_not_allow_groups(lottery_env, entries):
+    group = create_group(entries[0])
+    set_groups_allowed(lottery_env["event"], lottery_env["item"].pk, False)
+
+    with pytest.raises(ValidationError):
+        create_group(entries[1])
+    with pytest.raises(ValidationError):
+        join_group(entries[1], group.code)
+    assert get_group(entries[1]) is None
+
+
+@pytest.mark.django_db
+@scopes_disabled()
+def test_can_leave_group_after_product_stops_allowing_groups(lottery_env, entries):
+    create_group(entries[0])
+    set_groups_allowed(lottery_env["event"], lottery_env["item"].pk, False)
+
+    leave_group(entries[0])
+
+    assert get_group(entries[0]) is None
 
 
 @pytest.mark.django_db

@@ -6,10 +6,11 @@ from i18nfield.strings import LazyI18nString
 from pretix.base.email import SimpleFunctionalMailTextPlaceholder
 from pretix.base.settings import settings_hierarkey
 from pretix.base.signals import (
+    item_copy_data,
     register_mail_placeholders,
     waitinglist_entry_created,
 )
-from pretix.control.signals import waitinglist_index_html
+from pretix.control.signals import item_forms, waitinglist_index_html
 from pretix.presale.signals import (
     checkout_questions_top,
     front_page_bottom,
@@ -18,7 +19,8 @@ from pretix.presale.signals import (
     waitinglist_template_name,
 )
 
-from .forms import waitinglist_form_with_group
+from .forms import ItemLotteryGroupsForm, waitinglist_form_with_group
+from .services.groups import groups_allowed, set_groups_allowed
 from .services.presale import get_sold_out_label
 from .services.rank import get_waiting_list_rank
 from .services.waitinglist import (
@@ -82,6 +84,21 @@ def provide_waitinglist_template(sender, **kwargs):
 @receiver(waitinglist_form_class, dispatch_uid="sideburn_lottery_waitinglist_group_form")
 def inject_waitinglist_group_fields(sender, cls, **kwargs):
     return waitinglist_form_with_group(cls)
+
+
+@receiver(item_forms, dispatch_uid="sideburn_lottery_item_groups_form")
+def item_lottery_groups_form(sender, request, item, **kwargs):
+    return ItemLotteryGroupsForm(
+        event=sender,
+        item=item,
+        data=(request.POST if request.method == "POST" else None),
+        prefix="sideburn_lottery",
+    )
+
+
+@receiver(item_copy_data, dispatch_uid="sideburn_lottery_item_copy_groups")
+def copy_item_lottery_groups_setting(sender, source, target, **kwargs):
+    set_groups_allowed(target.event, target.pk, groups_allowed(source.event, source.pk))
 
 
 @receiver(sold_out_availability, dispatch_uid="sideburn_lottery_sold_out_availability")

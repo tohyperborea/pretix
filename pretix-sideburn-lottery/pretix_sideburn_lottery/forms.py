@@ -6,10 +6,13 @@ from django.utils.translation import gettext, gettext_lazy as _
 from .services.groups import (
     create_group,
     ensure_group_has_room,
+    ensure_groups_allowed,
     ensure_groups_unlocked,
     find_group,
+    groups_allowed,
     join_group,
     lottery_has_run,
+    set_groups_allowed,
 )
 
 GROUP_NONE = "none"
@@ -32,7 +35,12 @@ class WaitingListGroupMixin:
         super().__init__(*args, **kwargs)
 
         item_ids = {value.split("-")[0] for _category, choices in itemvars for value, _label in choices}
-        if all(lottery_has_run(self.event, item_id) for item_id in item_ids):
+        group_item_ids = sorted(
+            item_id
+            for item_id in item_ids
+            if groups_allowed(self.event, item_id) and not lottery_has_run(self.event, item_id)
+        )
+        if not group_item_ids:
             return
 
         self.fields["lottery_group_action"] = forms.ChoiceField(
@@ -44,7 +52,7 @@ class WaitingListGroupMixin:
             ],
             initial=GROUP_NONE,
             required=False,
-            widget=forms.RadioSelect,
+            widget=forms.RadioSelect(attrs={"data-lottery-group-items": ",".join(group_item_ids)}),
             help_text=gettext(
                 "Optional. Joining a group doesn't change your odds in the lottery: your group is one entry, "
                 "same as someone registering on their own. When tickets are offered, your group needs one "
@@ -56,12 +64,7 @@ class WaitingListGroupMixin:
             required=False,
             max_length=32,
             help_text=_("Ask the person who created the group for its code."),
-            widget=forms.TextInput(
-                attrs={
-                    "autocomplete": "off",
-                    "data-display-dependency": "#id_lottery_group_action_2",
-                }
-            ),
+            widget=forms.TextInput(attrs={"autocomplete": "off"}),
         )
 
     def clean(self):
@@ -71,6 +74,7 @@ class WaitingListGroupMixin:
             return data
 
         try:
+            ensure_groups_allowed(self.event, self.instance.item_id)
             ensure_groups_unlocked(self.event, self.instance.item_id)
         except ValidationError as e:
             self.add_error("lottery_group_action", e)
@@ -121,3 +125,27 @@ class WaitingListGroupMixin:
 
 def waitinglist_form_with_group(cls):
     return type("WaitingListFormWithGroup", (WaitingListGroupMixin, cls), {})
+
+
+class ItemLotteryGroupsForm(forms.Form):
+    """Per-product switch for lottery groups, shown on the product edit page."""
+
+    title = _("Lottery")
+
+    allow_groups = forms.BooleanField(
+        label=_("Allow registrants to line up together"),
+        required=False,
+        help_text=_(
+            "Registrants for this product can create or join a group when they sign up for the waiting "
+            "list. A group enters the lottery as one entry, so its members are offered tickets together."
+        ),
+    )
+
+    def __init__(self, *args, event, item, **kwargs):
+        self.event = event
+        self.item = item
+        super().__init__(*args, **kwargs)
+        self.fields["allow_groups"].initial = groups_allowed(event, item.pk)
+
+    def save(self):
+        set_groups_allowed(self.event, self.item.pk, self.cleaned_data["allow_groups"])

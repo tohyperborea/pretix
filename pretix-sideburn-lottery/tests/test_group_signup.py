@@ -13,7 +13,9 @@ from django_scopes import scopes_disabled
 
 from pretix.base.models import Event, Item, Organizer, Quota, WaitingListEntry
 from pretix_sideburn_lottery import forms as group_forms
-from pretix_sideburn_lottery.services.groups import create_group, get_group
+from pretix_sideburn_lottery.services.groups import (
+    create_group, get_group, set_groups_allowed,
+)
 
 
 @pytest.fixture
@@ -32,7 +34,15 @@ def signup_env():
     quota = Quota.objects.create(name="Test", size=0, event=event)
     item = Item.objects.create(event=event, name="Ticket", default_price=23, admission=True)
     quota.items.add(item)
-    return {"organizer": organizer, "event": event, "item": item}
+    set_groups_allowed(event, item.pk, True)
+    return {"organizer": organizer, "event": event, "item": item, "quota": quota}
+
+
+@scopes_disabled()
+def add_product_without_groups(env):
+    item = Item.objects.create(event=env["event"], name="Vehicle pass", default_price=10, admission=True)
+    env["quota"].items.add(item)
+    return item
 
 
 def sign_up(client, item, email="foo@bar.com", **group_fields):
@@ -61,6 +71,35 @@ def test_signup_form_offers_groups(client, signup_env):
     assert b'name="lottery_group_action"' in response.content
     assert b'name="lottery_group_code"' in response.content
     assert b"Groups can have up to 10 people." in response.content
+
+
+@pytest.mark.django_db
+def test_signup_form_hides_groups_when_no_product_allows_them(client, signup_env):
+    set_groups_allowed(signup_env["event"], signup_env["item"].pk, False)
+
+    response = client.get("/dummy/dummy/waitinglist/?item=%d" % signup_env["item"].pk)
+
+    assert b'name="lottery_group_action"' not in response.content
+
+
+@pytest.mark.django_db
+def test_signup_form_marks_which_products_allow_groups(client, signup_env):
+    add_product_without_groups(signup_env)
+
+    response = client.get("/dummy/dummy/waitinglist/?item=%d" % signup_env["item"].pk)
+
+    assert 'data-lottery-group-items="{}"'.format(signup_env["item"].pk) in response.content.decode()
+    assert b"pretix_sideburn_lottery/js/waitinglist_groups.js" in response.content
+
+
+@pytest.mark.django_db
+def test_signup_group_for_product_without_groups_shows_error(client, signup_env):
+    other_item = add_product_without_groups(signup_env)
+
+    response = sign_up(client, other_item, lottery_group_action="create")
+
+    assert entry_for("foo@bar.com") is None
+    assert "Groups aren&#x27;t available for this product." in response.content.decode()
 
 
 @pytest.mark.django_db
@@ -127,6 +166,7 @@ def test_signup_join_full_group_shows_error(client, signup_env):
 def test_signup_join_for_different_product_shows_error(client, signup_env):
     with scopes_disabled():
         other_item = Item.objects.create(event=signup_env["event"], name="Other", default_price=10)
+        set_groups_allowed(signup_env["event"], other_item.pk, True)
         other_entry = WaitingListEntry.objects.create(
             event=signup_env["event"], item=other_item, email="other@bar.com"
         )
