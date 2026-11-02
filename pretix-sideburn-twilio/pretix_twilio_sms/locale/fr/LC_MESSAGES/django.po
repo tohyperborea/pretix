@@ -1,6 +1,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: pretix-sideburn-twilio\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-10-19 15:03-0400\n"
 "Language: fr\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -9,102 +11,128 @@ msgstr ""
 
 #: pretix_twilio_sms/apps.py
 msgid "Sideburn Twilio Integration"
-msgstr ""
+msgstr "Intégration Twilio Sideburn"
 
 #: pretix_twilio_sms/apps.py
 msgid "A Sideburn-specific twilio integration for pretix"
-msgstr ""
+msgstr "Une intégration Twilio propre à Sideburn pour pretix"
 
 #: pretix_twilio_sms/forms.py
 msgid "I want to receive SMS updates"
-msgstr ""
+msgstr "Je souhaite recevoir des mises à jour par SMS"
 
 #: pretix_twilio_sms/forms.py
 msgid "Send me SMS notifications when my waitlist spot is ready"
 msgstr ""
+"Envoyez-moi une notification par SMS lorsque ma place sur la liste d'attente "
+"est prête"
 
 #: pretix_twilio_sms/forms.py
 msgid "Phone number for SMS"
-msgstr ""
+msgstr "Numéro de téléphone pour les SMS"
 
 #: pretix_twilio_sms/forms.py
 msgid "Required if you opt in to SMS notifications."
-msgstr ""
+msgstr "Obligatoire si vous acceptez les notifications par SMS."
 
 #: pretix_twilio_sms/forms.py
 msgid "A phone number is required when opting in to SMS notifications."
 msgstr ""
+"Un numéro de téléphone est obligatoire pour recevoir les notifications par "
+"SMS."
 
 #: pretix_twilio_sms/models.py
 msgid "Customer"
-msgstr ""
+msgstr "Client"
 
 #: pretix_twilio_sms/models.py
 msgid "SMS opt-in"
-msgstr ""
+msgstr "Consentement aux SMS"
 
 #: pretix_twilio_sms/models.py
 msgid "Whether the customer agreed to receive SMS notifications."
-msgstr ""
+msgstr "Indique si le client a accepté de recevoir des notifications par SMS."
 
 #: pretix_twilio_sms/models.py
 msgid "Last changed"
-msgstr ""
+msgstr "Dernière modification"
 
 #: pretix_twilio_sms/models.py
 msgid "Customer SMS preference"
-msgstr ""
+msgstr "Préférence SMS du client"
 
 #: pretix_twilio_sms/models.py
 msgid "Customer SMS preferences"
-msgstr ""
+msgstr "Préférences SMS des clients"
 
 #: pretix_twilio_sms/models.py
 msgid "opted in"
-msgstr ""
+msgstr "abonné"
 
 #: pretix_twilio_sms/models.py
 msgid "opted out"
+msgstr "désabonné"
+
+#. Translators: "STOP" is Twilio's opt-out keyword and must stay in English.
+#: pretix_twilio_sms/services.py
+msgid "Your Sideburn waitlist number is up! Reply STOP to opt out."
 msgstr ""
+"Votre tour est arrivé sur la liste d'attente Sideburn ! Répondez STOP pour "
+"vous désabonner."
+
+#. Translators: "STOP" is Twilio's opt-out keyword and must stay in English.
+#: pretix_twilio_sms/services.py
+#, python-brace-format
+msgid ""
+"Your Sideburn waitlist number is up! Use your voucher now: {url} Reply STOP "
+"to opt out."
+msgstr ""
+"Votre tour est arrivé sur la liste d'attente Sideburn ! Utilisez votre bon "
+"d'achat dès maintenant : {url} Répondez STOP pour vous désabonner."
 
 #: pretix_twilio_sms/signals.py
 msgid "Twilio Account SID"
-msgstr ""
+msgstr "SID du compte Twilio"
 
 #: pretix_twilio_sms/signals.py
 msgid ""
 "The Account SID of your Twilio project, used to authenticate API requests."
 msgstr ""
+"Le SID du compte de votre projet Twilio, utilisé pour authentifier les "
+"requêtes API."
 
 #: pretix_twilio_sms/signals.py
 msgid "Twilio Auth Token"
-msgstr ""
+msgstr "Jeton d'authentification Twilio"
 
 #: pretix_twilio_sms/signals.py
 msgid "The Auth Token of your Twilio project. This will be stored encrypted."
 msgstr ""
+"Le jeton d'authentification de votre projet Twilio. Il sera stocké sous forme"
+" chiffrée."
 
 #: pretix_twilio_sms/signals.py
 msgid "Twilio phone number"
-msgstr ""
+msgstr "Numéro de téléphone Twilio"
 
 #: pretix_twilio_sms/signals.py
 msgid ""
 "The Twilio phone number that will be used as the sender for SMS messages."
-msgstr ""
+msgstr "Le numéro de téléphone Twilio utilisé comme expéditeur des SMS."
 
 #: pretix_twilio_sms/signals.py
 msgid "Twilio webhook auth token"
-msgstr ""
+msgstr "Jeton d'authentification des webhooks Twilio"
 
 #: pretix_twilio_sms/signals.py
 msgid "Optional shared secret used to validate incoming Twilio webhooks."
 msgstr ""
+"Secret partagé facultatif servant à valider les webhooks Twilio entrants."
 
 #: pretix_twilio_sms/templates/pretix_twilio_sms/fragment/customer_sms_status.html
 msgid "You are signed up to receive SMS updates"
-msgstr ""
+msgstr "Vous recevrez des mises à jour par SMS"
 
 #: pretix_twilio_sms/templates/pretix_twilio_sms/fragment/customer_sms_status.html
 msgid "You are not signed up to receive SMS updates"
-msgstr ""
+msgstr "Vous ne recevrez pas de mises à jour par SMS"

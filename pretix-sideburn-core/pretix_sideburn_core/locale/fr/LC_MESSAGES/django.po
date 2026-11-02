@@ -1,11 +1,30 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: pretix-sideburn-core\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-10-19 15:00-0400\n"
 "Language: fr\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n > 1;\n"
+
+#: pretix_sideburn_core/apps.py
+msgid "Sideburn Core"
+msgstr "Sideburn Core"
+
+#: pretix_sideburn_core/apps.py
+msgid ""
+"Sideburn storefront customizations (login-required storefront, waiting-list "
+"form, order cancel button, Burning Man disclaimer, copy) and waiting-list "
+"operations (quota bypass, duplicate voucher check, deleting entries with "
+"vouchers)"
+msgstr ""
+"Personnalisations de la boutique Sideburn (boutique réservée aux clients "
+"connectés, formulaire de liste d'attente, bouton d'annulation de commande, "
+"avertissement Burning Man, textes) et opérations sur la liste d'attente "
+"(contournement des quotas, vérification des bons en double, suppression des "
+"inscriptions avec bons)"
 
 #: pretix_sideburn_core/signals.py
 msgid ""
@@ -15,10 +34,134 @@ msgstr ""
 "Nous vous enverrons une confirmation de votre commande et un lien si vous "
 "souhaitez modifier votre commande ultérieurement."
 
+# Used in pretix core:
+# src/pretix/presale/templates/pretixpresale/fragment_login_status.html
+#: pretix_sideburn_core/signals.py
+msgid "My Orders"
+msgstr "Mes commandes"
+
+#: pretix_sideburn_core/templates/pretix_sideburn_core/delete_selected.html
+msgid "Delete entries"
+msgstr "Supprimer des entrées"
+
+#: pretix_sideburn_core/templates/pretix_sideburn_core/delete_selected.html
+msgid "Delete entries (including entries with vouchers)"
+msgstr "Supprimer des inscriptions (y compris celles avec un bon)"
+
+#: pretix_sideburn_core/templates/pretix_sideburn_core/delete_selected.html
+#, python-format
+msgid "Are you sure you want to delete the following entry?"
+msgid_plural "Are you sure you want to delete the following %(num)s entries?"
+msgstr[0] "Voulez-vous vraiment supprimer l'inscription suivante ?"
+msgstr[1] "Voulez-vous vraiment supprimer les %(num)s inscriptions suivantes ?"
+
+#: pretix_sideburn_core/templates/pretix_sideburn_core/delete_selected.html
+msgid "Orders are not affected. This cannot be undone."
+msgstr "Les commandes ne sont pas affectées. Cette action est irréversible."
+
+#: pretix_sideburn_core/templates/pretix_sideburn_core/delete_selected.html
+msgid "Warning:"
+msgstr "Avertissement :"
+
+#: pretix_sideburn_core/templates/pretix_sideburn_core/delete_selected.html
+msgid ""
+"Deleting an entry does not cancel its voucher. Choose what happens to the "
+"vouchers that are still valid:"
+msgstr ""
+"La suppression d'une inscription n'annule pas son bon. Choisissez ce qu'il "
+"advient des bons encore valides :"
+
+#: pretix_sideburn_core/templates/pretix_sideburn_core/delete_selected.html
+msgid "Expire them now (recommended)"
+msgstr "Les faire expirer maintenant (recommandé)"
+
+#: pretix_sideburn_core/templates/pretix_sideburn_core/delete_selected.html
+msgid "Delete them"
+msgstr "Les supprimer"
+
+#: pretix_sideburn_core/templates/pretix_sideburn_core/delete_selected.html
+msgid "Leave them active (people can still buy tickets with them)"
+msgstr "Les laisser actifs (ils permettront encore d'acheter des billets)"
+
+#: pretix_sideburn_core/templates/pretix_sideburn_core/delete_selected.html
+msgid "Cancel"
+msgstr "Annuler"
+
+#: pretix_sideburn_core/templates/pretix_sideburn_core/delete_selected.html
+#, python-format
+msgid "Delete %(num)s entry"
+msgid_plural "Delete %(num)s entries"
+msgstr[0] "Supprimer %(num)s inscription"
+msgstr[1] "Supprimer %(num)s inscriptions"
+
+#: pretix_sideburn_core/templates/pretix_sideburn_core/fragment/burning_man_disclaimer.html
+msgid ""
+"Burning Man Project is not a producer or organizer of the Regional Event;"
+msgstr ""
+"Burning Man Project n'est ni producteur ni organisateur de l'événement "
+"régional ;"
+
+#: pretix_sideburn_core/templates/pretix_sideburn_core/fragment/burning_man_disclaimer.html
+msgid ""
+"Burning Man Project accepts no liability arising out of or in connection with"
+" the Regional Event."
+msgstr ""
+"Burning Man Project décline toute responsabilité découlant de l'événement "
+"régional ou liée à celui-ci."
+
+#: pretix_sideburn_core/templates/pretix_sideburn_core/fragment/customer_order_cancel.html
+msgid "Cancellation requested"
+msgstr "Annulation demandée"
+
 #: pretix_sideburn_core/templates/pretix_sideburn_core/fragment/customer_order_cancel.html
 msgid "Request cancellation"
 msgstr "Demander l’annulation"
 
-# Used in pretix core: src/pretix/presale/templates/pretixpresale/fragment_login_status.html
-msgid "My Orders"
-msgstr "Mes commandes"
+#: pretix_sideburn_core/templates/pretix_sideburn_core/fragment/customer_order_cancel.html
+msgid "Cancel order"
+msgstr "Annuler la commande"
+
+#: pretix_sideburn_core/templates/pretix_sideburn_core/fragment/waitinglist_delete_selected.html
+msgid "Delete selected (including entries with vouchers)"
+msgstr "Supprimer la sélection (y compris les inscriptions avec un bon)"
+
+#: pretix_sideburn_core/views.py
+msgid "Invalid selection."
+msgstr "Sélection non valide."
+
+#: pretix_sideburn_core/views.py
+msgid "You did not select any entries."
+msgstr "Vous n'avez sélectionné aucune inscription."
+
+#: pretix_sideburn_core/views.py
+msgid "Still waiting (no voucher yet)"
+msgstr "Toujours en attente (pas encore de bon)"
+
+#: pretix_sideburn_core/views.py
+msgid "Voucher redeemed (ticket bought)"
+msgstr "Bon utilisé (billet acheté)"
+
+#: pretix_sideburn_core/views.py
+msgid "Voucher expired"
+msgstr "Bon périmé"
+
+#: pretix_sideburn_core/views.py
+msgid "Voucher still valid"
+msgstr "Bon encore valide"
+
+#: pretix_sideburn_core/views.py
+msgid "Please choose what should happen to vouchers that are still valid."
+msgstr "Veuillez choisir ce qu'il doit advenir des bons encore valides."
+
+#: pretix_sideburn_core/views.py
+#, python-brace-format
+msgid "{num} waiting list entries have been deleted."
+msgstr "{num} inscriptions sur la liste d'attente ont été supprimées."
+
+#: pretix_sideburn_core/waitinglist.py
+msgid ""
+"You have already been assigned a ticket! Contact ticketing@sideburn.ca if "
+"this is in error."
+msgstr ""
+"Un billet vous a déjà été attribué ! Contactez ticketing@sideburn.ca s'il "
+"s'agit d'une erreur."
