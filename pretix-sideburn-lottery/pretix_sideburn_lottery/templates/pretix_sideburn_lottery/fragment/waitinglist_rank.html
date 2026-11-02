@@ -36,6 +36,43 @@
                                     {% else %}
                                         <span class="text-muted">{% trans "Unable to determine rank." %}</span>
                                     {% endif %}
+                                    {% if product.group %}
+                                        <p>
+                                            {% blocktrans trimmed with code=product.group.code size=product.group_size max=product.group_max_size %}
+                                                Your group code is <strong>{{ code }}</strong> ({{ size }} of {{ max }} people).
+                                            {% endblocktrans %}
+                                        </p>
+                                        {% if product.can_leave_group %}
+                                            <form action="{{ group_url }}" method="post" class="form-inline">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="item" value="{{ product.item_id }}">
+                                                <button type="submit" name="action" value="leave" class="btn btn-default btn-sm">
+                                                    {% trans "Leave group" %}
+                                                </button>
+                                            </form>
+                                        {% endif %}
+                                    {% elif product.can_start_group %}
+                                        <p class="text-muted">
+                                            {% trans "You're registered on your own. Create a group, or join one with a code from a friend." %}
+                                        </p>
+                                        <form action="{{ group_url }}" method="post" class="form-inline">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="item" value="{{ product.item_id }}">
+                                            <button type="submit" name="action" value="create" class="btn btn-default btn-sm">
+                                                {% trans "Create a group" %}
+                                            </button>
+                                        </form>
+                                        <form action="{{ group_url }}" method="post" class="form-inline">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="item" value="{{ product.item_id }}">
+                                            <label class="sr-only" for="group-code-{{ product.item_id }}">{% trans "Group code" %}</label>
+                                            <input type="text" name="code" id="group-code-{{ product.item_id }}" class="form-control input-sm"
+                                                   placeholder="{% trans "Group code" %}" autocomplete="off" maxlength="32">
+                                            <button type="submit" name="action" value="join" class="btn btn-default btn-sm">
+                                                {% trans "Join group" %}
+                                            </button>
+                                        </form>
+                                    {% endif %}
                                 </td>
                             </tr>
                         {% endfor %}

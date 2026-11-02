@@ -11,6 +11,7 @@ from pretix.base.signals import (
     waitinglist_entry_created,
 )
 from pretix.control.signals import item_forms, waitinglist_index_html
+from pretix.multidomain.urlreverse import eventreverse
 from pretix.presale.signals import (
     checkout_questions_top,
     front_page_bottom,
@@ -71,6 +72,7 @@ def render_waiting_list_rank(sender, request, subevent=None, **kwargs):
             "waiting_list_ranks": get_waiting_list_ranks(
                 event, request.customer.email
             ),
+            "group_url": eventreverse(event, "plugins:pretix_sideburn_lottery:group"),
         },
         request=request,
     )
