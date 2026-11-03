@@ -252,6 +252,14 @@ msgstr ""
 msgid "You have been added to the lottery waiting list for {event}"
 msgstr "Inscription confirmée à la liste d'attente de la loterie pour {event}"
 
+#. Translators: Sent by SMS. Avoid characters such as "ê" or curly apostrophes, which
+#. make the SMS cost more than twice as much.
+#: pretix_sideburn_lottery/signals.py
+msgid "If you're in a group, remind your friends to buy their tickets too!"
+msgstr ""
+"Si vous faites partie d'un groupe, rappelez à vos amis d'acheter leurs "
+"billets aussi !"
+
 #: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/checkout_waiver.html
 msgid "Before you proceed, please read the following documents:"
 msgstr "Avant de continuer, veuillez lire les documents suivants :"

@@ -80,15 +80,16 @@ msgstr ""
 "Votre tour est arrivé sur la liste d'attente Sideburn ! Répondez STOP pour "
 "vous désabonner."
 
-#. Translators: "STOP" is Twilio's opt-out keyword and must stay in English.
+#. Translators: Keep this short; the whole SMS must fit in 160 characters.
 #: pretix_twilio_sms/services.py
 #, python-brace-format
-msgid ""
-"Your Sideburn waitlist number is up! Use your voucher now: {url} Reply STOP "
-"to opt out."
-msgstr ""
-"Votre tour est arrivé sur la liste d'attente Sideburn ! Utilisez votre bon "
-"d'achat dès maintenant : {url} Répondez STOP pour vous désabonner."
+msgid "Your Sideburn waitlist number is up! Voucher: {url}"
+msgstr "Sideburn : c'est votre tour ! Bon d'achat : {url}"
+
+#. Translators: "STOP" is Twilio's opt-out keyword and must stay in English.
+#: pretix_twilio_sms/services.py
+msgid "Reply STOP to opt out."
+msgstr "Désabonnement : répondez STOP."
 
 #: pretix_twilio_sms/signals.py
 msgid "Twilio Account SID"

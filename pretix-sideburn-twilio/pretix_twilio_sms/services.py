@@ -26,6 +26,28 @@ WAITING_LIST_SMS_MESSAGE = gettext_lazy(
 # Minimum number of digits for a plausible phone number (E.164 allows 10–15).
 MIN_PHONE_DIGITS = 10
 
+GSM7_BASIC = frozenset(
+    "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?"
+    "¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà"
+)
+GSM7_EXTENDED = frozenset("^{}\\[~]|€")
+
+
+def sms_segment_count(text):
+    """
+    Number of SMS segments Twilio bills for ``text``.
+
+    GSM-7 fits 160 characters in one segment (153 each once split); any other character switches
+    the whole message to UCS-2, which fits 70 (67 each once split).
+    """
+    if all(c in GSM7_BASIC or c in GSM7_EXTENDED for c in text):
+        length = sum(2 if c in GSM7_EXTENDED else 1 for c in text)
+        single, multi = 160, 153
+    else:
+        length = len(text.encode("utf-16-le")) // 2
+        single, multi = 70, 67
+    return 1 if length <= single else -(-length // multi)
+
 
 def _build_waiting_list_redeem_url(event, voucher):
     """
@@ -39,17 +61,28 @@ def _build_waiting_list_redeem_url(event, voucher):
     return eventreverse_absolute(event, "presale:event.redeem") + "?" + urlencode(url_params)
 
 
-def _build_waiting_list_sms_message(event, voucher):
+def _build_waiting_list_sms_message(entry):
     """
-    Build waiting-list SMS text with direct redeem link + opt-out footer.
+    Build waiting-list SMS text: direct redeem link, any extra text from other plugins, opt-out footer.
+
+    Without extra text, the message must fit in one 160-character SMS segment.
     """
-    redeem_url = _build_waiting_list_redeem_url(event, voucher)
+    from .signals import waiting_list_sms_extra_text
+
+    event = entry.event
+    redeem_url = _build_waiting_list_redeem_url(event, entry.voucher)
     if not redeem_url:
         return str(WAITING_LIST_SMS_MESSAGE)
-    return gettext(
-        # Translators: "STOP" is Twilio's opt-out keyword and must stay in English.
-        "Your Sideburn waitlist number is up! Use your voucher now: {url} Reply STOP to opt out."
-    ).format(url=redeem_url)
+    parts = [
+        gettext(
+            # Translators: Keep this short; the whole SMS must fit in 160 characters.
+            "Your Sideburn waitlist number is up! Voucher: {url}"
+        ).format(url=redeem_url)
+    ]
+    parts += [text for _, text in waiting_list_sms_extra_text.send(event, entry=entry) if text]
+    # Translators: "STOP" is Twilio's opt-out keyword and must stay in English.
+    parts.append(gettext("Reply STOP to opt out."))
+    return " ".join(str(p) for p in parts)
 
 
 def _get_twilio_config():
@@ -292,13 +325,14 @@ def queue_waiting_list_sms_for_entry(*, entry):
         )
         return
 
+    with language(entry.locale, event.settings.region):
+        message = _build_waiting_list_sms_message(entry)
     logger.info(
-        "pretix_twilio_sms: queueing waiting list SMS task entry_id=%s event_id=%s",
+        "pretix_twilio_sms: queueing waiting list SMS task entry_id=%s event_id=%s segments=%s",
         entry.pk,
         event_id,
+        sms_segment_count(message),
     )
-    with language(entry.locale, event.settings.region):
-        message = _build_waiting_list_sms_message(event, voucher)
     send_waiting_list_sms_task.apply_async(
         kwargs={
             "event_id": event.pk,
