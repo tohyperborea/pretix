@@ -6,6 +6,9 @@ from django.http import HttpResponse
 from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
 
+from ..models import LotteryGroupMembership
+from .groups import groups_allowed
+
 
 def lottery_results_filename(event_slug, *, revert=False):
     if revert:
@@ -13,11 +16,34 @@ def lottery_results_filename(event_slug, *, revert=False):
     return "{}_lottery_results".format(event_slug)
 
 
+def _lottery_units(entries, groups_by_entry):
+    """
+    Split entries into lottery units: one per solo entry, one per group.
+
+    A group draws as a single unit so its members end up next to each other in line.
+    Members are shuffled within their unit so join order doesn't decide who goes first.
+    """
+    units = []
+    group_units = {}
+    for w in entries:
+        group = groups_by_entry.get(w.pk)
+        if group is None:
+            units.append([w])
+        elif group.pk in group_units:
+            group_units[group.pk].append(w)
+        else:
+            group_units[group.pk] = [w]
+            units.append(group_units[group.pk])
+    for unit in units:
+        random.shuffle(unit)
+    return units
+
+
 def run_lottery(event, queryset, item_id, *, revert=False):
     """
     Run or revert the waiting-list lottery for a product.
 
-    Shuffles priorities (run) or restores original order (revert), updates
+    Shuffles solo entries and whole groups (run) or restores signup order (revert), updates
     lottery_date_for_item_{item_id} on the event, and returns a CSV download.
 
     Returns None if there are no matching waiting-list entries.
@@ -29,17 +55,26 @@ def run_lottery(event, queryset, item_id, *, revert=False):
     output = io.StringIO()
     writer = csv.writer(output, quoting=csv.QUOTE_NONNUMERIC, delimiter=",")
 
-    qs = sorted(qs, key=lambda o: o.created, reverse=True)
-    priority_count = len(qs)
-    new_priorities = list(range(1, priority_count + 1))
+    groups_by_entry = {}
+    if groups_allowed(event, item_id):
+        groups_by_entry = {
+            m.entry_id: m.group
+            for m in LotteryGroupMembership.objects.filter(
+                entry_id__in=[w.pk for w in qs]
+            ).select_related("group")
+        }
 
-    if not revert:
-        random.shuffle(new_priorities)
-    new_priorities_iter = iter(new_priorities)
+    qs = sorted(qs, key=lambda o: o.created)
+    if revert:
+        ordered = qs
+    else:
+        units = _lottery_units(qs, groups_by_entry)
+        random.shuffle(units)
+        ordered = [w for unit in units for w in unit]
 
-    for w in qs:
+    for w, priority in zip(ordered, range(len(ordered), 0, -1)):
         w.old_priority = w.priority
-        w.priority = next(new_priorities_iter)
+        w.priority = priority
         w.save(update_fields=["priority"])
 
     qs = sorted(qs, key=lambda o: o.priority, reverse=True)
@@ -60,6 +95,7 @@ def run_lottery(event, queryset, item_id, *, revert=False):
         _("Language"),
         _("Priority"),
         "OldPriority",
+        "GroupCode",
     ]
     writer.writerow(headers)
 
@@ -90,6 +126,7 @@ def run_lottery(event, queryset, item_id, *, revert=False):
             w.locale,
             str(w.priority),
             str(w.old_priority),
+            groups_by_entry[w.pk].code if w.pk in groups_by_entry else "",
         ]
         if event.has_subevents:
             row.append(str(w.subevent))

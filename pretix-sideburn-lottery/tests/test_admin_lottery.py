@@ -17,8 +17,12 @@ from django_scopes import scopes_disabled
 from pretix.base.models import (
     Event, Item, Organizer, Quota, Team, User, Voucher, WaitingListEntry,
 )
+from pretix_sideburn_lottery.services.groups import (
+    create_group, get_group, join_group, set_groups_allowed,
+)
 
 WAITING_EMAILS = ["foo{}@bar.com".format(i) for i in range(5)]
+GROUP_EMAILS = ["foo0@bar.com", "foo2@bar.com", "foo4@bar.com"]
 
 
 @pytest.fixture
@@ -90,6 +94,16 @@ def positions(event, item):
         )
 
 
+@scopes_disabled()
+def make_group(event, item, emails):
+    set_groups_allowed(event, item.pk, True)
+    entries = [WaitingListEntry.objects.get(event=event, item=item, email=e) for e in emails]
+    group = create_group(entries[0])
+    for entry in entries[1:]:
+        join_group(entry, group.code)
+    return group
+
+
 @pytest.mark.django_db
 def test_lottery_requires_product(client, admin_lottery_env):
     client.login(email="dummy@dummy.dummy", password="dummy")
@@ -148,6 +162,72 @@ def test_lottery_downloads_results_csv(client, admin_lottery_env):
     for row in rows:
         assert int(row["Priority"]) == after[row["E-mail address"]]
         assert row["OldPriority"] == "0"
+
+
+@pytest.mark.django_db
+def test_lottery_gives_group_members_consecutive_positions(client, admin_lottery_env):
+    client.login(email="dummy@dummy.dummy", password="dummy")
+    event = admin_lottery_env["event"]
+    item1 = admin_lottery_env["item1"]
+    make_group(event, item1, GROUP_EMAILS)
+
+    for _ in range(10):
+        run_lottery(client, item1)
+        after = positions(event, item1)
+        assert sorted(after[email] for email in WAITING_EMAILS) == [1, 2, 3, 4, 5]
+        group_positions = sorted(after[email] for email in GROUP_EMAILS)
+        assert group_positions == list(range(group_positions[0], group_positions[0] + 3))
+
+
+@pytest.mark.django_db
+def test_lottery_csv_shows_group_code(client, admin_lottery_env):
+    client.login(email="dummy@dummy.dummy", password="dummy")
+    event = admin_lottery_env["event"]
+    item1 = admin_lottery_env["item1"]
+    group = make_group(event, item1, GROUP_EMAILS)
+
+    response = run_lottery(client, item1)
+
+    rows = list(csv.DictReader(io.StringIO(response.content.decode("utf-8"))))
+    codes = {r["E-mail address"]: r["GroupCode"] for r in rows}
+    assert codes == {
+        email: group.code if email in GROUP_EMAILS else "" for email in WAITING_EMAILS
+    }
+
+
+@pytest.mark.django_db
+def test_lottery_ignores_groups_when_product_stops_allowing_them(client, admin_lottery_env):
+    client.login(email="dummy@dummy.dummy", password="dummy")
+    event = admin_lottery_env["event"]
+    item1 = admin_lottery_env["item1"]
+    make_group(event, item1, GROUP_EMAILS)
+    set_groups_allowed(event, item1.pk, False)
+
+    split_up = False
+    for _ in range(20):
+        response = run_lottery(client, item1)
+        rows = list(csv.DictReader(io.StringIO(response.content.decode("utf-8"))))
+        assert all(r["GroupCode"] == "" for r in rows)
+        group_positions = sorted(positions(event, item1)[email] for email in GROUP_EMAILS)
+        split_up = split_up or group_positions[2] - group_positions[0] > 2
+
+    assert split_up
+
+
+@pytest.mark.django_db
+def test_revert_restores_signup_order_and_keeps_groups(client, admin_lottery_env):
+    client.login(email="dummy@dummy.dummy", password="dummy")
+    event = admin_lottery_env["event"]
+    item1 = admin_lottery_env["item1"]
+    group = make_group(event, item1, GROUP_EMAILS)
+
+    run_lottery(client, item1)
+    run_lottery(client, item1, revert=True)
+
+    assert admin_list_emails(client, item1) == WAITING_EMAILS
+    with scopes_disabled():
+        for email in GROUP_EMAILS:
+            assert get_group(WaitingListEntry.objects.get(event=event, email=email)) == group
 
 
 @pytest.mark.django_db

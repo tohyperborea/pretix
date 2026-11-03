@@ -160,14 +160,16 @@ def test_leave_group(logged_in, env):
 
 
 @pytest.mark.django_db
-def test_can_leave_after_product_stops_allowing_groups(logged_in, env):
+def test_box_hides_group_when_product_stops_allowing_groups(logged_in, env):
     with scopes_disabled():
-        create_group(env["entry"])
+        group = create_group(env["entry"])
     set_groups_allowed(env["event"], env["item"].pk, False)
 
-    assert 'value="leave"' in event_page(logged_in)
-    post_group(logged_in, env, action="leave")
-    assert group_of(env["entry"]) is None
+    content = event_page(logged_in)
+
+    assert "<th>Group code</th>" not in content
+    assert group.code not in content
+    assert 'value="leave"' not in content
 
 
 @pytest.mark.django_db
