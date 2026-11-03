@@ -63,15 +63,15 @@ def render_waiting_list_rank(sender, request, subevent=None, **kwargs):
     if not ev.presale_is_running:
         return ""
 
+    ranks = get_waiting_list_ranks(event, request.customer.email)
     template = get_template(
         "pretix_sideburn_lottery/fragment/waitinglist_rank.html"
     )
     return template.render(
         {
             "request": request,
-            "waiting_list_ranks": get_waiting_list_ranks(
-                event, request.customer.email
-            ),
+            "waiting_list_ranks": ranks,
+            "show_group_column": any(p["group"] or p["can_start_group"] for p in ranks),
             "group_url": eventreverse(event, "plugins:pretix_sideburn_lottery:group"),
         },
         request=request,

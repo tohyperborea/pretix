@@ -89,17 +89,20 @@ def mark_lottery_run(env):
 def test_box_offers_to_create_or_join_a_group(logged_in, env):
     content = event_page(logged_in)
 
-    assert "You're registered on your own." in content
-    assert 'value="create"' in content
-    assert 'value="join"' in content
+    assert "<th>Group code</th>" in content
+    assert 'action="{}"'.format(GROUP_URL) in content
+    assert 'name="code"' in content
+    # Pressing Enter in the code box submits the first button, which must be "join".
+    assert content.index('value="join"') < content.index('value="create"')
 
 
 @pytest.mark.django_db
-def test_box_has_no_group_controls_when_product_does_not_allow_groups(logged_in, env):
+def test_box_has_no_group_column_when_product_does_not_allow_groups(logged_in, env):
     set_groups_allowed(env["event"], env["item"].pk, False)
 
     content = event_page(logged_in)
 
+    assert "<th>Group code</th>" not in content
     assert 'value="create"' not in content
     assert 'value="join"' not in content
 
@@ -111,7 +114,8 @@ def test_create_group(logged_in, env):
     group = group_of(env["entry"])
     assert group is not None
     assert "Your group code is {}. Share it".format(group.code) in content
-    assert "Your group code is <strong>{}</strong> (1 of 10 people).".format(group.code) in content
+    assert "<strong>{}</strong>".format(group.code) in content
+    assert "(1 of 10 people)" in content
     assert 'value="leave"' in content
 
 
@@ -174,7 +178,7 @@ def test_after_lottery_box_shows_group_without_controls(logged_in, env):
 
     content = event_page(logged_in)
 
-    assert "Your group code is <strong>{}</strong>".format(group.code) in content
+    assert "<strong>{}</strong>".format(group.code) in content
     assert 'value="leave"' not in content
     assert 'value="create"' not in content
 

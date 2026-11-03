@@ -49,6 +49,7 @@ msgstr ""
 "jusqu'à %(max)s personnes."
 
 #: pretix_sideburn_lottery/forms.py pretix_sideburn_lottery/models.py
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
 msgid "Group code"
 msgstr "Code du groupe"
 
@@ -344,23 +345,12 @@ msgstr "Impossible de déterminer votre rang."
 
 #: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
 #, python-format
-msgid ""
-"Your group code is <strong>%(code)s</strong> (%(size)s of %(max)s people)."
-msgstr ""
-"Le code de votre groupe est <strong>%(code)s</strong> (%(size)s personnes "
-"sur %(max)s)."
+msgid "(%(size)s of %(max)s people)"
+msgstr "(%(size)s sur %(max)s personnes)"
 
 #: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
 msgid "Leave group"
 msgstr "Quitter le groupe"
-
-#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
-msgid ""
-"You're registered on your own. Create a group, or join one with a code from "
-"a friend."
-msgstr ""
-"Votre inscription est individuelle. Créez un groupe ou rejoignez-en un avec "
-"le code d'un ami."
 
 #: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
 msgid "Create a group"
