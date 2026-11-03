@@ -17,7 +17,8 @@ import pretix_twilio_sms
 from pretix.base.models import Event, Item, Organizer, WaitingListEntry
 from pretix_sideburn_lottery.services.groups import set_groups_allowed
 from pretix_twilio_sms.services import (
-    _build_waiting_list_sms_message, sms_segment_count,
+    _build_waiting_list_redeem_url, _build_waiting_list_sms_message,
+    sms_segment_count,
 )
 
 REMINDER = "If you're in a group, remind your friends to buy their tickets too!"
@@ -46,18 +47,23 @@ def entry():
     return WaitingListEntry.objects.create(event=event, item=item, email="a@example.com", voucher=voucher)
 
 
+def expected_message(entry, *extra):
+    url = _build_waiting_list_redeem_url(entry.event, entry.voucher)
+    return " ".join(["Your Sideburn waitlist number is up! Voucher: {}".format(url), *extra, "Reply STOP to opt out."])
+
+
 @pytest.mark.django_db
 @scopes_disabled()
 def test_reminder_added_before_opt_out_when_product_allows_groups(entry):
     set_groups_allowed(entry.event, entry.item_id, True)
 
-    assert _build_waiting_list_sms_message(entry).endswith(" {} Reply STOP to opt out.".format(REMINDER))
+    assert _build_waiting_list_sms_message(entry) == expected_message(entry, REMINDER)
 
 
 @pytest.mark.django_db
 @scopes_disabled()
 def test_no_reminder_when_product_does_not_allow_groups(entry):
-    assert REMINDER not in _build_waiting_list_sms_message(entry)
+    assert _build_waiting_list_sms_message(entry) == expected_message(entry)
 
 
 @pytest.mark.django_db
@@ -67,7 +73,7 @@ def test_no_reminder_when_lottery_plugin_is_disabled(entry):
     entry.event.plugins = "pretix_twilio_sms"
     entry.event.save()
 
-    assert REMINDER not in _build_waiting_list_sms_message(entry)
+    assert _build_waiting_list_sms_message(entry) == expected_message(entry)
 
 
 @pytest.mark.parametrize("intro, reminder, opt_out", [
