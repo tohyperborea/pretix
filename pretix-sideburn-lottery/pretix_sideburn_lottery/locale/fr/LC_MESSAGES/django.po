@@ -49,6 +49,7 @@ msgstr ""
 "jusqu'à %(max)s personnes."
 
 #: pretix_sideburn_lottery/forms.py pretix_sideburn_lottery/models.py
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
 msgid "Group code"
 msgstr "Code du groupe"
 
@@ -343,6 +344,23 @@ msgid "Unable to determine rank."
 msgstr "Impossible de déterminer votre rang."
 
 #: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
+#, python-format
+msgid "(%(size)s of %(max)s people)"
+msgstr "(%(size)s sur %(max)s personnes)"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
+msgid "Leave group"
+msgstr "Quitter le groupe"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
+msgid "Create a group"
+msgstr "Créer un groupe"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
+msgid "Join group"
+msgstr "Rejoindre le groupe"
+
+#: pretix_sideburn_lottery/templates/pretix_sideburn_lottery/fragment/waitinglist_rank.html
 msgid "You are not on the waiting list for this event."
 msgstr "Vous n'êtes pas sur la liste d'attente de cet événement."
 
@@ -426,3 +444,11 @@ msgid "No waiting list entries found for the selected product."
 msgstr ""
 "Aucune inscription sur la liste d'attente n'a été trouvée pour le produit "
 "sélectionné."
+
+#: pretix_sideburn_lottery/views/presale.py
+msgid "You are not on the waiting list for this product."
+msgstr "Vous n'êtes pas sur la liste d'attente pour ce produit."
+
+#: pretix_sideburn_lottery/views/presale.py
+msgid "You've left your group."
+msgstr "Vous avez quitté votre groupe."
