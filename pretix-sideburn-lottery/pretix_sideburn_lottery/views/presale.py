@@ -62,7 +62,8 @@ def get_waiting_list_ranks(event, customer_email):
             continue
 
         lottery_run = lottery_has_run(event, entry.item_id)
-        group = get_group(entry)
+        allowed = groups_allowed(event, entry.item_id)
+        group = get_group(entry) if allowed else None
         can_change_group = not lottery_run and entry.voucher_id is None
 
         product_data = {
@@ -76,7 +77,7 @@ def get_waiting_list_ranks(event, customer_email):
             "group_size": group.memberships.count() if group else None,
             "group_max_size": event.settings.lottery_group_max_size,
             "can_leave_group": bool(group) and can_change_group,
-            "can_start_group": not group and can_change_group and groups_allowed(event, entry.item_id),
+            "can_start_group": not group and can_change_group and allowed,
         }
 
         if rank == 0 and entry.voucher:

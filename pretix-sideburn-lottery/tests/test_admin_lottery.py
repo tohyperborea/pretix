@@ -196,6 +196,25 @@ def test_lottery_csv_shows_group_code(client, admin_lottery_env):
 
 
 @pytest.mark.django_db
+def test_lottery_ignores_groups_when_product_stops_allowing_them(client, admin_lottery_env):
+    client.login(email="dummy@dummy.dummy", password="dummy")
+    event = admin_lottery_env["event"]
+    item1 = admin_lottery_env["item1"]
+    make_group(event, item1, GROUP_EMAILS)
+    set_groups_allowed(event, item1.pk, False)
+
+    split_up = False
+    for _ in range(10):
+        response = run_lottery(client, item1)
+        rows = list(csv.DictReader(io.StringIO(response.content.decode("utf-8"))))
+        assert all(r["GroupCode"] == "" for r in rows)
+        group_positions = sorted(positions(event, item1)[email] for email in GROUP_EMAILS)
+        split_up = split_up or group_positions[2] - group_positions[0] > 2
+
+    assert split_up
+
+
+@pytest.mark.django_db
 def test_revert_restores_signup_order_and_keeps_groups(client, admin_lottery_env):
     client.login(email="dummy@dummy.dummy", password="dummy")
     event = admin_lottery_env["event"]
