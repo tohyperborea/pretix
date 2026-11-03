@@ -1,6 +1,7 @@
 from django.dispatch import receiver
 from django.template.loader import get_template
 from django.urls import reverse
+from django.utils.translation import gettext
 from i18nfield.strings import LazyI18nString
 
 from pretix.base.email import SimpleFunctionalMailTextPlaceholder
@@ -161,3 +162,17 @@ def render_waitinglist_lottery_actions(sender, request, **kwargs):
 @receiver(waitinglist_entry_created, dispatch_uid="sideburn_lottery_signup_confirm")
 def send_waitinglist_signup_confirmation(sender, entry, **kwargs):
     send_signup_confirmation(entry, user=kwargs.get("user"), auth=kwargs.get("auth"))
+
+
+try:
+    from pretix_twilio_sms.signals import waiting_list_sms_extra_text
+except ImportError:
+    waiting_list_sms_extra_text = None
+
+if waiting_list_sms_extra_text is not None:
+    @receiver(waiting_list_sms_extra_text, dispatch_uid="sideburn_lottery_sms_group_reminder")
+    def group_reminder_sms_text(sender, entry, **kwargs):
+        if groups_allowed(sender, entry.item_id):
+            # Translators: Sent by SMS. Avoid characters such as "ê" or curly apostrophes, which
+            # make the SMS cost more than twice as much.
+            return gettext("If you're in a group, remind your friends to buy their tickets too!")

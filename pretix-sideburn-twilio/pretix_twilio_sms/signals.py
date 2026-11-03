@@ -7,7 +7,9 @@ from django.template.loader import get_template
 from django.utils.translation import gettext_lazy as _
 
 from pretix.base.forms import SecretKeySettingsField
-from pretix.base.signals import register_global_settings, waiting_list_voucher_sent
+from pretix.base.signals import (
+    EventPluginSignal, register_global_settings, waiting_list_voucher_sent,
+)
 from pretix.presale.signals import (
     change_information_form_class, customer_profile_extra, waitinglist_form_class,
 )
@@ -15,6 +17,16 @@ from pretix.presale.signals import (
 from .services import queue_waiting_list_sms_for_entry
 
 logger = logging.getLogger(__name__)
+
+waiting_list_sms_extra_text = EventPluginSignal()
+"""
+Arguments: ``entry``
+
+Sent while building the SMS for a waiting-list voucher, in the entry's language. Receivers may
+return a short sentence to add before the opt-out line, or ``None``. Every character counts towards
+SMS billing, and a single character outside the GSM-7 set (such as "ê" or a curly apostrophe)
+switches the whole message to UCS-2, which more than doubles its cost.
+"""
 
 
 @receiver(register_global_settings, dispatch_uid="twilio_sms_global_settings")
