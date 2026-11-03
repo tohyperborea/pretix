@@ -204,7 +204,7 @@ def test_lottery_ignores_groups_when_product_stops_allowing_them(client, admin_l
     set_groups_allowed(event, item1.pk, False)
 
     split_up = False
-    for _ in range(10):
+    for _ in range(20):
         response = run_lottery(client, item1)
         rows = list(csv.DictReader(io.StringIO(response.content.decode("utf-8"))))
         assert all(r["GroupCode"] == "" for r in rows)
