@@ -8,6 +8,18 @@
         }
     },
     {
+        "model": "pretixbase.saleschannel",
+        "pk": 1,
+        "fields": {
+            "organizer": 1,
+            "label": "Online shop",
+            "identifier": "web",
+            "type": "web",
+            "position": 0,
+            "configuration": {}
+        }
+    },
+    {
         "model": "pretixbase.organizer_settingsstore",
         "pk": 1,
         "fields": {
@@ -257,23 +269,14 @@
             "organizer": 1,
             "name": "Administrators",
             "all_events": true,
-            "can_create_events": true,
-            "can_change_teams": true,
-            "can_change_organizer_settings": true,
-            "can_manage_customers": true,
-            "can_manage_reusable_media": true,
-            "can_manage_gift_cards": true,
-            "can_change_event_settings": true,
-            "can_change_items": true,
-            "can_view_orders": true,
-            "can_change_orders": true,
-            "can_checkin_orders": false,
-            "can_view_vouchers": true,
-            "can_change_vouchers": true,
             "members": [
                 1
             ],
-            "limit_events": []
+            "limit_events": [],
+            "all_event_permissions": true,
+            "limit_event_permissions": {},
+            "all_organizer_permissions": true,
+            "limit_organizer_permissions": {}
         }
     }
 ]

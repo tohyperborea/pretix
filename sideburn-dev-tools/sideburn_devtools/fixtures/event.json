@@ -12,7 +12,6 @@
             "allow_entry_after_exit": true,
             "allow_multiple_entries": false,
             "exit_all_at": null,
-            "auto_checkin_sales_channels": "[]",
             "rules": {},
             "limit_products": [],
             "gates": []
@@ -41,8 +40,7 @@
             "comment": null,
             "has_subevents": false,
             "seating_plan": null,
-            "last_modified": "2026-01-17T17:15:25.394Z",
-            "sales_channels": "['web']"
+            "last_modified": "2026-01-17T17:15:25.394Z"
         }
     },
     {
