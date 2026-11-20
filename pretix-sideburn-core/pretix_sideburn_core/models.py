@@ -71,14 +71,6 @@ class CustomerAllowlistEntry(models.Model):
         related_name="sideburn_allowlist_entries",
         verbose_name=_("Customer"),
     )
-    first_event = models.ForeignKey(
-        "pretixbase.Event",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="sideburn_allowlist_first_entries",
-        verbose_name=_("First qualifying event"),
-    )
     created = models.DateTimeField(
         auto_now_add=True,
         verbose_name=_("Created"),

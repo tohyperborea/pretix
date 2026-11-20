@@ -41,16 +41,6 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 (
-                    "first_event",
-                    models.ForeignKey(
-                        blank=True,
-                        null=True,
-                        on_delete=django.db.models.deletion.SET_NULL,
-                        related_name="sideburn_allowlist_first_entries",
-                        to="pretixbase.event",
-                    ),
-                ),
-                (
                     "organizer",
                     models.ForeignKey(
                         on_delete=django.db.models.deletion.CASCADE,
