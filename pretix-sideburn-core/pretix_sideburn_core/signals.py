@@ -5,7 +5,7 @@ from django.http import Http404
 from django.shortcuts import redirect
 from django.template.loader import get_template
 from django.urls import Resolver404, resolve, reverse
-from django.utils.translation import gettext_noop
+from django.utils.translation import gettext_lazy as _, gettext_noop
 from i18nfield.strings import LazyI18nString
 
 from pretix.base.models import Order
@@ -13,7 +13,7 @@ from pretix.base.settings import settings_hierarkey
 from pretix.base.signals import (
     waiting_list_send_voucher, waitinglist_entry_validate,
 )
-from pretix.control.signals import waitinglist_index_html
+from pretix.control.signals import nav_organizer, waitinglist_index_html
 from pretix.multidomain.urlreverse import eventreverse
 from pretix.presale.signals import (
     customer_order_actions, front_page_bottom, process_request,
@@ -114,3 +114,36 @@ def render_waitinglist_delete_selected(sender, request, **kwargs):
             "event": request.event.slug,
         }),
     }, request=request)
+
+
+@receiver(nav_organizer, dispatch_uid="sideburn_core_nav_organizer_denylist")
+def control_nav_organizer_allow_denylist(sender, request=None, **kwargs):
+    if not request.organizer.settings.customer_accounts:
+        return []
+    if (
+        "organizer.customers:read" not in request.orgapermset
+        and "organizer.customers:write" not in request.orgapermset
+    ):
+        return []
+    url = resolve(request.path_info)
+    customers_url = reverse(
+        "control:organizer.customers",
+        kwargs={"organizer": request.organizer.slug},
+    )
+    return [
+        {
+            "label": _("Allow/Denylist"),
+            "parent": customers_url,
+            "url": reverse(
+                "plugins:pretix_sideburn_core:denylist",
+                kwargs={"organizer": request.organizer.slug},
+            ),
+            "active": (
+                url.namespace == "plugins:pretix_sideburn_core"
+                and (
+                    url.url_name.startswith("denylist")
+                    or url.url_name.startswith("allowlist")
+                )
+            ),
+        }
+    ]

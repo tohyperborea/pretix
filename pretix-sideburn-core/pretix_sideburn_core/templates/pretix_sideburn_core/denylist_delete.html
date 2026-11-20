@@ -1,0 +1,23 @@
+{% extends "pretixcontrol/organizers/base.html" %}
+{% load i18n %}
+{% block title %}{% trans "Remove from denylist" %}{% endblock %}
+{% block inner %}
+    <h1>{% trans "Remove from denylist" %}</h1>
+    <form action="" method="post" class="form-horizontal">
+        {% csrf_token %}
+        <p>
+            {% blocktrans trimmed with email=entry.customer.email identifier=entry.customer.identifier %}
+                Are you sure you want to remove customer #{{ identifier }} ({{ email }}) from the denylist?
+            {% endblocktrans %}
+        </p>
+        <div class="form-group submit-group">
+            <a href="{% url "plugins:pretix_sideburn_core:denylist" organizer=request.organizer.slug %}"
+               class="btn btn-default btn-cancel">
+                {% trans "Cancel" %}
+            </a>
+            <button type="submit" class="btn btn-danger btn-save">
+                {% trans "Remove" %}
+            </button>
+        </div>
+    </form>
+{% endblock %}
