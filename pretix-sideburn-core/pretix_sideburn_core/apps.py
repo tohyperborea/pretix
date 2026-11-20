@@ -20,7 +20,7 @@ class PluginApp(PluginConfig):
             "Sideburn storefront customizations (login-required storefront, waiting-list form, "
             "order cancel button, Burning Man disclaimer, copy), waiting-list operations "
             "(quota bypass, duplicate voucher check, deleting entries with vouchers), "
-            "and customer allowlist/denylist models"
+            "and allowlist/denylist"
         )
         visible = True
         version = __version__
