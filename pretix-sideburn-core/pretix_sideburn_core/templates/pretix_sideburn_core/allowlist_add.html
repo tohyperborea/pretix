@@ -1,0 +1,21 @@
+{% extends "pretixcontrol/organizers/base.html" %}
+{% load i18n %}
+{% load bootstrap3 %}
+{% block title %}{% trans "Add to allowlist" %}{% endblock %}
+{% block inner %}
+    <h1>{% trans "Add to allowlist" %}</h1>
+    <form class="form-horizontal" action="" method="post">
+        {% csrf_token %}
+        {% bootstrap_form_errors form %}
+        {% bootstrap_field form.customer layout="control" %}
+        <div class="form-group submit-group">
+            <a href="{% url "plugins:pretix_sideburn_core:allowlist" organizer=request.organizer.slug %}"
+               class="btn btn-default btn-cancel">
+                {% trans "Cancel" %}
+            </a>
+            <button type="submit" class="btn btn-primary btn-save">
+                {% trans "Add" %}
+            </button>
+        </div>
+    </form>
+{% endblock %}

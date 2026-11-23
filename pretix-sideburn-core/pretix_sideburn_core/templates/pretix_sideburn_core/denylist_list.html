@@ -4,6 +4,7 @@
 {% block title %}{% trans "Denylist" %}{% endblock %}
 {% block inner %}
     <h1>{% trans "Denylist" %}</h1>
+    {% include "pretix_sideburn_core/fragment/access_list_tabs.html" with active_tab="denylist" %}
     <p class="help-block">
         {% blocktrans trimmed %}
             Customers who should not be able to buy tickets.

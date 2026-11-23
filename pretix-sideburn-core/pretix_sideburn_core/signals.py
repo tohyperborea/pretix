@@ -154,7 +154,7 @@ def control_nav_organizer_allow_denylist(sender, request=None, **kwargs):
             "label": _("Allow/Denylist"),
             "parent": customers_url,
             "url": reverse(
-                "plugins:pretix_sideburn_core:denylist",
+                "plugins:pretix_sideburn_core:allowlist",
                 kwargs={"organizer": request.organizer.slug},
             ),
             "active": (

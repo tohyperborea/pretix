@@ -1,5 +1,6 @@
 from django.urls import re_path
 
+from .allowlist import AllowlistAddView, AllowlistListView
 from .denylist import (
     DenylistAddView, DenylistDeleteView, DenylistListView, DenylistUpdateView,
     denylist_customer_select2,
@@ -11,6 +12,21 @@ urlpatterns = [
         r"^control/event/(?P<organizer>[^/]+)/(?P<event>[^/]+)/sideburn-core/waitinglist/delete-selected/$",
         DeleteSelectedEntriesView.as_view(),
         name="delete_selected_entries",
+    ),
+    re_path(
+        r"^control/organizer/(?P<organizer>[^/]+)/sideburn-core/allowlist/$",
+        AllowlistListView.as_view(),
+        name="allowlist",
+    ),
+    re_path(
+        r"^control/organizer/(?P<organizer>[^/]+)/sideburn-core/allowlist/add/$",
+        AllowlistAddView.as_view(),
+        name="allowlist.add",
+    ),
+    re_path(
+        r"^control/organizer/(?P<organizer>[^/]+)/sideburn-core/allowlist/customers/select2/$",
+        denylist_customer_select2,
+        name="allowlist.customers.select2",
     ),
     re_path(
         r"^control/organizer/(?P<organizer>[^/]+)/sideburn-core/denylist/$",
