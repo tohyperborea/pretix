@@ -74,7 +74,7 @@ def test_event_copy_clones_dgm_structure_without_leaders_or_slots():
     assert copied_group.pk != group.pk
     assert copied_group.item_id == copied_item.pk
     assert copied_group.category_id == copied_category.pk
-    assert copied_group.slot_count == 4
+    assert copied_group.slot_count == group.slot_count
     assert copied_group.leader_id is None
     assert copied_group.slots.count() == 0
 
