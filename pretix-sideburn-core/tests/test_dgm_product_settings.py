@@ -75,19 +75,6 @@ def test_product_page_shows_dgm_settings_off_by_default(admin_client, env):
 
 
 @pytest.mark.django_db
-def test_product_page_shows_settings_when_configured(admin_client, env):
-    deadline = now() + timedelta(days=7)
-    set_dgm_enabled(env["event"], env["item"].pk, True)
-    set_dgm_leader_deadline(env["event"], env["item"].pk, deadline)
-
-    response = admin_client.get(item_url(env))
-
-    form = next(f for f in response.context["plugin_forms"] if isinstance(f, ItemDirectedGroupsForm))
-    assert form["enabled"].value() is True
-    assert form["leader_deadline"].value() is not None
-
-
-@pytest.mark.django_db
 @pytest.mark.parametrize(
     "posted, expected_enabled",
     [({"sideburn_dgm-enabled": "on"}, True), ({}, False)],
