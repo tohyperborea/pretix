@@ -45,10 +45,7 @@ def get_slot_display_status(slot: DirectedGroupSlot) -> SlotDisplayStatus:
 
     if OrderPosition.objects.filter(voucher=voucher).exists():
         return "ticket_purchased"
-    if (
-        OrderPosition.all.filter(voucher=voucher, canceled=True).exists()
-        and not voucher.is_fully_redeemed()
-    ):
+    if OrderPosition.all.filter(voucher=voucher, canceled=True).exists():
         return "ticket_canceled"
     if voucher.is_expired() and not voucher.is_fully_redeemed():
         return "voucher_expired"
