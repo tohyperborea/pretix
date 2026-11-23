@@ -28,6 +28,7 @@ class Command(BaseCommand):
             "customer",
             "event",
             "tickets",
+            "membership_discounts",
             "tax_and_global_settings",
             "ticketlayout",
         ]

@@ -1,0 +1,27 @@
+[
+{
+    "model": "pretixbase.membershiptype",
+    "pk": 1,
+    "fields": {
+        "organizer": 1,
+        "name": "Sample Member",
+        "transferable": false,
+        "allow_parallel_usage": false,
+        "max_usages": null
+    }
+},
+{
+    "model": "pretix_sideburn_core.discountgrantingmembershiprule",
+    "pk": 1,
+    "fields": {
+        "event": 1,
+        "membership_type": 1,
+        "discount_percent": "25.00",
+        "label": "Sample discount",
+        "created": "2026-11-23T00:00:00Z",
+        "products": [
+            1
+        ]
+    }
+}
+]
