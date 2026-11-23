@@ -30,6 +30,10 @@ class DiscountGrantingMembershipRule(LoggedModel):
         ],
     )
     label = models.CharField(_("Label"), max_length=255)
+    created = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name=_("Created"),
+    )
     products = models.ManyToManyField(
         "pretixbase.Item",
         verbose_name=_("Products"),

@@ -21,6 +21,7 @@ class Migration(migrations.Migration):
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False)),
                 ('discount_percent', models.DecimalField(decimal_places=2, max_digits=5)),
                 ('label', models.CharField(max_length=255)),
+                ('created', models.DateTimeField(auto_now_add=True, verbose_name='Created')),
                 ('event', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='membership_discount_rules', to='pretixbase.event')),
                 ('membership_type', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='discount_rules', to='pretixbase.membershiptype')),
                 ('products', models.ManyToManyField(related_name='membership_discount_rules', to='pretixbase.item')),
