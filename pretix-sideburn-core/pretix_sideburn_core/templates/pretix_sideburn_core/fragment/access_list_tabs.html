@@ -1,0 +1,13 @@
+{% load i18n %}
+<ul class="nav nav-tabs" style="margin-bottom: 15px;">
+    <li role="presentation" {% if active_tab == "allowlist" %}class="active"{% endif %}>
+        <a href="{% url "plugins:pretix_sideburn_core:allowlist" organizer=request.organizer.slug %}">
+            {% trans "Allowlist" %}
+        </a>
+    </li>
+    <li role="presentation" {% if active_tab == "denylist" %}class="active"{% endif %}>
+        <a href="{% url "plugins:pretix_sideburn_core:denylist" organizer=request.organizer.slug %}">
+            {% trans "Denylist" %}
+        </a>
+    </li>
+</ul>
