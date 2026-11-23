@@ -26,6 +26,7 @@ from .dgm import (
     dgm_enabled, dgm_leader_deadline, set_dgm_enabled, set_dgm_leader_deadline,
 )
 from .forms import ItemDirectedGroupsForm, waitinglist_form_with_readonly_email
+from .models import DirectedGroup, DirectedGroupCategory
 from .waitinglist import validate_no_active_voucher_duplicate
 
 # Hierarkey defaults are global, so this applies to every event on the instance, with or
@@ -57,6 +58,46 @@ def copy_membership_discount_rules(sender, other, item_map, **kwargs):
         )
         copied_rule.products.set(
             [item_map[product.pk] for product in rule.products.all() if product.pk in item_map]
+        )
+
+
+@receiver(event_copy_data, dispatch_uid="sideburn_core_copy_directed_groups")
+@transaction.atomic
+def copy_directed_groups(sender, other, item_map, variation_map, **kwargs):
+    """
+    Clone DGM product settings, categories, and groups. Leaders are cleared and
+    slot assignment rows are not copied (capacity via slot_count only).
+    """
+    for old_item_id, new_item in item_map.items():
+        set_dgm_enabled(sender, new_item.pk, dgm_enabled(other, old_item_id))
+        set_dgm_leader_deadline(
+            sender, new_item.pk, dgm_leader_deadline(other, old_item_id)
+        )
+
+    category_map = {}
+    for category in other.directed_group_categories.all():
+        category_map[category.pk] = DirectedGroupCategory.objects.create(
+            event=sender,
+            name=category.name,
+        )
+
+    for group in other.directed_groups.all():
+        if group.item_id not in item_map:
+            continue
+        variation = None
+        if group.variation_id:
+            variation = variation_map.get(group.variation_id)
+            if variation is None:
+                continue
+        DirectedGroup.objects.create(
+            event=sender,
+            item=item_map[group.item_id],
+            variation=variation,
+            category=category_map.get(group.category_id),
+            leader=None,
+            name=group.name,
+            slot_count=group.slot_count,
+            created_by=None,
         )
 
 
