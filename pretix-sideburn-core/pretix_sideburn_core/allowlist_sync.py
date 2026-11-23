@@ -1,7 +1,8 @@
 """
-Upsert organizer allowlist rows from past attendance (paid tickets).
+Upsert organizer allowlist rows from past attendance (paid admission tickets).
 
 Idempotent creates only — never removes rows (not on cancel, not on denylist).
+Uses pretix's built-in ``Item.admission`` flag (vs merch/add-ons).
 """
 from __future__ import annotations
 
@@ -12,7 +13,6 @@ from django.utils.timezone import now
 
 from pretix.base.models import Event, Order, OrderPosition
 
-from .allowlist_items import get_allowlist_item_ids
 from .models import CustomerAllowlistEntry
 
 logger = logging.getLogger(__name__)
@@ -33,18 +33,13 @@ def event_uses_plugin(event: Event) -> bool:
     return PLUGIN_MODULE in (event.get_plugins() or [])
 
 
-def sync_event_allowlist(event: Event, *, item_ids: set[int] | None = None) -> int:
+def sync_event_allowlist(event: Event) -> int:
     """
-    Create allowlist entries for customers with paid positions on counting items.
+    Create allowlist entries for customers with paid admission positions.
 
-    Returns the number of newly created rows. Skips events that have not ended
-    or have no counting items configured.
+    Returns the number of newly created rows. Skips events that have not ended.
     """
     if not event_has_ended(event):
-        return 0
-    if item_ids is None:
-        item_ids = get_allowlist_item_ids(event)
-    if not item_ids:
         return 0
 
     customer_ids = (
@@ -52,7 +47,7 @@ def sync_event_allowlist(event: Event, *, item_ids: set[int] | None = None) -> i
             order__event=event,
             order__status=Order.STATUS_PAID,
             order__customer_id__isnull=False,
-            item_id__in=item_ids,
+            item__admission=True,
         )
         .values_list("order__customer_id", flat=True)
         .distinct()
@@ -70,7 +65,7 @@ def sync_event_allowlist(event: Event, *, item_ids: set[int] | None = None) -> i
 
 
 def iter_sync_events(*, organizer=None, event: Event | None = None):
-    """Yield ``(event, item_ids)`` for ended plugin events with counting items."""
+    """Yield ended plugin events that should be scanned for attendance."""
     if event is not None:
         qs = Event.objects.filter(pk=event.pk)
     elif organizer is not None:
@@ -89,10 +84,7 @@ def iter_sync_events(*, organizer=None, event: Event | None = None):
             continue
         if not event_has_ended(ev):
             continue
-        item_ids = get_allowlist_item_ids(ev)
-        if not item_ids:
-            continue
-        yield ev, item_ids
+        yield ev
 
 
 def sync_allowlists(*, organizer=None, event: Event | None = None) -> int:
@@ -102,8 +94,8 @@ def sync_allowlists(*, organizer=None, event: Event | None = None) -> int:
     Returns total newly created allowlist entries across all events processed.
     """
     total = 0
-    for ev, item_ids in iter_sync_events(organizer=organizer, event=event):
-        created = sync_event_allowlist(ev, item_ids=item_ids)
+    for ev in iter_sync_events(organizer=organizer, event=event):
+        created = sync_event_allowlist(ev)
         if created:
             logger.info(
                 "Allowlist sync: created %s entries for event %s/%s",

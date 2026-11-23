@@ -14,7 +14,7 @@ from django_scopes import scopes_disabled
 from pretix.base.models import Order
 from pretix.base.settings import settings_hierarkey
 from pretix.base.signals import (
-    event_copy_data, item_copy_data, periodic_task, waiting_list_send_voucher,
+    event_copy_data, periodic_task, waiting_list_send_voucher,
     waitinglist_entry_validate,
 )
 from pretix.control.signals import nav_organizer, waitinglist_index_html
@@ -25,9 +25,6 @@ from pretix.presale.signals import (
     waitinglist_form_class,
 )
 
-from .allowlist_items import (
-    item_counts_for_allowlist, set_item_counts_for_allowlist,
-)
 from .allowlist_sync import sync_allowlists
 from .forms import waitinglist_form_with_readonly_email
 from .waitinglist import validate_no_active_voucher_duplicate
@@ -62,25 +59,6 @@ def copy_membership_discount_rules(sender, other, item_map, **kwargs):
         copied_rule.products.set(
             [item_map[product.pk] for product in rule.products.all() if product.pk in item_map]
         )
-
-
-@receiver(event_copy_data, dispatch_uid="sideburn_core_copy_allowlist_item_settings")
-def copy_allowlist_item_settings(sender, other, item_map, **kwargs):
-    # Event settings copy keeps source item-id keys; remap and drop the stale ones.
-    for source_pk, target_item in item_map.items():
-        if item_counts_for_allowlist(other, source_pk):
-            set_item_counts_for_allowlist(sender, target_item.pk, True)
-        if source_pk != target_item.pk:
-            set_item_counts_for_allowlist(sender, source_pk, False)
-
-
-@receiver(item_copy_data, dispatch_uid="sideburn_core_item_copy_allowlist_setting")
-def copy_item_allowlist_setting(sender, source, target, **kwargs):
-    set_item_counts_for_allowlist(
-        target.event,
-        target.pk,
-        item_counts_for_allowlist(source.event, source.pk),
-    )
 
 
 @receiver(periodic_task, dispatch_uid="sideburn_core_sync_allowlists_quarterly")

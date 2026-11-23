@@ -8,8 +8,8 @@ from pretix_sideburn_core.allowlist_sync import sync_allowlists
 
 class Command(BaseCommand):
     help = (
-        "Backfill Sideburn allowlist entries from past paid attendance on "
-        "events with allowlist-counting products configured."
+        "Backfill Sideburn allowlist entries from past paid admission tickets "
+        "(Item.admission) on ended events with the Sideburn Core plugin."
     )
 
     def add_arguments(self, parser):
