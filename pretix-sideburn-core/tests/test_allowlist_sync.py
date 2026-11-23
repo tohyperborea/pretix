@@ -6,7 +6,6 @@ Run from the monorepo:
 """
 from datetime import timedelta
 from decimal import Decimal
-from io import StringIO
 
 import pytest
 from django.core.management import call_command
@@ -202,16 +201,15 @@ def test_sync_skips_canceled_positions(env):
 @pytest.mark.django_db
 @scopes_disabled()
 def test_backfill_command_specific_event(multi_event_attendance):
-    out = StringIO()
+    assert CustomerAllowlistEntry.objects.count() == 0
     call_command(
         "sync_sideburn_allowlist",
         "--organizer",
         "dummy",
         "--event",
         "past",
-        stdout=out,
     )
-    assert "Created 1 allowlist entry." in out.getvalue()
+    assert CustomerAllowlistEntry.objects.count() == 1
     assert CustomerAllowlistEntry.objects.filter(
         customer=multi_event_attendance["customer"]
     ).exists()
@@ -223,9 +221,9 @@ def test_backfill_command_specific_event(multi_event_attendance):
 @pytest.mark.django_db
 @scopes_disabled()
 def test_backfill_command_finds_plugin_events(multi_event_attendance):
-    out = StringIO()
-    call_command("sync_sideburn_allowlist", stdout=out)
-    assert "Created 2 allowlist entries." in out.getvalue()
+    assert CustomerAllowlistEntry.objects.count() == 0
+    call_command("sync_sideburn_allowlist")
+    assert CustomerAllowlistEntry.objects.count() == 2
     assert CustomerAllowlistEntry.objects.filter(
         customer=multi_event_attendance["customer"]
     ).exists()
