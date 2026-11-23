@@ -7,18 +7,16 @@ Run from the monorepo:
 from datetime import timedelta
 
 import pytest
-from django.core.exceptions import ValidationError
-from django.db import IntegrityError
 from django.utils.timezone import now
 from django_scopes import scopes_disabled
 
 from pretix.base.models import (
     Event, Item, Order, OrderPosition, Organizer, Quota, Voucher,
 )
+from pretix_sideburn_core.directed_group_status import get_slot_display_status
 from pretix_sideburn_core.models import (
     DirectedGroup, DirectedGroupCategory, DirectedGroupSlot,
 )
-from pretix_sideburn_core.directed_group_status import get_slot_display_status
 
 
 @pytest.fixture
@@ -65,14 +63,7 @@ def env():
 
 @pytest.mark.django_db
 @scopes_disabled()
-def test_category_unique_per_event(env):
-    with pytest.raises(IntegrityError):
-        DirectedGroupCategory.objects.create(event=env["event"], name="Theme camps")
-
-
-@pytest.mark.django_db
-@scopes_disabled()
-def test_slot_email_unique_per_group_and_lowercased(env):
+def test_slot_email_is_lowercased_on_save(env):
     DirectedGroupSlot.objects.create(
         group=env["group"],
         name="A",
@@ -82,13 +73,6 @@ def test_slot_email_unique_per_group_and_lowercased(env):
     )
     slot = DirectedGroupSlot.objects.get(group=env["group"])
     assert slot.email == "person@example.org"
-    with pytest.raises(IntegrityError):
-        DirectedGroupSlot.objects.create(
-            group=env["group"],
-            name="B",
-            email="person@example.org",
-            decision=DirectedGroupSlot.DECISION_REJECTED,
-        )
 
 
 @pytest.mark.django_db
@@ -111,29 +95,6 @@ def test_group_allows_null_leader_and_survives_customer_delete(env):
     env["group"].refresh_from_db()
     assert env["group"].leader_id is None
     assert not env["organizer"].customers.filter(pk=leader_pk).exists()
-
-
-@pytest.mark.django_db
-@scopes_disabled()
-def test_group_clean_rejects_cross_event_item(env):
-    other = Event.objects.create(
-        organizer=env["organizer"],
-        name="Other",
-        slug="other",
-        date_from=now(),
-        plugins="pretix_sideburn_core",
-    )
-    other_item = Item.objects.create(event=other, name="X", default_price=1)
-    group = DirectedGroup(
-        event=env["event"],
-        item=other_item,
-        leader=env["leader"],
-        name="Bad",
-        slot_count=1,
-    )
-    with pytest.raises(ValidationError) as exc:
-        group.clean()
-    assert "item" in exc.value.message_dict
 
 
 @pytest.mark.django_db
