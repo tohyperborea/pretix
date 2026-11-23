@@ -9,18 +9,23 @@ from django.urls import Resolver404, resolve, reverse
 from django.utils.translation import gettext_lazy as _, gettext_noop
 from i18nfield.strings import LazyI18nString
 
+from django_scopes import scopes_disabled
+
 from pretix.base.models import Order
 from pretix.base.settings import settings_hierarkey
 from pretix.base.signals import (
-    event_copy_data, waiting_list_send_voucher, waitinglist_entry_validate,
+    event_copy_data, periodic_task, waiting_list_send_voucher,
+    waitinglist_entry_validate,
 )
 from pretix.control.signals import nav_organizer, waitinglist_index_html
+from pretix.helpers.periodic import minimum_interval
 from pretix.multidomain.urlreverse import eventreverse
 from pretix.presale.signals import (
     customer_order_actions, front_page_bottom, process_request,
     waitinglist_form_class,
 )
 
+from .allowlist_sync import sync_allowlists
 from .forms import waitinglist_form_with_readonly_email
 from .waitinglist import validate_no_active_voucher_duplicate
 
@@ -54,6 +59,13 @@ def copy_membership_discount_rules(sender, other, item_map, **kwargs):
         copied_rule.products.set(
             [item_map[product.pk] for product in rule.products.all() if product.pk in item_map]
         )
+
+
+@receiver(periodic_task, dispatch_uid="sideburn_core_sync_allowlists_quarterly")
+@minimum_interval(minutes_after_success=90 * 24 * 60, minutes_running_timeout=120)
+def sync_allowlists_quarterly(sender, **kwargs):
+    with scopes_disabled():
+        sync_allowlists()
 
 
 # Storefront pages that need a logged-in customer. Everything else stays public, notably
