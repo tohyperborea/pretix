@@ -37,8 +37,8 @@ class DirectedGroupCategory(models.Model):
 
 class DirectedGroup(models.Model):
     """
-    Admin-defined group with a customer leader and a fixed slot capacity for
-    directed ticket assignment. Slots are created on submit, not pre-materialized.
+    Admin-defined group with an optional customer leader and a fixed slot capacity
+    for directed ticket assignment. Slots are created on submit, not pre-materialized.
     """
 
     event = models.ForeignKey(
@@ -71,9 +71,11 @@ class DirectedGroup(models.Model):
     )
     leader = models.ForeignKey(
         "pretixbase.Customer",
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name="directed_groups_led",
         verbose_name=_("Leader"),
+        null=True,
+        blank=True,
     )
     name = models.CharField(
         max_length=190,

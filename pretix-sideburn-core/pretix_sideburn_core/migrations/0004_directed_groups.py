@@ -100,7 +100,9 @@ class Migration(migrations.Migration):
                 (
                     "leader",
                     models.ForeignKey(
-                        on_delete=django.db.models.deletion.CASCADE,
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
                         related_name="directed_groups_led",
                         to="pretixbase.customer",
                         verbose_name="Leader",

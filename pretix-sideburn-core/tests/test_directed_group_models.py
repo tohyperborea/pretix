@@ -93,6 +93,28 @@ def test_slot_email_unique_per_group_and_lowercased(env):
 
 @pytest.mark.django_db
 @scopes_disabled()
+def test_group_allows_null_leader_and_survives_customer_delete(env):
+    group = DirectedGroup.objects.create(
+        event=env["event"],
+        item=env["item"],
+        leader=None,
+        name="Unassigned",
+        slot_count=1,
+    )
+    assert group.leader_id is None
+
+    leader = env["leader"]
+    env["group"].leader = leader
+    env["group"].save(update_fields=["leader"])
+    leader_pk = leader.pk
+    leader.delete()
+    env["group"].refresh_from_db()
+    assert env["group"].leader_id is None
+    assert not env["organizer"].customers.filter(pk=leader_pk).exists()
+
+
+@pytest.mark.django_db
+@scopes_disabled()
 def test_group_clean_rejects_cross_event_item(env):
     other = Event.objects.create(
         organizer=env["organizer"],
