@@ -12,16 +12,20 @@ from i18nfield.strings import LazyI18nString
 from pretix.base.models import Order
 from pretix.base.settings import settings_hierarkey
 from pretix.base.signals import (
-    event_copy_data, waiting_list_send_voucher, waitinglist_entry_validate,
+    event_copy_data, item_copy_data, waiting_list_send_voucher,
+    waitinglist_entry_validate,
 )
-from pretix.control.signals import nav_organizer, waitinglist_index_html
+from pretix.control.signals import item_forms, nav_organizer, waitinglist_index_html
 from pretix.multidomain.urlreverse import eventreverse
 from pretix.presale.signals import (
     customer_order_actions, front_page_bottom, process_request,
     waitinglist_form_class,
 )
 
-from .forms import waitinglist_form_with_readonly_email
+from .dgm import (
+    dgm_enabled, dgm_leader_deadline, set_dgm_enabled, set_dgm_leader_deadline,
+)
+from .forms import ItemDirectedGroupsForm, waitinglist_form_with_readonly_email
 from .waitinglist import validate_no_active_voucher_duplicate
 
 # Hierarkey defaults are global, so this applies to every event on the instance, with or
@@ -133,6 +137,24 @@ def render_waitinglist_delete_selected(sender, request, **kwargs):
             "event": request.event.slug,
         }),
     }, request=request)
+
+
+@receiver(item_forms, dispatch_uid="sideburn_core_item_dgm_form")
+def item_directed_groups_form(sender, request, item, **kwargs):
+    return ItemDirectedGroupsForm(
+        event=sender,
+        item=item,
+        data=(request.POST if request.method == "POST" else None),
+        prefix="sideburn_dgm",
+    )
+
+
+@receiver(item_copy_data, dispatch_uid="sideburn_core_item_copy_dgm")
+def copy_item_dgm_settings(sender, source, target, **kwargs):
+    set_dgm_enabled(target.event, target.pk, dgm_enabled(source.event, source.pk))
+    set_dgm_leader_deadline(
+        target.event, target.pk, dgm_leader_deadline(source.event, source.pk)
+    )
 
 
 @receiver(nav_organizer, dispatch_uid="sideburn_core_nav_organizer_denylist")
