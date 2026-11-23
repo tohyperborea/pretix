@@ -1,5 +1,6 @@
 from urllib.parse import quote
 
+from django.db import transaction
 from django.dispatch import receiver
 from django.http import Http404
 from django.shortcuts import redirect
@@ -11,7 +12,7 @@ from i18nfield.strings import LazyI18nString
 from pretix.base.models import Order
 from pretix.base.settings import settings_hierarkey
 from pretix.base.signals import (
-    waiting_list_send_voucher, waitinglist_entry_validate,
+    event_copy_data, waiting_list_send_voucher, waitinglist_entry_validate,
 )
 from pretix.control.signals import nav_organizer, waitinglist_index_html
 from pretix.multidomain.urlreverse import eventreverse
@@ -36,6 +37,24 @@ settings_hierarkey.add_default(
 # Core's header shows this Sideburn string (fragment_login_status.html); listing it here keeps
 # makemessages from dropping its French translation from this plugin's catalog.
 gettext_noop("My Orders")
+
+
+@receiver(event_copy_data, dispatch_uid="sideburn_core_copy_membership_discount_rules")
+@transaction.atomic
+def copy_membership_discount_rules(sender, other, item_map, **kwargs):
+    if sender.organizer_id != other.organizer_id:
+        return
+
+    for rule in other.membership_discount_rules.prefetch_related("products"):
+        copied_rule = sender.membership_discount_rules.create(
+            membership_type_id=rule.membership_type_id,
+            discount_percent=rule.discount_percent,
+            label=rule.label,
+        )
+        copied_rule.products.set(
+            [item_map[product.pk] for product in rule.products.all() if product.pk in item_map]
+        )
+
 
 # Storefront pages that need a logged-in customer. Everything else stays public, notably
 # order pages (secret links), resend_link, auth, favicon, iCal, widget CSS and
