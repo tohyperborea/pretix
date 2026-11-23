@@ -1,5 +1,5 @@
 """
-Effective allow/denylist status for a customer account.
+Effective customer familiarity status (deny / allow / unfamiliar).
 
 Later purchase enforcement should call this helper rather than reading the
 tables directly. Denylist supersedes allowlist; unfamiliar is derived (not stored).
@@ -10,12 +10,12 @@ from typing import Literal
 
 from pretix.base.models import Customer
 
-CustomerListStatus = Literal["deny", "allow", "unfamiliar"]
+CustomerFamiliarityStatus = Literal["deny", "allow", "unfamiliar"]
 
 
-def get_customer_list_status(customer: Customer) -> CustomerListStatus:
+def get_customer_familiarity_status(customer: Customer) -> CustomerFamiliarityStatus:
     """
-    Return the effective list status for ``customer``.
+    Return the effective familiarity status for ``customer``.
 
     Precedence: denylist wins over allowlist. Being on both lists does not
     remove the allowlist row; effective status is still ``deny``.
