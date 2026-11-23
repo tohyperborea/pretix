@@ -14,7 +14,7 @@ from django.utils.timezone import now
 from django_scopes import scopes_disabled
 
 from pretix.base.models import Event, Item, Order, OrderPosition, Organizer
-from pretix_sideburn_core.allowlist_sync import sync_allowlists, sync_event_allowlist
+from pretix_sideburn_core.allowlist_sync import sync_event_allowlist
 from pretix_sideburn_core.models import CustomerAllowlistEntry
 
 
@@ -59,7 +59,7 @@ def env():
 
 def _paid_order(env, customer, item):
     order = Order.objects.create(
-        event=env["event"],
+        event=item.event,
         customer=customer,
         email=customer.email,
         status=Order.STATUS_PAID,
@@ -70,6 +70,36 @@ def _paid_order(env, customer, item):
     )
     OrderPosition.objects.create(order=order, item=item, price=item.default_price)
     return order
+
+
+@pytest.fixture
+@scopes_disabled()
+def multi_event_attendance(env):
+    """Two ended plugin events, each with one paid admission customer."""
+    past = now() - timedelta(days=14)
+    event2 = Event.objects.create(
+        organizer=env["organizer"],
+        name="Older Event",
+        slug="older",
+        date_from=past - timedelta(days=3),
+        date_to=past,
+        live=True,
+        plugins="pretix_sideburn_core",
+    )
+    admission2 = Item.objects.create(
+        event=event2, name="Admission", default_price=100, admission=True, active=True
+    )
+    customer2 = env["organizer"].customers.create(
+        email="alice@example.org", is_verified=True, is_active=True
+    )
+    _paid_order(env, env["customer"], env["admission"])
+    _paid_order(env, customer2, admission2)
+    return {
+        **env,
+        "event2": event2,
+        "admission2": admission2,
+        "customer2": customer2,
+    }
 
 
 @pytest.mark.django_db
@@ -171,9 +201,7 @@ def test_sync_skips_canceled_positions(env):
 
 @pytest.mark.django_db
 @scopes_disabled()
-def test_backfill_command_happy_path(env):
-    _paid_order(env, env["customer"], env["admission"])
-
+def test_backfill_command_specific_event(multi_event_attendance):
     out = StringIO()
     call_command(
         "sync_sideburn_allowlist",
@@ -184,12 +212,23 @@ def test_backfill_command_happy_path(env):
         stdout=out,
     )
     assert "Created 1 allowlist entry." in out.getvalue()
-    assert CustomerAllowlistEntry.objects.filter(customer=env["customer"]).exists()
+    assert CustomerAllowlistEntry.objects.filter(
+        customer=multi_event_attendance["customer"]
+    ).exists()
+    assert not CustomerAllowlistEntry.objects.filter(
+        customer=multi_event_attendance["customer2"]
+    ).exists()
 
 
 @pytest.mark.django_db
 @scopes_disabled()
-def test_sync_allowlists_finds_plugin_events(env):
-    _paid_order(env, env["customer"], env["admission"])
-
-    assert sync_allowlists() == 1
+def test_backfill_command_finds_plugin_events(multi_event_attendance):
+    out = StringIO()
+    call_command("sync_sideburn_allowlist", stdout=out)
+    assert "Created 2 allowlist entries." in out.getvalue()
+    assert CustomerAllowlistEntry.objects.filter(
+        customer=multi_event_attendance["customer"]
+    ).exists()
+    assert CustomerAllowlistEntry.objects.filter(
+        customer=multi_event_attendance["customer2"]
+    ).exists()
